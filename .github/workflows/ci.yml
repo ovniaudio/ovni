@@ -1,0 +1,109 @@
+# =============================================================================================
+# OVNI — CI (integración continua). En cada push/PR a main:
+#   configura CMake (universal arm64+x86_64) → buildea las libs + plugins + runners de test →
+#   corre ctest → corre tools/validate.sh por cada plugin del catálogo
+#   (aurora/dust/halo/horizon/nebula/pulsar).
+#
+# Honestidad verificable (doctrina del sello): el CI NO es decorativo. Cada claim que publicamos
+# (universal, pluginval lvl8, auval, anti-clip, mediciones house H7/H8/H9) lo re-mide acá en limpio.
+# El validate-report.json de cada plugin queda archivado como artefacto: cualquiera lo puede auditar.
+#
+# Notas de entorno:
+#   · runner macos-latest (arm64). El build sale universal (arm64;x86_64) por el preset/flag.
+#   · pluginval se autodescarga dentro de validate.sh (puerta 3). auval corre nativo en el runner.
+#   · NO firmamos ni notarizamos acá — eso es release.yml (requiere credenciales de Joaquín).
+#   · Las deps de FetchContent (JUCE 8.0.13 / libmysofa v1.3.4 / Catch2 v3.8.1) se cachean por hash
+#     del CMakeLists raíz: clonar JUCE en cada run es lo más caro del pipeline.
+# =============================================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Un push nuevo a la misma rama/PR cancela el run anterior (no malgastamos minutos de macOS).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-validate:
+    name: build + ctest + validate
+    runs-on: macos-latest
+
+    env:
+      BUILD_DIR: ${{ github.workspace }}/build
+      CONFIG: Release
+      # Catálogo real (los 6 plugins con CMakeLists, sin contar el _probe que no se distribuye).
+      PLUGINS: "aurora dust halo horizon nebula pulsar"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- Toolchain: Ninja para builds rápidos (el CMake raíz documenta -G Ninja). ---
+      - name: Instalar Ninja
+        run: brew install ninja
+
+      # --- Cache de las deps de FetchContent (JUCE/libmysofa/Catch2) ---
+      # FetchContent clona en build/_deps/. Cacheamos esa carpeta keyed por el CMakeLists raíz:
+      # si cambian los GIT_TAG (las versiones pineadas), la key cambia y se reclona limpio.
+      - name: Cache FetchContent deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            deps-${{ runner.os }}-
+
+      # --- Configurar (UNIVERSAL). Usa el preset release-universal de CMakePresets.json:
+      #     fija CMAKE_OSX_ARCHITECTURES=arm64;x86_64 + Release + deployment target 11.0. ---
+      - name: Configurar CMake (release-universal)
+        run: cmake --preset release-universal
+
+      # --- Build: todo el árbol (las 5 libs + los 6 plugins + los runners de test). ---
+      - name: Build
+        run: cmake --build build --config Release
+
+      # --- ctest: corre el runner unificado [s1]+[s2]+[s3]+[gain] + los per-plugin. ---
+      # Falla el job si algún test queda rojo (--output-on-failure muestra el detalle).
+      - name: ctest
+        run: ctest --test-dir build --output-on-failure --no-tests=error
+
+      # --- validate.sh por cada plugin del catálogo. Re-mide TODAS las puertas en limpio
+      #     (build→universal(lipo)→pluginval lvl8→auval→tests→anti-clip→H7/H8/H9) y emite el
+      #     validate-report.json. Guardamos cada reporte y hacemos fallar el job si alguno NO está ok. ---
+      - name: validate (aurora / dust / halo / horizon / nebula / pulsar)
+        run: |
+          set -uo pipefail
+          mkdir -p reports
+          rc=0
+          for p in $PLUGINS; do
+            echo "::group::validate $p"
+            # validate.sh emite el JSON por stdout y devuelve exit 0 si TODO está verde, 1 si falla.
+            if tools/validate.sh "$p" > "reports/validate-report-$p.json"; then
+              echo "validate[$p]: VERDE"
+            else
+              echo "::error title=validate $p::puerta roja — ver reports/validate-report-$p.json"
+              cat "reports/validate-report-$p.json" || true
+              rc=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $rc
+
+      # --- Archivar los reportes SIEMPRE (también cuando el job falla: ahí es cuando más sirven). ---
+      - name: Archivar validate-report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validate-reports
+          path: reports/*.json
+          if-no-files-found: warn
+          retention-days: 30

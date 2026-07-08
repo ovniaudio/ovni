@@ -1,0 +1,41 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "release-universal",
+      "displayName": "Release universal (arm64 + x86_64)",
+      "description": "El preset de DISTRIBUCIÓN. Build universal real (los .vst3/.component traen arm64 Y x86_64), Release, deployment target macOS 11.0. Es el que usan CI y release.yml. Generador Ninja (lo que documenta el CMakeLists raíz). Verificá el universal con packaging/build-universal.sh (corre lipo -archs).",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64;x86_64",
+        "_OVNI_DEPLOYMENT_TARGET_DECISION": "11.0 = macOS Big Sur. ELEGIDO sobre el 10.14 (Mojave) que figura en cmake/PamplejuceMacOS.cmake porque: (1) 11.0 es la PRIMERA versión con soporte nativo arm64 — un universal arm64+x86_64 no puede correr su slice arm64 en <11.0, así que 10.14 sería una promesa que el binario no puede cumplir (anti-honestidad); (2) es lo que el build raíz YA producía (CMakeLists.txt linea 32 + el CMakeCache real). El 10.14 del Pamplejuce es legacy de referencia, no lo usa el build raíz. Documentado en packaging/README.md.",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Dev (arm64-only, iteración rápida)",
+      "description": "Para iterar en la máquina de Joaquín (Apple Silicon). arm64-only = build ~2x más rápido que el universal porque compila UNA sola arquitectura. NO usar para distribuir (no es universal). Release igual, para que las mediciones (anti-clip, CPU H9) sean representativas.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release-universal",
+      "configurePreset": "release-universal"
+    },
+    {
+      "name": "dev",
+      "configurePreset": "dev"
+    }
+  ]
+}

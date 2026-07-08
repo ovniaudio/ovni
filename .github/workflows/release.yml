@@ -1,0 +1,225 @@
+# =============================================================================================
+# OVNI — RELEASE. Se dispara al pushear un tag v* (p.ej. v0.1.0):
+#   build UNIVERSAL → (firma opcional) → empaqueta .dmg + .pkg → (notarización opcional) → sube
+#   los artefactos al GitHub Release.
+#
+# DOS CAMINOS, decididos por la presencia de los secrets de Apple — el job NO falla por falta de
+# ellos:
+#
+#   • CAMINO GRATIS (default HOY, sin pagar la cuenta Apple Developer de 99 USD):
+#       Si NO hay secrets de Apple → se arma el .dmg + .pkg SIN FIRMAR y se publican igual.
+#       Son 100% legales y funcionan. El usuario ve el aviso de Gatekeeper la primera vez y lo
+#       destraba con click derecho → Abrir (o `xattr -dr com.apple.quarantine …`). El "LÉEME
+#       PRIMERO.txt" dentro del .dmg explica el workaround. Ver packaging/README.md.
+#
+#   • CAMINO PAGO (cuando Joaquín cargue el $99 + los secrets):
+#       Si está APPLE_DEVELOPER_ID_APP (y los demás secrets) → se firma cada plugin (Developer ID
+#       Application, hardened runtime), se firma el .pkg/.dmg (Developer ID Installer/Application) y
+#       se NOTARIZA con notarytool + staple. Ahí desaparece el aviso de Gatekeeper para el usuario.
+#
+# Los steps de firma/notarización están guardados con  if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+# (los condicionales `if:` se evalúan SIEMPRE, también cuando el secret está vacío → el step se
+# saltea limpio, no falla). El step "Empaquetar SIN firmar" hace lo inverso.
+#
+#     Secrets a cargar en GitHub → Settings → Secrets and variables → Actions (solo camino PAGO):
+#       APPLE_DEV_ID_APP_CERT_P12_BASE64   .p12 del cert "Developer ID Application" en base64
+#                                          (base64 -i cert.p12 | pbcopy).
+#       APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64  .p12 del cert "Developer ID Installer" (firma el .pkg).
+#       APPLE_DEV_ID_CERT_PASSWORD         la contraseña con la que exportaste los .p12.
+#       APPLE_DEVELOPER_ID_APP             nombre exacto de la identidad de firma de app, p.ej.
+#                                          "Developer ID Application: Joaquin Cerrano (TEAMID1234)".
+#                                          ESTE secret es el "interruptor": si está presente →
+#                                          camino pago; si no → camino gratis.
+#       APPLE_DEVELOPER_ID_INSTALLER       identidad del instalador (firma el .pkg).
+#       APPLE_ID                           tu Apple ID (mail de la cuenta de developer).
+#       APPLE_TEAM_ID                      el Team ID (10 chars) del Apple Developer Program.
+#       APPLE_APP_PASSWORD                 "app-specific password" de appleid.apple.com (NO la real).
+#       KEYCHAIN_PASSWORD                  string aleatorio; solo protege el keychain temporal del runner.
+# =============================================================================================
+name: Release
+
+on:
+  # Auto-release por tag DESACTIVADO a propósito: el catálogo incluye ORBIT (repo aparte) y la CI
+  # de ESTE repo solo empaquetaría los 6 plugins de acá (sin ORBIT), pisando el DMG de 14 bundles.
+  # El release v0.1.0 se sube A MANO con el DMG completo. Para correr a mano solo los 6: Run workflow.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag a empaquetar (p.ej. v0.1.0). Sólo para correr a mano."
+        required: true
+
+permissions:
+  contents: write   # crear el Release y subirle los artefactos
+
+jobs:
+  release:
+    name: build universal + (firma opcional) + dmg/pkg + (notarización opcional)
+    runs-on: macos-latest
+
+    env:
+      BUILD_DIR: ${{ github.workspace }}/build
+      CONFIG: Release
+      # Catálogo real (los 6 plugins con CMakeLists). Mismo set para el .dmg y el .pkg.
+      PLUGINS: "aurora dust halo horizon nebula pulsar"
+      DIST_DIR: ${{ github.workspace }}/dist
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Ninja
+        run: brew install ninja
+
+      # --- Build universal (mismo preset que CI: arm64;x86_64 + Release + deployment 11.0). ---
+      - name: Configurar CMake (release-universal)
+        run: cmake --preset release-universal
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      # --- Verificar universal SIEMPRE (no depende de firma). ---
+      # packaging/build-universal.sh corre lipo -archs sobre cada .vst3/.component y falla si
+      # falta arm64 o x86_64. Acá ya está buildeado, así que sólo verifica (SKIP_BUILD=1).
+      - name: Verificar universal (lipo)
+        run: SKIP_BUILD=1 BUILD_DIR="$BUILD_DIR" packaging/build-universal.sh
+
+      # =========================================================================================
+      # CAMINO PAGO — firma + notarización. TODO el bloque está guardado por la presencia de
+      # APPLE_DEVELOPER_ID_APP. Si el secret está vacío (camino gratis, default hoy), estos steps
+      # se SALTEAN limpio (no fallan) y se ejecuta en cambio "Empaquetar SIN firmar".
+      # =========================================================================================
+
+      # --- Importar los certificados Developer ID a un keychain temporal del runner. ---
+      - name: Importar certificados Developer ID
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+        env:
+          APP_CERT_B64: ${{ secrets.APPLE_DEV_ID_APP_CERT_P12_BASE64 }}
+          INSTALLER_CERT_B64: ${{ secrets.APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DEV_ID_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_CERT_B64:-}" ] || [ -z "${INSTALLER_CERT_B64:-}" ]; then
+            echo "::error title=Faltan certificados::APPLE_DEVELOPER_ID_APP está cargado pero faltan los .p12 (APPLE_DEV_ID_APP_CERT_P12_BASE64 / APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64). Cargá los certificados o quitá APPLE_DEVELOPER_ID_APP para volver al camino gratis."
+            exit 1
+          fi
+          KEYCHAIN="$RUNNER_TEMP/ovni-signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Decodificar e importar ambos .p12 (app + installer).
+          echo "$APP_CERT_B64" | base64 --decode > "$RUNNER_TEMP/app.p12"
+          echo "$INSTALLER_CERT_B64" | base64 --decode > "$RUNNER_TEMP/installer.p12"
+          security import "$RUNNER_TEMP/app.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security import "$RUNNER_TEMP/installer.p12" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          # Permitir que codesign/productbuild usen las llaves sin prompt interactivo.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Poner el keychain temporal al frente de la búsqueda.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/app.p12" "$RUNNER_TEMP/installer.p12"
+
+      # --- Codesign de cada artefacto universal (Developer ID Application, hardened runtime). ---
+      # El hardened runtime (--options runtime) es obligatorio para que Apple notarice.
+      - name: Codesign (Developer ID Application)
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+        env:
+          SIGN_ID: ${{ secrets.APPLE_DEVELOPER_ID_APP }}
+        run: |
+          set -euo pipefail
+          # Firmar todos los bundles que vamos a distribuir (VST3 + AU de cada plugin).
+          # --deep está deprecado para firmar; firmamos cada bundle directo (JUCE no anida frameworks).
+          find "$BUILD_DIR" -path "*_artefacts/$CONFIG/*" \
+            \( -name '*.vst3' -o -name '*.component' \) -prune -print | while read -r bundle; do
+            echo "codesign: $bundle"
+            codesign --force --timestamp --options runtime \
+              --sign "$SIGN_ID" "$bundle"
+            codesign --verify --strict --verbose=2 "$bundle"
+          done
+
+      # --- Empaquetar FIRMADO (.dmg + .pkg). El .dmg es el entregable principal; el .pkg, alternativa. ---
+      - name: Empaquetar firmado (.dmg + .pkg)
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+        env:
+          DEV_ID: ${{ secrets.APPLE_DEVELOPER_ID_APP }}
+          INSTALLER_SIGN_ID: ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER }}
+          OVNI_VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$DIST_DIR"
+          PKG_VERSION="${OVNI_VERSION#v}"   # v0.1.0 -> 0.1.0
+          # .dmg firmado (Developer ID Application).
+          DEV_ID="$DEV_ID" BUILD_DIR="$BUILD_DIR" CONFIG="$CONFIG" \
+          packaging/make-dmg.sh \
+            --version "$PKG_VERSION" \
+            --plugins "$PLUGINS" \
+            --out "$DIST_DIR/OVNI-$OVNI_VERSION.dmg"
+          # .pkg firmado (Developer ID Installer). Mismo set de plugins que el .dmg.
+          INSTALLER_SIGN_ID="$INSTALLER_SIGN_ID" BUILD_DIR="$BUILD_DIR" CONFIG="$CONFIG" \
+          packaging/make-installer.sh \
+            --version "$PKG_VERSION" \
+            --plugins "$PLUGINS" \
+            --out "$DIST_DIR/OVNI-$OVNI_VERSION.pkg"
+
+      # --- Notarizar (.dmg + .pkg) con notarytool + staple. Solo camino pago. ---
+      - name: Notarizar (notarytool) + staple
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          OVNI_VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ] || [ -z "${APPLE_APP_PASSWORD:-}" ]; then
+            echo "::error title=Faltan credenciales de notarización::Hay firma pero falta APPLE_ID / APPLE_TEAM_ID / APPLE_APP_PASSWORD. Cargalos o quitá APPLE_DEVELOPER_ID_APP para volver al camino gratis."
+            exit 1
+          fi
+          for art in "$DIST_DIR/OVNI-$OVNI_VERSION.dmg" "$DIST_DIR/OVNI-$OVNI_VERSION.pkg"; do
+            [ -f "$art" ] || continue
+            echo "notarizando: $art"
+            # --wait bloquea hasta que Apple devuelve Accepted/Invalid (sin esto el ticket no existe aún).
+            xcrun notarytool submit "$art" \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_PASSWORD" \
+              --wait
+            # Grapar el ticket para que valide offline (Gatekeeper no necesita red).
+            xcrun stapler staple "$art"
+            xcrun stapler validate "$art"
+          done
+
+      # =========================================================================================
+      # CAMINO GRATIS — empaquetar SIN firmar. Se ejecuta cuando NO hay APPLE_DEVELOPER_ID_APP.
+      # Produce el .dmg + .pkg sin firma y NO falla. Es el default de hoy.
+      # =========================================================================================
+      - name: Empaquetar SIN firmar (.dmg + .pkg)
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP == '' }}
+        env:
+          OVNI_VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          echo "::notice title=Camino gratis::Sin secrets de Apple → artefactos SIN FIRMAR. Son legales y funcionan; el usuario ve el aviso de Gatekeeper la 1ra vez (workaround en el LÉEME del .dmg)."
+          mkdir -p "$DIST_DIR"
+          PKG_VERSION="${OVNI_VERSION#v}"   # v0.1.0 -> 0.1.0
+          # .dmg sin firmar (entregable principal del camino gratis): DEV_ID vacío → no firma.
+          BUILD_DIR="$BUILD_DIR" CONFIG="$CONFIG" \
+          packaging/make-dmg.sh \
+            --version "$PKG_VERSION" \
+            --plugins "$PLUGINS" \
+            --out "$DIST_DIR/OVNI-$OVNI_VERSION.dmg"
+          # .pkg sin firmar (alternativa): INSTALLER_SIGN_ID vacío → no firma. Mismo set que el .dmg.
+          BUILD_DIR="$BUILD_DIR" CONFIG="$CONFIG" \
+          packaging/make-installer.sh \
+            --version "$PKG_VERSION" \
+            --plugins "$PLUGINS" \
+            --out "$DIST_DIR/OVNI-$OVNI_VERSION.pkg"
+
+      # --- Subir los artefactos (.dmg + .pkg) al GitHub Release del tag. Igual en ambos caminos. ---
+      - name: Publicar en el Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.pkg
+          fail_on_unmatched_files: true
+          generate_release_notes: true
