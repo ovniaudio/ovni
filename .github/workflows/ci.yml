@@ -117,7 +117,9 @@ jobs:
   # =============================================================================================
   windows:
     name: build VST3 x64 + pluginval (Windows)
-    runs-on: windows-latest
+    # windows-2022 (no windows-latest): el label latest ya rodó a una imagen sin VS 2022 (v17)
+    # → el generador "Visual Studio 17 2022" no encuentra instancia. windows-2022 trae VS 2022.
+    runs-on: windows-2022
     defaults:
       run:
         shell: bash
