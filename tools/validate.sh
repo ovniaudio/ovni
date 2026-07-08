@@ -144,9 +144,11 @@ if [ -z "$PV_BIN" ]; then
   if [ -x "$CACHED" ]; then
     PV_BIN="$CACHED"
   elif command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
-    log "descargando pluginval…"
+    log "descargando pluginval v1.0.4…"
+    # Pineado a una release fija (no /releases/latest): reproducibilidad — la puerta mide siempre
+    # contra la MISMA versión de pluginval; una release nueva no cambia el veredicto sin querer.
     if curl -fsSL -o "$BUILD_DIR/pluginval.zip" \
-        "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip" 2>>"$LOG_FILE" \
+        "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip" 2>>"$LOG_FILE" \
        && unzip -oq "$BUILD_DIR/pluginval.zip" -d "$BUILD_DIR" 2>>"$LOG_FILE"; then
       PV_BIN="$CACHED"
     fi
