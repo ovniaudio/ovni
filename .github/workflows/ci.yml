@@ -159,14 +159,14 @@ jobs:
       - name: Verificar PE x64 (los 6, COFF machine = AMD64)
         shell: pwsh
         run: |
-          $bundles = Get-ChildItem -Recurse -Directory -Path build -Filter *.vst3 |
-                     Where-Object { $_.FullName -match '_artefacts' }
-          Write-Host "Bundles .vst3 encontrados: $($bundles.Count)"
-          if ($bundles.Count -lt 6) { Write-Error "Esperaba 6 VST3, encontré $($bundles.Count)"; exit 1 }
-          foreach ($b in $bundles) {
-            $bin = Get-ChildItem -Recurse -File -Path $b.FullName -Filter *.vst3 | Select-Object -First 1
-            $bytes  = [System.IO.File]::ReadAllBytes($bin.FullName)
-            $peOff  = [BitConverter]::ToInt32($bytes, 0x3C)
+          # Cada binario PE vive dentro de su bundle en Contents\x86_64-win\<PRODUCT>.vst3.
+          $bins = Get-ChildItem -Recurse -File -Path build -Filter *.vst3 |
+                  Where-Object { $_.FullName -match 'x86_64-win' }
+          Write-Host "Binarios .vst3 (x86_64-win): $($bins.Count)"
+          if ($bins.Count -lt 6) { Write-Error "Esperaba 6 VST3, encontré $($bins.Count)"; exit 1 }
+          foreach ($bin in $bins) {
+            $bytes   = [System.IO.File]::ReadAllBytes($bin.FullName)
+            $peOff   = [BitConverter]::ToInt32($bytes, 0x3C)
             $machine = [BitConverter]::ToUInt16($bytes, $peOff + 4)
             Write-Host ("{0}: 0x{1:X4}" -f $bin.Name, $machine)
             if ($machine -ne 0x8664) { Write-Error "$($bin.Name) no es x64"; exit 1 }
