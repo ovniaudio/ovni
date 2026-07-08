@@ -107,3 +107,85 @@ jobs:
           path: reports/*.json
           if-no-files-found: warn
           retention-days: 30
+
+  # =============================================================================================
+  # M6 — Windows (VST3). Build MSVC x64 en windows-latest + pluginval strictness 10 sobre los 6.
+  # Ninguno de los 6 usa IPP → compila directo (JUCE 8.0.13 + libmysofa + MSVC). Windows = VST3
+  # (JUCE omite AU). Sin firmar → SmartScreen (se distribuye como ZIP en el Release). Los tests
+  # Catch2 quedan cubiertos por el job macOS de arriba; acá desactivamos OVNI_BUILD_TESTS para ir
+  # directo al entregable (los .vst3 x64) y no arrastrar Catch2 a MSVC.
+  # =============================================================================================
+  windows:
+    name: build VST3 x64 + pluginval (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Catálogo real (los 6 plugins con CMakeLists; _probe no se distribuye).
+      PLUGINS: "aurora dust halo horizon nebula pulsar"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Cache de las deps de FetchContent (JUCE 8.0.13 / libmysofa / — Catch2 no, tests OFF).
+      - name: Cache FetchContent deps
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/build/_deps
+          key: deps-windows-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            deps-windows-
+
+      - name: Configurar (Visual Studio 2022, x64, sin tests)
+        run: >
+          cmake -B build -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_BUILD_TYPE=Release
+          -DOVNI_BUILD_TESTS=OFF .
+
+      - name: Build los 6 VST3
+        run: >
+          cmake --build build --config Release --target
+          aurora_VST3 dust_VST3 halo_VST3 horizon_VST3 nebula_VST3 pulsar_VST3
+
+      - name: Verificar PE x64 (los 6, COFF machine = AMD64)
+        shell: pwsh
+        run: |
+          $bundles = Get-ChildItem -Recurse -Directory -Path build -Filter *.vst3 |
+                     Where-Object { $_.FullName -match '_artefacts' }
+          Write-Host "Bundles .vst3 encontrados: $($bundles.Count)"
+          if ($bundles.Count -lt 6) { Write-Error "Esperaba 6 VST3, encontré $($bundles.Count)"; exit 1 }
+          foreach ($b in $bundles) {
+            $bin = Get-ChildItem -Recurse -File -Path $b.FullName -Filter *.vst3 | Select-Object -First 1
+            $bytes  = [System.IO.File]::ReadAllBytes($bin.FullName)
+            $peOff  = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOff + 4)
+            Write-Host ("{0}: 0x{1:X4}" -f $bin.Name, $machine)
+            if ($machine -ne 0x8664) { Write-Error "$($bin.Name) no es x64"; exit 1 }
+          }
+          Write-Host "OK: 6 VST3 PE x64 (AMD64)"
+
+      - name: Pluginval (strictness 10, los 6)
+        run: |
+          set -uo pipefail
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip"
+          unzip -oq pluginval.zip
+          rc=0
+          for b in $(find build -type d -path '*_artefacts/*/VST3/*.vst3'); do
+            echo "::group::pluginval $b"
+            if ./pluginval.exe --strictness-level 10 --validate "$b"; then
+              echo "pluginval[$b]: PASS"
+            else
+              echo "::error title=pluginval::falló $b"
+              rc=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $rc
+
+      - name: Subir los 6 VST3 (Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovni-windows-vst3
+          path: build/plugins/*/*_artefacts/Release/VST3/*.vst3
+          if-no-files-found: error
