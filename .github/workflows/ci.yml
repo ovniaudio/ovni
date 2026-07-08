@@ -179,7 +179,9 @@ jobs:
           curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip"
           unzip -oq pluginval.zip
           rc=0
-          for b in $(find build -type d -path '*_artefacts/*/VST3/*.vst3'); do
+          # SOLO bundles Release: el generador VS crea también scaffolds vacíos en Debug/VST3 que
+          # harían fallar pluginval con "Num plugins found: 0".
+          for b in $(find build -type d -path '*_artefacts/Release/VST3/*.vst3'); do
             echo "::group::pluginval $b"
             if ./pluginval.exe --strictness-level 10 --validate "$b"; then
               echo "pluginval[$b]: PASS"
