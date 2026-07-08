@@ -109,11 +109,16 @@ jobs:
           retention-days: 30
 
   # =============================================================================================
-  # M6 — Windows (VST3). Build MSVC x64 en windows-latest + pluginval strictness 10 sobre los 6.
-  # Ninguno de los 6 usa IPP → compila directo (JUCE 8.0.13 + libmysofa + MSVC). Windows = VST3
-  # (JUCE omite AU). Sin firmar → SmartScreen (se distribuye como ZIP en el Release). Los tests
-  # Catch2 quedan cubiertos por el job macOS de arriba; acá desactivamos OVNI_BUILD_TESTS para ir
-  # directo al entregable (los .vst3 x64) y no arrastrar Catch2 a MSVC.
+  # M6 — Windows (VST3). Build MSVC x64 en windows-2022 + pluginval strictness 10 sobre los 6.
+  # Ninguno de los 6 usa IPP → compila directo (JUCE 8.0.13 + MSVC). Windows = VST3 (JUCE omite AU).
+  # Sin firmar → SmartScreen (se distribuye como ZIP en el Release).
+  #
+  # Dos flags apagan lo que no juega en Windows para v1 (análogo al "sin IPP" de ORBIT):
+  #   · OVNI_BUILD_TESTS=OFF → los tests Catch2 ya los cubre el job macOS; evita arrastrar Catch2 a MSVC.
+  #   · OVNI_WITH_SOFA=OFF   → libmysofa (dep del SofaLoader) no compila limpio con MSVC (declspec
+  #     dllimport en su build estático + necesita zlib.h). SofaLoader es FORWARD-LOOKING: ningún
+  #     plugin del catálogo lo usa (solo un test [s1], que acá está OFF), así que apagarlo no cambia
+  #     los .vst3. Los binaurales usan los HRIR horneados de shared/data, no el loader SOFA en runtime.
   # =============================================================================================
   windows:
     name: build VST3 x64 + pluginval (Windows)
@@ -130,7 +135,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Cache de las deps de FetchContent (JUCE 8.0.13 / libmysofa / — Catch2 no, tests OFF).
+      # Cache de las deps de FetchContent (solo JUCE 8.0.13 — sin libmysofa ni Catch2 en Windows).
       - name: Cache FetchContent deps
         uses: actions/cache@v4
         with:
@@ -139,11 +144,12 @@ jobs:
           restore-keys: |
             deps-windows-
 
-      - name: Configurar (Visual Studio 2022, x64, sin tests)
+      - name: Configurar (Visual Studio 2022, x64, sin tests, sin SOFA)
         run: >
           cmake -B build -G "Visual Studio 17 2022" -A x64
           -DCMAKE_BUILD_TYPE=Release
-          -DOVNI_BUILD_TESTS=OFF .
+          -DOVNI_BUILD_TESTS=OFF
+          -DOVNI_WITH_SOFA=OFF .
 
       - name: Build los 6 VST3
         run: >
