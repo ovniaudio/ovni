@@ -7,6 +7,7 @@
 // (Densidad 70 · Spread 85 · Vida 60) y empuja señal para que el FIFO de burbujas y el meter tengan
 // datos REALES. Headless (ScopedJuceInitialiser_GUI lo provee TestMain).
 #include <catch2/catch_test_macros.hpp>
+#include <cstdlib>   // std::getenv (guard CI headless en [shot4k])
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 #include "PluginProcessor.h"
@@ -62,6 +63,10 @@ TEST_CASE ("snapshot: editor de DUST -> /tmp/ovni_dust_m.png", "[snapshot][dust]
 // -> docs/redesign/real-shots/dust.png
 TEST_CASE ("shot4k: DUST editor real 4x -> real-shots/dust.png", "[shot4k][dust]")
 {
+    // CI/headless: este [shot4k] regenera la foto de marketing en un path local del autor
+    // (docs/redesign/real-shots/*.png) y necesita window-server; en CI se auto-saltea sin tocar
+    // su logica (GitHub Actions exporta CI=true). Corre normal en local para rehornear la foto.
+    if (std::getenv ("CI") != nullptr) { SUCCEED ("shot4k saltado en CI headless"); return; }
     namespace pid = dust::params::id;
     dust::DustProcessor proc;
     if (auto* d = proc.apvts.getParameter (pid::DENSITY)) d->setValueNotifyingHost (0.70f);

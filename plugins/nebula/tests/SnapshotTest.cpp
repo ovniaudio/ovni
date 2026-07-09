@@ -3,6 +3,7 @@
 // a ojo la identidad visual magenta. Setea un par de valores (Size 60 %, Decay 70 %) para que la nube se
 // vea grande y poblada en el shot. Headless (ScopedJuceInitialiser_GUI lo provee TestMain).
 #include <catch2/catch_test_macros.hpp>
+#include <cstdlib>   // std::getenv (guard CI headless en [shot4k])
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 #include "PluginProcessor.h"
@@ -55,6 +56,10 @@ TEST_CASE ("snapshot: editor de NEBULA -> /tmp/ovni_nebula_m.png", "[snapshot][n
 // foto de web/ficha. -> docs/redesign/real-shots/nebula.png
 TEST_CASE ("shot4k: NEBULA editor real 4x -> real-shots/nebula.png", "[shot4k][nebula]")
 {
+    // CI/headless: este [shot4k] regenera la foto de marketing en un path local del autor
+    // (docs/redesign/real-shots/*.png) y necesita window-server; en CI se auto-saltea sin tocar
+    // su logica (GitHub Actions exporta CI=true). Corre normal en local para rehornear la foto.
+    if (std::getenv ("CI") != nullptr) { SUCCEED ("shot4k saltado en CI headless"); return; }
     nebula::NebulaProcessor proc;
     if (auto* s = proc.apvts.getParameter ("size"))  s->setValueNotifyingHost (0.60f);
     if (auto* d = proc.apvts.getParameter ("decay")) d->setValueNotifyingHost (0.72f);

@@ -177,3 +177,8 @@ por red), pero las cumplimos al publicar el código completo del repo en el rele
   aún figura en el árbol es **sólo** el fixture del test del `SofaLoader` (`OVNI_TEST_SOFA`,
   dato de test de libmysofa), no la fuente del HRIR horneado. Receta completa en
   `tools/gen-hrir.md`.
+
+## Fonts embedded in the UI (ui-kit assets)
+- **Clash Grotesk** (Semibold) — Indian Type Foundry, distributed via Fontshare — ITF Free Font License.
+- **General Sans** (Regular, Medium) — Indian Type Foundry, distributed via Fontshare — ITF Free Font License.
+- **JetBrains Mono** (Regular) — The JetBrains Mono Project Authors — SIL Open Font License, Version 1.1 (OFL-1.1). Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono).

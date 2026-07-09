@@ -176,7 +176,9 @@ jobs:
       - name: Pluginval (strictness 10, los 6)
         run: |
           set -uo pipefail
-          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip"
+          # pluginval pineado a v1.0.4 (no /releases/latest): la puerta strictness-10 mide siempre
+          # contra la MISMA versión → reproducible, sin sorpresas cuando salga una release nueva.
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip"
           unzip -oq pluginval.zip
           rc=0
           # SOLO bundles Release: el generador VS crea también scaffolds vacíos en Debug/VST3 que

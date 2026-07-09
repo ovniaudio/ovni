@@ -17,9 +17,10 @@
 #       Application, hardened runtime), se firma el .pkg/.dmg (Developer ID Installer/Application) y
 #       se NOTARIZA con notarytool + staple. Ahí desaparece el aviso de Gatekeeper para el usuario.
 #
-# Los steps de firma/notarización están guardados con  if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
-# (los condicionales `if:` se evalúan SIEMPRE, también cuando el secret está vacío → el step se
-# saltea limpio, no falla). El step "Empaquetar SIN firmar" hace lo inverso.
+# Los steps de firma/notarización están guardados por env.HAS_SIGNING (== 'true'): NO se puede usar
+# el contexto `secrets` directamente en un `if:` (GitHub lo rechaza al arrancar → startup_failure a
+# 0s). Por eso el switch se calcula UNA vez a nivel job (env.HAS_SIGNING = ¿está el secret?) y los
+# steps miran ESA variable. El step "Empaquetar SIN firmar" mira el inverso (== 'false').
 #
 #     Secrets a cargar en GitHub → Settings → Secrets and variables → Actions (solo camino PAGO):
 #       APPLE_DEV_ID_APP_CERT_P12_BASE64   .p12 del cert "Developer ID Application" en base64
@@ -62,6 +63,10 @@ jobs:
       # Catálogo real (los 6 plugins con CMakeLists). Mismo set para el .dmg y el .pkg.
       PLUGINS: "aurora dust halo horizon nebula pulsar"
       DIST_DIR: ${{ github.workspace }}/dist
+      # Switch firma/gratis calculado UNA vez: el contexto `secrets` NO es válido en un `if:` de step
+      # (arrancar el workflow falla con startup_failure), pero SÍ es válido en `env:`. Los steps de
+      # firma miran env.HAS_SIGNING == 'true'; el step sin firmar mira == 'false'.
+      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' && 'true' || 'false' }}
 
     steps:
       - name: Checkout
@@ -91,7 +96,7 @@ jobs:
 
       # --- Importar los certificados Developer ID a un keychain temporal del runner. ---
       - name: Importar certificados Developer ID
-        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         env:
           APP_CERT_B64: ${{ secrets.APPLE_DEV_ID_APP_CERT_P12_BASE64 }}
           INSTALLER_CERT_B64: ${{ secrets.APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64 }}
@@ -121,7 +126,7 @@ jobs:
       # --- Codesign de cada artefacto universal (Developer ID Application, hardened runtime). ---
       # El hardened runtime (--options runtime) es obligatorio para que Apple notarice.
       - name: Codesign (Developer ID Application)
-        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         env:
           SIGN_ID: ${{ secrets.APPLE_DEVELOPER_ID_APP }}
         run: |
@@ -138,7 +143,7 @@ jobs:
 
       # --- Empaquetar FIRMADO (.dmg + .pkg). El .dmg es el entregable principal; el .pkg, alternativa. ---
       - name: Empaquetar firmado (.dmg + .pkg)
-        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         env:
           DEV_ID: ${{ secrets.APPLE_DEVELOPER_ID_APP }}
           INSTALLER_SIGN_ID: ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER }}
@@ -162,7 +167,7 @@ jobs:
 
       # --- Notarizar (.dmg + .pkg) con notarytool + staple. Solo camino pago. ---
       - name: Notarizar (notarytool) + staple
-        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+        if: ${{ env.HAS_SIGNING == 'true' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -193,7 +198,7 @@ jobs:
       # Produce el .dmg + .pkg sin firma y NO falla. Es el default de hoy.
       # =========================================================================================
       - name: Empaquetar SIN firmar (.dmg + .pkg)
-        if: ${{ secrets.APPLE_DEVELOPER_ID_APP == '' }}
+        if: ${{ env.HAS_SIGNING == 'false' }}
         env:
           OVNI_VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
@@ -215,9 +220,14 @@ jobs:
             --out "$DIST_DIR/OVNI-$OVNI_VERSION.pkg"
 
       # --- Subir los artefactos (.dmg + .pkg) al GitHub Release del tag. Igual en ambos caminos. ---
+      # Action de terceros pineada a un commit SHA (no a un tag móvil) por supply-chain: un tag como
+      # @v2 lo puede re-apuntar el maintainer a cualquier commit; el SHA es inmutable.
       - name: Publicar en el Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
+          # workflow_dispatch NO crea el tag solo: se lo pasamos explícito desde el input (si no,
+          # la action usa github.ref, que en un dispatch es la rama y NO el tag a publicar).
+          tag_name: ${{ github.event.inputs.tag }}
           files: |
             dist/*.dmg
             dist/*.pkg
