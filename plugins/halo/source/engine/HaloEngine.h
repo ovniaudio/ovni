@@ -186,8 +186,6 @@ private:
     using ItdLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd>;
     ItdLine orbitItdL { 64 }, orbitItdR { 64 };
     float   orbitItdMaxSamp = 34.0f;       // ITD máx en samples (se computa en prepare según SR)
-    float   orbitBassCoef = 0.0f;          // crossover bass-mono (IN PHASE) ~250 Hz (1-polo)
-    float   orbitBassLpL = 0.0f, orbitBassLpR = 0.0f;
     // High-shelf de sombra de cabeza (ILD dependiente de frecuencia): LP 1-polo fijo @ kHeadShadowHz cuyo
     // residuo HF se atenúa en el oído lejano. Estado del LP por canal (sin alloc en process()).
     float   orbitShelfCoef = 0.0f;         // coef del LP del corner del shelf ~1.6 kHz (1-polo), fijo en prepare

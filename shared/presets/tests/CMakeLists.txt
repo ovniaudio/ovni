@@ -4,7 +4,7 @@
 # descargas, pasá:
 #   -DFETCHCONTENT_SOURCE_DIR_JUCE=/ruta/a/JUCE  -DFETCHCONTENT_SOURCE_DIR_CATCH2=/ruta/a/catch2-src
 cmake_minimum_required(VERSION 3.25)
-project(ovni_presets_tests VERSION 0.1.0 LANGUAGES C CXX)
+project(ovni_presets_tests VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

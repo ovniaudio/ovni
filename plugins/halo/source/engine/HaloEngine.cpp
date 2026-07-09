@@ -191,8 +191,6 @@ void HaloEngine::prepare (const juce::dsp::ProcessSpec& spec)
         orbitItdR.setMaximumDelayInSamples (itdCap);
         orbitItdL.prepare (monoSpecOrbit);
         orbitItdR.prepare (monoSpecOrbit);
-        orbitBassCoef = 1.0f - (float) std::exp (-juce::MathConstants<double>::twoPi * 250.0 / sampleRate);
-        orbitBassLpL = orbitBassLpR = 0.0f;
         // Coef del LP 1-polo del corner del shelf de sombra de cabeza (fijo; el SHELF GAIN es lo que se modula).
         orbitShelfCoef = 1.0f - (float) std::exp (-juce::MathConstants<double>::twoPi * (double) kHeadShadowHz / sampleRate);
         orbitShelfLpL = orbitShelfLpR = 0.0f;
@@ -247,7 +245,6 @@ void HaloEngine::reset() noexcept
     traj.reset();
     orbitItdL.reset();
     orbitItdR.reset();
-    orbitBassLpL = orbitBassLpR = 0.0f;
     orbitShelfLpL = orbitShelfLpR = 0.0f;
     orbitGLsm = orbitGRsm = 1.0f;
     orbitDLsm = orbitDRsm = 0.0f;
@@ -538,9 +535,7 @@ void HaloEngine::process (juce::AudioBuffer<float>& buffer, const HaloParams& p,
             // El bass-mono solo (graves <250 Hz) dejaba medios/agudos decorrelados → al sumar a mono cancelaba
             // y la CORR de banda completa se quedaba en ~0.36 (NO mono-safe). El gate del sello exige CORR≥0.95:
             // con IN PHASE el wash deja de orbitar (pan ya apagado arriba) y L=R en TODA la banda → seguro al
-            // sumar a mono (club/vinilo). El 1-polo de graves se mantiene de estado (continuidad/sin click).
-            orbitBassLpL += orbitBassCoef * (oL - orbitBassLpL);
-            orbitBassLpR += orbitBassCoef * (oR - orbitBassLpR);
+            // sumar a mono (club/vinilo).
             if (p.monoSafe)
             {
                 const float mono = 0.5f * (oL + oR);

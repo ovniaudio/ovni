@@ -187,6 +187,11 @@ namespace
     constexpr float kSpecModDepth  = 1.2f;   // escala de profundidad del peine (× MOTION·SPREAD·ramp)
     constexpr float kSpecModCycles = 3.0f;   // picos/notches a lo largo del espectro log-f
     constexpr float kSpecModFloor  = 0.2f;   // piso de gMono (sin nulls totales)
+    // TECHO de gMono (v0.1.1): la profundidad completa mantiene el barrido AUDIBLE en mono (el
+    // hundimiento a kSpecModFloor domina el delta), pero se CAPA el up-swing por HEADROOM: sin techo
+    // el pico llegaba a 1+depth≈2.2 (+6.85 dB pre-limiter). +3.5 dB deja margen y el limiter vuelve a
+    // ser red de seguridad; el hundimiento (movimiento audible en mono) queda intacto.
+    constexpr float kSpecModCeil   = 1.5f;   // techo de gMono (+3.5 dB) — headroom sin matar el movimiento
 
     // Envolvente de apertura e(x, s): cuánto se va AL BORDE cada posición espectral x
     // (0=graves, 1=aire) con fuerza s (0..1). knee = dónde llega a apertura plena;
@@ -756,7 +761,7 @@ void AuroraEngine::processFrame (const ovni::engines::StftEngine::FrameView& f)
         // y honestidad monótona) escalado por SPREAD; binDriveRamp lo band-limita (graves sólidos,
         // OLA limpio). Fase = MOTION → barre al rate del MOTION. Se pliega en gL/gR (writes igual).
         const float specDepth = motion01Sm * spreadSm * kSpecModDepth * binDriveRamp[(size_t) k];
-        const float gMono = juce::jmax (kSpecModFloor,
+        const float gMono = juce::jlimit (kSpecModFloor, kSpecModCeil,
             1.0f + specDepth
                  * std::sin (juce::MathConstants<float>::twoPi * kSpecModCycles * u - (float) motionPhase));
 
