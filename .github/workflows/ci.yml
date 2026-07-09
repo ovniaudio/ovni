@@ -108,6 +108,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # --- Subir los 6 bundles UNIVERSALES (VST3 + AU) para armar el DMG del release fuera de CI. ---
+      #     (Análogo a lo que orbita ya hace con ORBIT; el DMG completo se ensambla combinando ambos.)
+      - name: Subir los 6 bundles macOS (universal)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ovni-macos-universal
+          path: |
+            build/plugins/*/*_artefacts/Release/VST3/*.vst3
+            build/plugins/*/*_artefacts/Release/AU/*.component
+          if-no-files-found: warn
+          retention-days: 30
+
   # =============================================================================================
   # M6 — Windows (VST3). Build MSVC x64 en windows-2022 + pluginval strictness 10 sobre los 6.
   # Ninguno de los 6 usa IPP → compila directo (JUCE 8.0.13 + MSVC). Windows = VST3 (JUCE omite AU).
