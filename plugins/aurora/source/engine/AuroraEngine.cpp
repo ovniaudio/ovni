@@ -184,7 +184,7 @@ namespace
     // · φmotion = la fase del MOTION (rate, SYNC-able). El barrido va al rate del MOTION → su AM
     //   se declara como MOTION_SIDEBAND (peaje honesto del [alias]), NO como piso de alias.
     // clamp inferior kSpecModFloor (no nulls totales → sin huecos antinaturales ni flip de fase).
-    constexpr float kSpecModDepth  = 1.2f;   // escala de profundidad del peine (× MOTION·SPREAD·ramp)
+    constexpr float kSpecModDepth  = 0.4f;   // escala de profundidad del peine (× MOTION·SPREAD·ramp)
     constexpr float kSpecModCycles = 3.0f;   // picos/notches a lo largo del espectro log-f
     constexpr float kSpecModFloor  = 0.2f;   // piso de gMono (sin nulls totales)
 

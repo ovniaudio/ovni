@@ -223,7 +223,12 @@ else
     fi
   fi
 fi
-if [ "$AUVAL_OK" -ne 1 ]; then emit_and_exit 0; fi
+# auval-skipped (sin CODE/MANU detectables, o runner no-macOS) NO es fallo: la Puerta 3 ya corrió
+# pluginval lvl8 sobre el AU (que en macOS incluye validación estilo auval del componente), y aborta
+# en rojo si el AU no pasa. Aquí PV_AU siempre == passed. Solo un auval que CORRIÓ y FALLÓ rompe el
+# verde; skipped baja a WARN (se sigue publicando AUVAL_STATUS=skipped/AUVAL_OK=0 en el reporte).
+if [ "$AUVAL_STATUS" = "failed" ]; then emit_and_exit 0; fi
+[ "$AUVAL_STATUS" = "skipped" ] && WARNINGS=$((WARNINGS + 1))
 
 # ============ Puerta 5: TESTS (ctest) ============
 STAGE="tests"

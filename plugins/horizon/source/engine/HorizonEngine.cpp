@@ -102,6 +102,15 @@ namespace
     constexpr float kShimRateHz     = 0.18f;   // LFO lento (sub-audio: difuso, NO AM)
     constexpr float kShimLoHz       = 160.0f;  // bajo esto: graves SÓLIDOS (sin wobble de bajo)
     constexpr float kShimFullHz     = 700.0f;  // arriba: shimmer pleno
+
+    // HEADROOM del WIDENER VIVO (FREEZE off): el espectro vivo reconstruye a UNIDAD (full-scale
+    // in → wet full-scale) y con MIX 100 + SPREAD (des-correlación de fase por bin) el crest del
+    // wet roza ~1.0 ANTES del limiter → el limiter del sello (0.85) queda comprimiendo estado-
+    // estacionario en material caliente. Este trim baja el pico pre-limiter a ~0.90 (margen) y
+    // devuelve el limiter a RED DE SEGURIDAD. Escala L y R POR IGUAL → CORR/WIDTH intactos (el
+    // ancho audible NO cambia; sólo el nivel absoluto del wet vivo, −0.9 dB). Sólo el VIVO
+    // (va en liveGain); el FREEZE reconstruye pleno (freezeMag·frameWet, sin tocar).
+    constexpr float kLiveHeadroom = 0.90f;   // −0.9 dB de margen pre-limiter del widener vivo
 }
 
 // ------------------------------------------------------------------------------ prepare
@@ -536,7 +545,7 @@ void HorizonEngine::processFrame (const ovni::engines::StftEngine::FrameView& f)
     //   NO la toca (el vivo sigue al dry naturalmente); el gate tampoco (el latido es del freeze).
     // El gate del re-trigger modula TAMBIÉN el vivo (gateActive = RATE>0) → HORIZON groovea SIN
     // congelar: chop espectral rítmico, mono-audible. Sin RATE = 1 (sin gate). El X-fade lo cierra.
-    const float liveGain = (1.0f - freezeXf) * (gateActive ? clamp01 (gateAmpSm) : 1.0f);
+    const float liveGain = kLiveHeadroom * (1.0f - freezeXf) * (gateActive ? clamp01 (gateAmpSm) : 1.0f);
 
     // — ganancia del WET del frame: gate (latido) × duck (la pegada agacha) × freeze X-fade.
     //   Se hornea acá en la magnitud resintetizada; el MIX la cruza con el dry sin más.
