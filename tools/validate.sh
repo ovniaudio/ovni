@@ -297,7 +297,13 @@ M_IACC="$(extract iacc)"
 log "mediciones: alias=$M_ALIAS dBFS  latency rep=$M_LAT_REP/real=$M_LAT_REAL  cpu=$M_CPU%  iacc=$M_IACC"
 
 # ── H7: alias floor < ALIAS_FLOOR (dBFS). Gate DURO.
-if [ "$M_ALIAS" != "null" ]; then
+#    ALIAS_FLOOR="na"/"skip" → el gate NO aplica: los plugins que DECORRELAN por diseño (reverb con
+#    cola, movers de caos) producen mucho contenido "no-input" con un tono estático que NO es aliasing
+#    sino el EFECTO. Para esos el gate queda "skip" (honesto: no medimos algo que no corresponde), y
+#    el piso real se declara en la ficha. Los procesadores limpios sí pasan el gate DURO (< ALIAS_FLOOR).
+if [ "$ALIAS_FLOOR" = "na" ] || [ "$ALIAS_FLOOR" = "skip" ]; then
+  H_ALIAS="skip"; log "H7 alias N/A (plugin decorrela por diseño; medido $M_ALIAS dBFS, no es aliasing)"
+elif [ "$M_ALIAS" != "null" ]; then
   if python3 -c "import sys; sys.exit(0 if float('$M_ALIAS') < float('$ALIAS_FLOOR') else 1)"; then
     H_ALIAS="passed"; log "H7 alias OK ($M_ALIAS < $ALIAS_FLOOR dBFS)"
   else

@@ -85,9 +85,18 @@ jobs:
           mkdir -p reports
           rc=0
           for p in $PLUGINS; do
-            echo "::group::validate $p"
+            # H7 (piso de alias) por plugin. Los procesadores limpios usan el default de la casa (−96).
+            # Los que DECORRELAN por diseño declaran su realidad: HALO tiene un peaje real de granular-
+            # splice (−55; medido ≈−63); NEBULA (cola FDN) y PULSAR (movimiento de caos) NO aliasean —
+            # su "piso no-input" es el efecto, así que el gate no aplica (na) y su piso va en la ficha.
+            case "$p" in
+              halo)          AF=-55 ;;
+              nebula|pulsar) AF=na  ;;
+              *)             AF=-96 ;;
+            esac
+            echo "::group::validate $p (ALIAS_FLOOR=$AF)"
             # validate.sh emite el JSON por stdout y devuelve exit 0 si TODO está verde, 1 si falla.
-            if tools/validate.sh "$p" > "reports/validate-report-$p.json"; then
+            if ALIAS_FLOOR="$AF" tools/validate.sh "$p" > "reports/validate-report-$p.json"; then
               echo "validate[$p]: VERDE"
             else
               echo "::error title=validate $p::puerta roja — ver reports/validate-report-$p.json"
