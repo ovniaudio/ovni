@@ -74,8 +74,9 @@ Apple, macOS pide un click extra la primera vez — no es un problema del plugin
 |---|---|
 | `CMakePresets.json` (raíz) | preset `release-universal` (distribución) y `dev` (arm64-only, rápido). |
 | `packaging/build-universal.sh` | configura+buildea universal y **verifica con `lipo -archs`** que cada artefacto traiga arm64 **y** x86_64. **No firma nada** → corre sin credenciales. |
-| `packaging/make-dmg.sh` | **entregable gratis principal**: arma el `.dmg` con los `.vst3`/`.component` + alias a `/Library/Audio/Plug-Ins` + `LÉEME PRIMERO.txt`. Sin firma por default; firma opcional con `DEV_ID`. |
+| `packaging/make-dmg.sh` | **alternativa manual**: arma el `.dmg` con los `.vst3`/`.component` + alias a `/Library/Audio/Plug-Ins` + `LÉEME PRIMERO.txt`. Sin firma por default; firma opcional con `DEV_ID`. |
 | `packaging/make-installer.sh` | **alternativa**: arma el `.pkg` (VST3 → `/Library/Audio/Plug-Ins/VST3`, AU → `…/Components`). Sin firma por default; firma opcional con `INSTALLER_SIGN_ID`. |
+| `packaging/make-per-plugin.sh` | **entregable actual de la web**: `.pkg` POR PLUGIN + `.pkg` completo (con "Personalizar") + ZIPs de Windows por plugin + `SHA256SUMS.txt`, desde una carpeta plana de bundles. Los `.pkg` instalan con doble click y **sin cuarentena** (adiós `xattr`). Identificadores por plugin (`com.ovni.plugins.<id>.{vst3,au}`) y `BundleIsRelocatable=false`. |
 | `.github/workflows/ci.yml` | CI: build + ctest + validate por plugin, archiva reportes. |
 | `.github/workflows/release.yml` | Release: build universal → (firma opcional) → `.dmg` + `.pkg` → (notarización opcional) → publica. No falla sin secrets. |
 
@@ -104,6 +105,35 @@ Iterar rápido en Apple Silicon (build ~2x, NO universal):
 ```bash
 cmake --preset dev && cmake --build build
 ```
+
+## Assets por plugin (así se armaron los de v0.1.1)
+
+Los 15 assets por-plugin del release v0.1.1 (7 `.pkg` mac + `OVNI-v0.1.1.pkg` completo + 7 `.zip`
+win + `SHA256SUMS.txt`) se **reempaquetaron desde los binarios EXACTOS ya shipeados** (DMG/ZIP del
+release, checksum verificado antes de tocar nada) — bit-idénticos a lo que ya estaba QA'd:
+
+```bash
+# 1) extraer los bundles del DMG shipped a una carpeta plana:
+hdiutil attach -nobrowse -readonly OVNI-v0.1.1.dmg
+mkdir bundles && for b in "/Volumes/OVNI Audio"/*.vst3 "/Volumes/OVNI Audio"/*.component; do
+  ditto "$b" "bundles/$(basename "$b")"; done
+hdiutil detach "/Volumes/OVNI Audio"
+
+# 2) armar TODO (pkgs individuales + completo + zips win + checksums):
+packaging/make-per-plugin.sh --version 0.1.1 --bundles bundles --outdir out \
+    --winzip OVNI-v0.1.1-Windows.zip
+
+# 3) publicar:
+gh release upload v0.1.1 out/*.pkg out/*.zip out/SHA256SUMS.txt
+```
+
+**Para el próximo release**: cuando se arregle `release.yml` (pendiente conocido: el catálogo real
+de 7 se arma a mano porque ORBIT vive en `ovniaudio/orbita`), adoptar `make-per-plugin.sh` para los
+`.pkg` en lugar de `make-installer.sh` — usa identificadores POR plugin, así los recibos de pkgutil
+quedan coherentes entre "instalar uno" e "instalar todo". La web (`sello/web`) espera estos nombres
+de asset: `OVNI-v<V>.pkg` · `OVNI-<NAME>-v<V>.pkg` · `OVNI-<NAME>-v<V>-Windows.zip`, resueltos por
+el catch-all `/download/*` de `_redirects` (actualizar la versión ahí + `plugins.json` "version" +
+el hero de `index.html` al releasear).
 
 ## Deployment target: 11.0 (decisión documentada)
 
@@ -154,8 +184,8 @@ vaciar) `APPLE_DEVELOPER_ID_APP`.
 
 | Secret | Qué es | Dónde se saca |
 |---|---|---|
-| `APPLE_DEVELOPER_ID_APP` | **interruptor**: identidad de firma de app, p.ej. `Developer ID Application: Joaquin Cerrano (TEAMID1234)` | `security find-identity -v -p codesigning` |
-| `APPLE_DEVELOPER_ID_INSTALLER` | identidad del instalador, p.ej. `Developer ID Installer: Joaquin Cerrano (TEAMID1234)` | idem |
+| `APPLE_DEVELOPER_ID_APP` | **interruptor**: identidad de firma de app, p.ej. `Developer ID Application: Your Name (TEAMID1234)` | `security find-identity -v -p codesigning` |
+| `APPLE_DEVELOPER_ID_INSTALLER` | identidad del instalador, p.ej. `Developer ID Installer: Your Name (TEAMID1234)` | idem |
 | `APPLE_DEV_ID_APP_CERT_P12_BASE64` | cert *Developer ID Application* (.p12) en base64 | Keychain → exportar → `base64 -i …` |
 | `APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64` | cert *Developer ID Installer* (.p12) en base64 | Keychain → exportar → `base64 -i …` |
 | `APPLE_DEV_ID_CERT_PASSWORD` | contraseña con la que exportaste los `.p12` | la elegís vos al exportar |

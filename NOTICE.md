@@ -10,7 +10,7 @@ no se puede comprobar, es un bug — abrí un issue.
 
 > **Código fuente correspondiente (AGPLv3):** los 6 plugins del catálogo → este repo,
 > **<https://github.com/ovniaudio/ovni>** · el flagship **ORBIT** → su propio repo,
-> **<https://github.com/ovniaudio/orbita>**. El DMG `OVNI-v0.1.0.dmg` incluye los 7;
+> **<https://github.com/ovniaudio/orbita>**. Los instaladores del release (`OVNI-v<versión>.pkg`, los `.pkg` por plugin, el `.dmg`) incluyen los 7;
 > el fuente de cada uno está en uno de esos dos repos.
 
 > **Cómo se usa este archivo:** las mismas atribuciones viven, en forma compacta,
@@ -69,22 +69,12 @@ por red), pero las cumplimos al publicar el código completo del repo en el rele
 - **Licencia:** **BSL-1.0** (Boost Software License 1.0)
 - **Uso en el proyecto:** framework de tests. **No** se enlaza en los binarios de release.
 
-### Intel Integrated Performance Primitives (IPP)  ← **dependencia binaria de ORBIT (no de los 6 plugins OVNI)**
-- **Origen / autor:** Intel Corporation — <https://www.intel.com/content/www/us/en/developer/tools/oneapi/ipp.html>
-- **Versión:** IPP 2021.9.x (librerías estáticas redistribuibles de Intel para macOS x86_64).
-- **Licencia / términos:** IPP se redistribuye bajo la licencia propietaria de Intel (Intel
-  Simplified Software License / términos de redistribución de oneAPI), que permite incluir
-  las librerías estáticas ya compiladas dentro de un producto binario. No reproducimos acá
-  el texto de esa licencia; consultar los términos oficiales de Intel para el detalle.
-- **Uso en el proyecto:** **sólo ORBIT** enlaza IPP, y sólo para acelerar DSP. IPP es
-  **x86_64 únicamente**: en el binario universal de ORBIT las rutinas de IPP se compilan y
-  enlazan **estáticamente en la porción Intel (x86_64)**; la porción Apple Silicon (arm64)
-  usa JUCE/sistema puro, sin IPP. **Honestidad importante:** los otros **6 plugins del
-  catálogo OVNI (AURORA, DUST, HALO, HORIZON, NEBULA, PULSAR) NO usan IPP** — corren sobre
-  la API de JUCE pura. IPP figura acá porque **ORBIT viaja en este mismo DMG del catálogo**
-  (`OVNI-v0.1.0.dmg`). El código fuente completo de ORBIT (AGPLv3) y su atribución
-  detallada viven en su propio repositorio: **<https://github.com/ovniaudio/orbita>**
-  (ver el `NOTICE.md` de ese repo).
+### Intel IPP — ya no se usa (histórico ≤ v0.1.0)
+- **Desde v0.1.1, ningún plugin del catálogo — ORBIT incluido — enlaza Intel IPP** ni ninguna
+  otra librería propietaria: todas las plataformas corren JUCE puro (ver notas del release
+  v0.1.1). La atribución de IPP que vivía acá aplicaba sólo a la porción x86_64 de ORBIT
+  hasta v0.1.0 y se retiró junto con la dependencia. El detalle de ORBIT vive en su repo:
+  **<https://github.com/ovniaudio/orbita>** (ver el `NOTICE.md` de ese repo).
 
 ---
 

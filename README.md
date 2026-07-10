@@ -1,13 +1,15 @@
-# OVNI 🛸 — free, open-source spatial-audio plugins for macOS
+# OVNI 🛸 — free, open-source spatial-audio plugins
 
-Seven creative spatial-audio effects — **free and open-source (AGPLv3)**, VST3 + AU,
-universal for macOS 11+ (Apple Silicon + Intel). Simple interface, pro sound backed by
-real physics: HRTF, Doppler, physical reverberation.
+[![CI](https://github.com/ovniaudio/ovni/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ovniaudio/ovni/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ovniaudio/ovni?label=release)](https://github.com/ovniaudio/ovni/releases/latest)
+[![License: AGPLv3](https://img.shields.io/github/license/ovniaudio/ovni)](LICENSE)
 
-**→ [Download the whole catalog](https://github.com/ovniaudio/ovni/releases/latest)** ·
+Seven creative spatial-audio effects — **free and open-source (AGPLv3)**.
+macOS: VST3 + AU, universal (Apple Silicon + Intel), 11+. Windows: VST3, x64, 10+.
+Simple interface, pro sound backed by real physics: HRTF, Doppler, physical reverberation.
+
+**→ [Download the latest release](https://github.com/ovniaudio/ovni/releases/latest)** ·
 **[ovniaudio.com](https://ovniaudio.com)**
-
-One download (`OVNI-v0.1.0.dmg`) installs all seven plugins.
 
 ---
 
@@ -22,63 +24,85 @@ rest are born from and lives in its own repo → **[github.com/ovniaudio/orbita]
 | **PULSAR** | Auto-pan that throws your sound into orbit. Chaos, Doppler and binaural width — motion that obeys physics, not an LFO. |
 | **NEBULA** | Reverb of impossible, infinite spaces. An FDN cloud you sculpt — it breathes, it freezes, it never ends. |
 | **DUST** | Binaural echoes. Reflections of your sound scattered as bubbles orbiting the head — from a few discrete taps to a growing cloud. |
-| **HALO** | Shimmer that orbits. A pitched reverb feeds back into itself — an infinite choir of octaves and fifths circling the head. |
+| **HALO** | Shimmer that orbits. A pitched reverb feeds back into itself — an endless choir of octaves and fifths circling the head. |
 | **HORIZON** | Spectral freeze with a pulse. Capture an instant and hold it, then re-trigger it to the beat — eternal pad to rhythmic stutter. |
 | **AURORA** | Spectral panning: every frequency to its own place in the field. Your sound unfurled across the stereo — real width, mono-compatible. |
 
-Every plugin is mono-safe by design and ships zero- or low-latency (PDC-compensated where a
-spectral block is used).
+Every module carries an **IN PHASE** mono-safe path, and latency is honest: zero in most
+modules, 3 ms lookahead in NEBULA, one PDC-reported STFT frame in the spectral pair
+(HORIZON, AURORA). If a control claims something the DSP doesn't do, that's a bug.
 
-## Install
+## Install — macOS
 
-The plugins are **unsigned** (no paid Apple Developer certificate), so on first use macOS
-Gatekeeper will complain. Two ways past it:
+Grab the installer from the [latest release](https://github.com/ovniaudio/ovni/releases/latest):
 
-1. **Right-click → Open** the plugin bundle in Finder the first time, then confirm. *(For
-   plugin bundles this doesn't always surface an override — if it doesn't, use option 2.)*
-2. **Clear the quarantine flag** in Terminal (reliable), e.g.:
-   ```bash
-   xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/VST3/PULSAR.vst3"
-   xattr -dr com.apple.quarantine "/Library/Audio/Plug-Ins/Components/PULSAR.component"
-   ```
-   Repeat per plugin, or run it once over the whole folder.
+- **`OVNI-<version>.pkg`** — all seven plugins, one double-click. It places VST3 + AU in the
+  system plug-in folders (`/Library/Audio/Plug-Ins`) and asks for your password itself.
+  Click **Customize** to pick specific plugins.
+- **`OVNI-<PLUGIN>-<version>.pkg`** — just the one you want.
 
-Then rescan plugins in your DAW. macOS 11+ · Apple Silicon + Intel · Windows soon.
+Files installed by the .pkg carry **no quarantine flag**, so your DAW loads them with no
+Gatekeeper warnings. The installer itself is unsigned (no paid Apple certificate yet), so
+macOS may block it on first open — once: **right-click → Open** (macOS 14 or earlier) or
+**System Settings → Privacy & Security → "Open Anyway"** (macOS 15+).
+
+Prefer manual install? **`OVNI-<version>.dmg`** has the raw bundles; that path needs the
+`xattr -dr com.apple.quarantine …` step described in the `LÉEME PRIMERO` inside.
+
+Then rescan plugins in your DAW. macOS 11+, universal (Apple Silicon + Intel).
+
+## Install — Windows
+
+Download **`OVNI-<version>-Windows.zip`** (all seven) or a single
+**`OVNI-<PLUGIN>-<version>-Windows.zip`** — VST3, 64-bit, Windows 10+.
+
+Before extracting: right-click the ZIP → **Properties** → tick **Unblock** → Apply. Then
+extract and copy the `.vst3` folder(s) into `C:\Program Files\Common Files\VST3`. The
+plugins are unsigned, so SmartScreen may warn the first time — **More info → Run anyway**.
+Full steps (English + Español) are in `LEEME PRIMERO.txt` inside each ZIP. Windows is VST3
+only (AU is macOS-only).
+
+**Verify your download:** every release ships a `SHA256SUMS.txt` with the SHA-256 of every
+asset — `shasum -a 256 <file>` (macOS) or `certutil -hashfile <file> SHA256` (Windows).
 
 ## Build from source
 
-The six catalog plugins are one CMake/JUCE build. You need a JUCE checkout; `libmysofa`
-and `Catch2` are fetched automatically.
+The six catalog plugins are one CMake/JUCE build. JUCE is pinned (8.0.13) and reused from
+a local checkout via `-DOVNI_JUCE_DIR`, or fetched automatically if you don't pass one;
+`libmysofa` and `Catch2` are fetched automatically.
 
 ```bash
 git clone https://github.com/ovniaudio/ovni
 cd ovni
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-  -DOVNI_JUCE_DIR=/path/to/JUCE
+  -DOVNI_JUCE_DIR=/path/to/JUCE   # optional — omit to auto-fetch JUCE
 cmake --build build
+ctest --test-dir build            # the full test battery
 ```
 
-Run the tests with `ctest --test-dir build`. **ORBIT builds from its own repo**
-([ovniaudio/orbita](https://github.com/ovniaudio/orbita), which uses git submodules —
-clone it with `--recursive`).
+**ORBIT builds from its own repo** ([ovniaudio/orbita](https://github.com/ovniaudio/orbita),
+which uses git submodules — clone it with `--recursive`).
 
 ## Layout
 
 ```
 plugins/      the six catalog plugins (aurora, dust, halo, horizon, nebula, pulsar)
+              plus _probe, the internal build-harness test plugin
 shared/       shared DSP engines, UI kit, presets and the plugin chassis
 cmake/        build helpers
-packaging/    DMG / installer scripts
+packaging/    installer scripts (.pkg per plugin + full catalog, DMG, Windows ZIPs)
+tests/        catalog-wide test harness
 tools/        offline utilities (e.g. HRIR baking)
 ```
 
 ## License
 
 **GNU AGPLv3** — see [`LICENSE`](LICENSE). Third-party attributions (JUCE, libmysofa,
-Catch2, the HRIR datasets, and Intel IPP for ORBIT) are in [`NOTICE`](NOTICE.md).
+Catch2, the HRIR datasets and the embedded UI fonts) are in [`NOTICE.md`](NOTICE.md).
+As of v0.1.1 the whole catalog — ORBIT included — links **no proprietary libraries**.
 
 The whole catalog is free and open-source. The brand rests on **verifiable honesty**: if a
-control claims something the DSP doesn't do, that's a bug — open an issue.
+claim in here can't be checked, that's a bug — open an issue.
 
 🛸 **[ovniaudio.com](https://ovniaudio.com)**

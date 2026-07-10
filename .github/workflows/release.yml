@@ -28,7 +28,7 @@
 #       APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64  .p12 del cert "Developer ID Installer" (firma el .pkg).
 #       APPLE_DEV_ID_CERT_PASSWORD         la contraseña con la que exportaste los .p12.
 #       APPLE_DEVELOPER_ID_APP             nombre exacto de la identidad de firma de app, p.ej.
-#                                          "Developer ID Application: Joaquin Cerrano (TEAMID1234)".
+#                                          "Developer ID Application: Your Name (TEAMID1234)".
 #                                          ESTE secret es el "interruptor": si está presente →
 #                                          camino pago; si no → camino gratis.
 #       APPLE_DEVELOPER_ID_INSTALLER       identidad del instalador (firma el .pkg).

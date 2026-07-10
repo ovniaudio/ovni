@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # packaging/make-dmg.sh — Arma un .dmg de distribución GRATIS del catálogo OVNI (VST3 + AU).
 #
-# Es el ENTREGABLE PRINCIPAL del camino gratis (sin pagar la cuenta Apple Developer de 99 USD):
+# Es la ALTERNATIVA MANUAL del camino gratis (el principal: los .pkg de make-per-plugin.sh) (sin pagar la cuenta Apple Developer de 99 USD):
 # un .dmg que el usuario abre, arrastra los plugins a su carpeta de Plug-Ins, y listo. El plugin
 # SIN FIRMAR es 100% legal y funciona (AGPLv3 + JUCE); la única diferencia es que macOS muestra el
 # aviso de Gatekeeper la primera vez. El "LÉEME PRIMERO.txt" de adentro explica el workaround exacto.

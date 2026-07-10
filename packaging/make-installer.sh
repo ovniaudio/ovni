@@ -10,8 +10,9 @@
 # productbuild. El product archive es el que firmamos con la identidad de INSTALADOR
 # (Developer ID Installer) y el que se notariza después (release.yml).
 #
-# Nota de distribución: el DMG (packaging/make-dmg.sh) es el ENTREGABLE GRATIS PRINCIPAL. Este .pkg
-# se mantiene como alternativa (instala en rutas SYSTEM con un doble-click guiado). Tanto el .pkg
+# Nota de distribución: el ENTREGABLE PRINCIPAL de la web son los .pkg de make-per-plugin.sh
+# (por plugin + catálogo completo); el DMG quedó como alternativa manual. Este .pkg monolítico
+# se mantiene por compatibilidad con release.yml. Tanto el .pkg
 # como el .dmg SIN FIRMAR son 100% legales y funcionan: el usuario solo ve el aviso de Gatekeeper la
 # primera vez (workaround: click derecho → Abrir, o `xattr -dr com.apple.quarantine …`). Ver README.
 #
