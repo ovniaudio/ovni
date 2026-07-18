@@ -40,6 +40,10 @@ constexpr float kVoiceFifth  =  7.05f;   // quinta + 5 cents
 //    TONE del lazo ya oscurece). Base técnica §4: el FDN difunde + respira; el shimmer da la vida.
 constexpr float kFdnDecay01 = 0.95f;
 constexpr float kFdnTone01  = 0.18f;
+// SHIMMER de salida: valor del knob a partir del cual la capa pitched entra COMPLETA al wet.
+// == DEFAULT del param (55%) → los proyectos guardados al default suenan BIT-idéntico; por debajo
+// el primer paso pitched se desvanece linealmente hasta "reverb a secas" en 0 (QA 2026-07-16).
+constexpr float kShimmerFullOut = 0.55f;
 
 // ── Trayectoria orbital (base técnica §3/§9): Ellipse, freeHz=0.08 (≈1 vuelta/12 s; sólo fallback — el rate
 //    real lo elige RATE/SYNC), spread=0.35, radio orbital 0.70.
@@ -103,6 +107,16 @@ float HaloEngine::feedbackForRegen (float decay01) noexcept
 float HaloEngine::loopCutoffForTone (float tone01) noexcept
 {
     return logLerp (kToneHiHz, kToneLoHz, juce::jlimit (0.0f, 1.0f, tone01));
+}
+
+float HaloEngine::estimatedRt60Seconds (float decay01, float shimmer01) noexcept
+{
+    // Piso REAL: el difusor glacial corre con decay interno fijo (una pasada dura t60ForDecay(kFdnDecay01)
+    // ≈ 9.4 s aunque DECAY esté a 0). El lazo (regen·shimmer) lo estira por encima. Término de bloom
+    // (1 + 1.9·(d·s)²) CALIBRADO contra el T60 medido por [honestidad][halo] (ver HaloEngine.h).
+    const float bed = ovni::engines::FdnReverb::t60ForDecay (kFdnDecay01);
+    const float ds  = juce::jlimit (0.0f, 1.0f, decay01) * juce::jlimit (0.0f, 1.0f, shimmer01);
+    return bed * (1.0f + 1.9f * ds * ds);
 }
 
 // ── prepare / reset ─────────────────────────────────────────────────────────────────────────────────
@@ -191,6 +205,8 @@ void HaloEngine::prepare (const juce::dsp::ProcessSpec& spec)
         orbitItdR.setMaximumDelayInSamples (itdCap);
         orbitItdL.prepare (monoSpecOrbit);
         orbitItdR.prepare (monoSpecOrbit);
+        orbitBassCoef = 1.0f - (float) std::exp (-juce::MathConstants<double>::twoPi * 250.0 / sampleRate);
+        orbitBassLpL = orbitBassLpR = 0.0f;
         // Coef del LP 1-polo del corner del shelf de sombra de cabeza (fijo; el SHELF GAIN es lo que se modula).
         orbitShelfCoef = 1.0f - (float) std::exp (-juce::MathConstants<double>::twoPi * (double) kHeadShadowHz / sampleRate);
         orbitShelfLpL = orbitShelfLpR = 0.0f;
@@ -205,6 +221,9 @@ void HaloEngine::prepare (const juce::dsp::ProcessSpec& spec)
         loopLP[(size_t) ch].reset();
         loopHP[(size_t) ch].setCutoff (kLoopHpHz, sampleRate);
         loopHP[(size_t) ch].reset();
+        outHP[(size_t) ch].setCutoff (kLoopHpHz, sampleRate);   // EQ del camino pre-pitch (blend SHIMMER)
+        outHP[(size_t) ch].reset();
+        outLP[(size_t) ch].reset();                             // su cutoff sigue a TONE por-sample en (d)
         shimmerReturn[(size_t) ch].assign ((size_t) juce::jmax (1, maxBlock), 0.0);
     }
 
@@ -212,6 +231,8 @@ void HaloEngine::prepare (const juce::dsp::ProcessSpec& spec)
     wetBuf.clear();
     spatialMix.setSize (2, juce::jmax (1, maxBlock));
     spatialMix.clear();
+    prePitch.setSize (2, juce::jmax (1, maxBlock));
+    prePitch.clear();
 
     const double sr = sampleRate;
     shimmerSm.reset (sr, kSmoothMs * 0.001);
@@ -245,6 +266,7 @@ void HaloEngine::reset() noexcept
     traj.reset();
     orbitItdL.reset();
     orbitItdR.reset();
+    orbitBassLpL = orbitBassLpR = 0.0f;
     orbitShelfLpL = orbitShelfLpR = 0.0f;
     orbitGLsm = orbitGRsm = 1.0f;
     orbitDLsm = orbitDRsm = 0.0f;
@@ -253,10 +275,13 @@ void HaloEngine::reset() noexcept
     {
         loopLP[(size_t) ch].reset();
         loopHP[(size_t) ch].reset();
+        outLP[(size_t) ch].reset();
+        outHP[(size_t) ch].reset();
         std::fill (shimmerReturn[(size_t) ch].begin(), shimmerReturn[(size_t) ch].end(), 0.0);
     }
     wetBuf.clear();
     spatialMix.clear();
+    prePitch.clear();
     outLimiter.reset();
     firstBlock  = true;
     lastLoopRms = 0.0f;
@@ -305,6 +330,7 @@ void HaloEngine::process (juce::AudioBuffer<float>& buffer, const HaloParams& p,
         for (int ch = 0; ch < 2; ++ch) shimmerReturn[(size_t) ch].assign ((size_t) n, 0.0);
     if (wetBuf.getNumSamples()    < n) wetBuf.setSize    (2, n, false, false, true);
     if (spatialMix.getNumSamples()< n) spatialMix.setSize(2, n, false, false, true);
+    if (prePitch.getNumSamples()  < n) prePitch.setSize  (2, n, false, false, true);
 
     auto* inL  = buffer.getReadPointer (0);
     auto* inR  = bufCh > 1 ? buffer.getReadPointer (1) : inL;
@@ -381,6 +407,11 @@ void HaloEngine::process (juce::AudioBuffer<float>& buffer, const HaloParams& p,
         .breathRateHz = p.orbitRateHz,
         .inputDiffusion = false });   // el lazo NO se re-difunde por vuelta: HALO difunde su excitación (a)
 
+    // snapshot PRE-pitch del wet (para el blend honesto de SHIMMER en (d): a shimmer bajo la salida
+    // se acerca a esta reverb "a secas"; el lazo no lo usa — sigue 100% post-pitch).
+    for (int ch = 0; ch < 2; ++ch)
+        prePitch.copyFrom (ch, 0, wetBuf, ch, 0, n);
+
     // (c) Pitch-shift granular poly DENTRO del lazo (octava + quinta FIJAS), con OS 4× LOCAL (anti-alias del
     //     pitch, house-standard §1). El OS sube×4 → pitch.process → baja×4. Su latencia queda DENTRO del
     //     lazo (carácter). Diagnóstico [alias]: osEnabled=false saltea el OS para medir el alias crudo.
@@ -409,6 +440,8 @@ void HaloEngine::process (juce::AudioBuffer<float>& buffer, const HaloParams& p,
         float* wR = wetBuf.getWritePointer (1);
         double* retL = shimmerReturn[0].data();
         double* retR = shimmerReturn[1].data();
+        const float* preL = prePitch.getReadPointer (0);
+        const float* preR = prePitch.getReadPointer (1);
         double acc = 0.0;
         for (int i = 0; i < n; ++i)
         {
@@ -416,15 +449,22 @@ void HaloEngine::process (juce::AudioBuffer<float>& buffer, const HaloParams& p,
             const float  shimmer = shimmerSm.getNextValue();
             loopLP[0].setCutoff (cutoff, sampleRate);
             loopLP[1].setCutoff (cutoff, sampleRate);
+            outLP[0].setCutoff (cutoff, sampleRate);   // el camino pre-pitch sigue el MISMO TONE
+            outLP[1].setCutoff (cutoff, sampleRate);
 
             const double eL = loopHP[0].process (loopLP[0].process ((double) wL[i]));
             const double eR = loopHP[1].process (loopLP[1].process ((double) wR[i]));
 
-            // wetBuf pasa a contener la cola EQ (lo que va al spatializer/MIX). shimmerReturn = SHIMMER·EQ
-            // (lo que se reinyecta al lazo). Separar SHIMMER del wet de salida permite oír el shimmer aun con
-            // poca reinyección, y reinyectar fuerte sin ensordecer la salida.
-            wL[i] = (float) eL;
-            wR[i] = (float) eR;
+            // Camino PRE-pitch EQ'd (reverb a secas) — filtros PROPIOS (estado aparte del lazo).
+            const double pL = outHP[0].process (outLP[0].process ((double) preL[i]));
+            const double pR = outHP[1].process (outLP[1].process ((double) preR[i]));
+
+            // wetBuf pasa a contener la cola EQ que va al spatializer/MIX: blend HONESTO por SHIMMER
+            // (w=1 desde el default hacia arriba → idéntico a la salida histórica; w→0 = a secas).
+            // shimmerReturn = SHIMMER·EQ(post-pitch) SIN cambios (el lazo/estabilidad no se tocan).
+            const double w = (double) juce::jmin (1.0f, shimmer * (1.0f / kShimmerFullOut));
+            wL[i] = (float) ((1.0 - w) * pL + w * eL);
+            wR[i] = (float) ((1.0 - w) * pR + w * eR);
             retL[i] = (double) shimmer * eL;
             retR[i] = (double) shimmer * eR;
 
@@ -535,7 +575,9 @@ void HaloEngine::process (juce::AudioBuffer<float>& buffer, const HaloParams& p,
             // El bass-mono solo (graves <250 Hz) dejaba medios/agudos decorrelados → al sumar a mono cancelaba
             // y la CORR de banda completa se quedaba en ~0.36 (NO mono-safe). El gate del sello exige CORR≥0.95:
             // con IN PHASE el wash deja de orbitar (pan ya apagado arriba) y L=R en TODA la banda → seguro al
-            // sumar a mono (club/vinilo).
+            // sumar a mono (club/vinilo). El 1-polo de graves se mantiene de estado (continuidad/sin click).
+            orbitBassLpL += orbitBassCoef * (oL - orbitBassLpL);
+            orbitBassLpR += orbitBassCoef * (oR - orbitBassLpR);
             if (p.monoSafe)
             {
                 const float mono = 0.5f * (oL + oR);

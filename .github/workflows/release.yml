@@ -17,10 +17,9 @@
 #       Application, hardened runtime), se firma el .pkg/.dmg (Developer ID Installer/Application) y
 #       se NOTARIZA con notarytool + staple. Ahí desaparece el aviso de Gatekeeper para el usuario.
 #
-# Los steps de firma/notarización están guardados por env.HAS_SIGNING (== 'true'): NO se puede usar
-# el contexto `secrets` directamente en un `if:` (GitHub lo rechaza al arrancar → startup_failure a
-# 0s). Por eso el switch se calcula UNA vez a nivel job (env.HAS_SIGNING = ¿está el secret?) y los
-# steps miran ESA variable. El step "Empaquetar SIN firmar" mira el inverso (== 'false').
+# Los steps de firma/notarización están guardados con  if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
+# (los condicionales `if:` se evalúan SIEMPRE, también cuando el secret está vacío → el step se
+# saltea limpio, no falla). El step "Empaquetar SIN firmar" hace lo inverso.
 #
 #     Secrets a cargar en GitHub → Settings → Secrets and variables → Actions (solo camino PAGO):
 #       APPLE_DEV_ID_APP_CERT_P12_BASE64   .p12 del cert "Developer ID Application" en base64
@@ -28,7 +27,7 @@
 #       APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64  .p12 del cert "Developer ID Installer" (firma el .pkg).
 #       APPLE_DEV_ID_CERT_PASSWORD         la contraseña con la que exportaste los .p12.
 #       APPLE_DEVELOPER_ID_APP             nombre exacto de la identidad de firma de app, p.ej.
-#                                          "Developer ID Application: Your Name (TEAMID1234)".
+#                                          "Developer ID Application: Joaquin Cerrano (TEAMID1234)".
 #                                          ESTE secret es el "interruptor": si está presente →
 #                                          camino pago; si no → camino gratis.
 #       APPLE_DEVELOPER_ID_INSTALLER       identidad del instalador (firma el .pkg).
@@ -40,9 +39,9 @@
 name: Release
 
 on:
-  # Auto-release por tag DESACTIVADO a propósito: el catálogo incluye ORBIT (repo aparte) y la CI
-  # de ESTE repo solo empaquetaría los 6 plugins de acá (sin ORBIT), pisando el DMG de 14 bundles.
-  # El release v0.1.0 se sube A MANO con el DMG completo. Para correr a mano solo los 6: Run workflow.
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -60,13 +59,9 @@ jobs:
     env:
       BUILD_DIR: ${{ github.workspace }}/build
       CONFIG: Release
-      # Catálogo real (los 6 plugins con CMakeLists). Mismo set para el .dmg y el .pkg.
-      PLUGINS: "aurora dust halo horizon nebula pulsar"
+      # Catálogo real (los 7 plugins con CMakeLists). Mismo set para el .dmg y el .pkg.
+      PLUGINS: "aurora dust halo horizon nebula pulsar supernova"
       DIST_DIR: ${{ github.workspace }}/dist
-      # Switch firma/gratis calculado UNA vez: el contexto `secrets` NO es válido en un `if:` de step
-      # (arrancar el workflow falla con startup_failure), pero SÍ es válido en `env:`. Los steps de
-      # firma miran env.HAS_SIGNING == 'true'; el step sin firmar mira == 'false'.
-      HAS_SIGNING: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' && 'true' || 'false' }}
 
     steps:
       - name: Checkout
@@ -96,7 +91,7 @@ jobs:
 
       # --- Importar los certificados Developer ID a un keychain temporal del runner. ---
       - name: Importar certificados Developer ID
-        if: ${{ env.HAS_SIGNING == 'true' }}
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
         env:
           APP_CERT_B64: ${{ secrets.APPLE_DEV_ID_APP_CERT_P12_BASE64 }}
           INSTALLER_CERT_B64: ${{ secrets.APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64 }}
@@ -126,7 +121,7 @@ jobs:
       # --- Codesign de cada artefacto universal (Developer ID Application, hardened runtime). ---
       # El hardened runtime (--options runtime) es obligatorio para que Apple notarice.
       - name: Codesign (Developer ID Application)
-        if: ${{ env.HAS_SIGNING == 'true' }}
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
         env:
           SIGN_ID: ${{ secrets.APPLE_DEVELOPER_ID_APP }}
         run: |
@@ -140,10 +135,34 @@ jobs:
               --sign "$SIGN_ID" "$bundle"
             codesign --verify --strict --verbose=2 "$bundle"
           done
+          # La app standalone de SUPERNOVA (SUPERNOVA.app). Hardened runtime + --preserve-metadata=entitlements
+          # para que NO se pierdan sus entitlements (captura de audio del sistema por ScreenCaptureKit) al
+          # re-firmar con Developer ID. NOTA: validar la notarización de la app contra la cuenta real la 1ra vez.
+          APP="$(find "$BUILD_DIR" -name 'SUPERNOVA.app' -type d -prune | head -1)"
+          if [ -n "$APP" ]; then
+            echo "codesign app: $APP"
+            codesign --force --timestamp --options runtime --preserve-metadata=entitlements \
+              --sign "$SIGN_ID" "$APP"
+            codesign --verify --strict --verbose=2 "$APP"
+          fi
 
-      # --- Empaquetar FIRMADO (.dmg + .pkg). El .dmg es el entregable principal; el .pkg, alternativa. ---
+      # --- Carpeta plana de bundles para make-per-plugin.sh: NAME.vst3 + NAME.component (+ SUPERNOVA.app).
+      #     Corre en AMBOS caminos (los bundles ya están firmados si fue el camino pago). ---
+      - name: Ensamblar bundles (VST3 + AU + SUPERNOVA.app)
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/bundles"
+          find "$BUILD_DIR" -path "*_artefacts/$CONFIG/*" \( -name '*.vst3' -o -name '*.component' \) -prune -print | while read -r b; do
+            ditto "$b" "$GITHUB_WORKSPACE/bundles/$(basename "$b")"
+          done
+          APP="$(find "$BUILD_DIR" -name 'SUPERNOVA.app' -type d -prune | head -1)"
+          if [ -n "$APP" ]; then ditto "$APP" "$GITHUB_WORKSPACE/bundles/SUPERNOVA.app"; else echo "::warning title=Sin app::no encontré SUPERNOVA.app en $BUILD_DIR"; fi
+          echo "bundles: $(ls "$GITHUB_WORKSPACE/bundles")"
+
+      # --- Empaquetar FIRMADO (.dmg + .pkg por plugin + completo + SHA256SUMS). El .pkg por-plugin
+      #     (make-per-plugin.sh) es lo que espera la web; el .dmg queda como alternativa manual. ---
       - name: Empaquetar firmado (.dmg + .pkg)
-        if: ${{ env.HAS_SIGNING == 'true' }}
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
         env:
           DEV_ID: ${{ secrets.APPLE_DEVELOPER_ID_APP }}
           INSTALLER_SIGN_ID: ${{ secrets.APPLE_DEVELOPER_ID_INSTALLER }}
@@ -157,17 +176,19 @@ jobs:
           packaging/make-dmg.sh \
             --version "$PKG_VERSION" \
             --plugins "$PLUGINS" \
+            --apps "supernova" \
             --out "$DIST_DIR/OVNI-$OVNI_VERSION.dmg"
-          # .pkg firmado (Developer ID Installer). Mismo set de plugins que el .dmg.
-          INSTALLER_SIGN_ID="$INSTALLER_SIGN_ID" BUILD_DIR="$BUILD_DIR" CONFIG="$CONFIG" \
-          packaging/make-installer.sh \
+          # .pkg POR PLUGIN + completo + SHA256SUMS (firmado, Developer ID Installer). Incluye la
+          # SUPERNOVA.app en /Applications (make-per-plugin.sh la detecta en la carpeta de bundles).
+          INSTALLER_SIGN_ID="$INSTALLER_SIGN_ID" \
+          packaging/make-per-plugin.sh \
             --version "$PKG_VERSION" \
-            --plugins "$PLUGINS" \
-            --out "$DIST_DIR/OVNI-$OVNI_VERSION.pkg"
+            --bundles "$GITHUB_WORKSPACE/bundles" \
+            --outdir "$DIST_DIR"
 
       # --- Notarizar (.dmg + .pkg) con notarytool + staple. Solo camino pago. ---
       - name: Notarizar (notarytool) + staple
-        if: ${{ env.HAS_SIGNING == 'true' }}
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP != '' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -179,7 +200,7 @@ jobs:
             echo "::error title=Faltan credenciales de notarización::Hay firma pero falta APPLE_ID / APPLE_TEAM_ID / APPLE_APP_PASSWORD. Cargalos o quitá APPLE_DEVELOPER_ID_APP para volver al camino gratis."
             exit 1
           fi
-          for art in "$DIST_DIR/OVNI-$OVNI_VERSION.dmg" "$DIST_DIR/OVNI-$OVNI_VERSION.pkg"; do
+          for art in "$DIST_DIR"/*.dmg "$DIST_DIR"/*.pkg; do
             [ -f "$art" ] || continue
             echo "notarizando: $art"
             # --wait bloquea hasta que Apple devuelve Accepted/Invalid (sin esto el ticket no existe aún).
@@ -198,7 +219,7 @@ jobs:
       # Produce el .dmg + .pkg sin firma y NO falla. Es el default de hoy.
       # =========================================================================================
       - name: Empaquetar SIN firmar (.dmg + .pkg)
-        if: ${{ env.HAS_SIGNING == 'false' }}
+        if: ${{ secrets.APPLE_DEVELOPER_ID_APP == '' }}
         env:
           OVNI_VERSION: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
@@ -211,25 +232,22 @@ jobs:
           packaging/make-dmg.sh \
             --version "$PKG_VERSION" \
             --plugins "$PLUGINS" \
+            --apps "supernova" \
             --out "$DIST_DIR/OVNI-$OVNI_VERSION.dmg"
-          # .pkg sin firmar (alternativa): INSTALLER_SIGN_ID vacío → no firma. Mismo set que el .dmg.
-          BUILD_DIR="$BUILD_DIR" CONFIG="$CONFIG" \
-          packaging/make-installer.sh \
+          # .pkg POR PLUGIN + completo + SHA256SUMS (sin firmar). Incluye la SUPERNOVA.app en /Applications
+          # (make-per-plugin.sh la detecta en la carpeta de bundles). Es lo que enlaza la web.
+          packaging/make-per-plugin.sh \
             --version "$PKG_VERSION" \
-            --plugins "$PLUGINS" \
-            --out "$DIST_DIR/OVNI-$OVNI_VERSION.pkg"
+            --bundles "$GITHUB_WORKSPACE/bundles" \
+            --outdir "$DIST_DIR"
 
       # --- Subir los artefactos (.dmg + .pkg) al GitHub Release del tag. Igual en ambos caminos. ---
-      # Action de terceros pineada a un commit SHA (no a un tag móvil) por supply-chain: un tag como
-      # @v2 lo puede re-apuntar el maintainer a cualquier commit; el SHA es inmutable.
       - name: Publicar en el Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        uses: softprops/action-gh-release@v2
         with:
-          # workflow_dispatch NO crea el tag solo: se lo pasamos explícito desde el input (si no,
-          # la action usa github.ref, que en un dispatch es la rama y NO el tag a publicar).
-          tag_name: ${{ github.event.inputs.tag }}
           files: |
             dist/*.dmg
             dist/*.pkg
+            dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
           generate_release_notes: true

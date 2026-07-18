@@ -4,8 +4,8 @@
 [![Release](https://img.shields.io/github/v/release/ovniaudio/ovni?label=release)](https://github.com/ovniaudio/ovni/releases/latest)
 [![License: AGPLv3](https://img.shields.io/github/license/ovniaudio/ovni)](LICENSE)
 
-Seven creative spatial-audio effects — **free and open-source (AGPLv3)**.
-macOS: VST3 + AU, universal (Apple Silicon + Intel), 11+. Windows: VST3, x64, 10+.
+Seven creative spatial-audio effects **plus SUPERNOVA, an audio-reactive visual synth** — all **free and open-source (AGPLv3)**.
+macOS: VST3 + AU, universal (Apple Silicon + Intel), 11+. Windows: VST3, x64, 10+ (audio catalog — SUPERNOVA is macOS-only: VST3 + AU + a standalone app on Metal).
 Simple interface, pro sound backed by real physics: HRTF, Doppler, physical reverberation.
 
 **→ [Download the latest release](https://github.com/ovniaudio/ovni/releases/latest)** ·
@@ -15,7 +15,7 @@ Simple interface, pro sound backed by real physics: HRTF, Doppler, physical reve
 
 ## The plugins
 
-This repo holds the **six catalog plugins**. The flagship, **ORBIT**, is the engine the
+This repo holds the **six audio catalog plugins and SUPERNOVA**, the audiovisual flagship. The flagship, **ORBIT**, is the engine the
 rest are born from and lives in its own repo → **[github.com/ovniaudio/orbita](https://github.com/ovniaudio/orbita)**.
 
 | Plugin | What it does |
@@ -27,6 +27,7 @@ rest are born from and lives in its own repo → **[github.com/ovniaudio/orbita]
 | **HALO** | Shimmer that orbits. A pitched reverb feeds back into itself — an endless choir of octaves and fifths circling the head. |
 | **HORIZON** | Spectral freeze with a pulse. Capture an instant and hold it, then re-trigger it to the beat — eternal pad to rhythmic stutter. |
 | **AURORA** | Spectral panning: every frequency to its own place in the field. Your sound unfurled across the stereo — real width, mono-compatible. |
+| **SUPERNOVA** | Audio-reactive **visual synth**: 262,144 GPU particles deform your image or video with the sound. VST3 + AU plus a standalone app that hears your Mac's system audio driver-free (ScreenCaptureKit); the audio path is bit-exact pass-through. macOS-only (Metal). |
 
 Every module carries an **IN PHASE** mono-safe path, and latency is honest: zero in most
 modules, 3 ms lookahead in NEBULA, one PDC-reported STFT frame in the spectral pair
@@ -35,6 +36,10 @@ modules, 3 ms lookahead in NEBULA, one PDC-reported STFT frame in the spectral p
 ## Install — macOS
 
 Grab the installer from the [latest release](https://github.com/ovniaudio/ovni/releases/latest):
+
+> **Staged launch:** releases roll out in waves — each release carries the modules shipping
+> in that wave (v0.2.0: **ORBIT + SUPERNOVA**; the rest of the catalog is coming soon at
+> [ovniaudio.com](https://ovniaudio.com)).
 
 - **`OVNI-<version>.pkg`** — all seven plugins, one double-click. It places VST3 + AU in the
   system plug-in folders (`/Library/Audio/Plug-Ins`) and asks for your password itself.
@@ -67,7 +72,7 @@ asset — `shasum -a 256 <file>` (macOS) or `certutil -hashfile <file> SHA256` (
 
 ## Build from source
 
-The six catalog plugins are one CMake/JUCE build. JUCE is pinned (8.0.13) and reused from
+The whole catalog is one CMake/JUCE build (SUPERNOVA's Metal renderer and standalone app build on macOS only). JUCE is pinned (8.0.13) and reused from
 a local checkout via `-DOVNI_JUCE_DIR`, or fetched automatically if you don't pass one;
 `libmysofa` and `Catch2` are fetched automatically.
 

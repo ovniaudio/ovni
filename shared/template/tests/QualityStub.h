@@ -36,6 +36,12 @@
 #ifndef OVNI_QUALITY_SHORT
   #define OVNI_QUALITY_SHORT(proc) OVNI_QUALITY_WET (proc)
 #endif
+// Ventana de la cola del piso de silencio (s). Default 10; un plugin cuyo motor tiene una cola
+// FIJA por diseño cercana a 10 s (p.ej. el difusor glacial de HALO, t60≈9.4 s) puede extenderla
+// para que el gate mida el piso REAL (silencio) y no el final de esa cola de diseño.
+#ifndef OVNI_QUALITY_TAIL_SECS
+  #define OVNI_QUALITY_TAIL_SECS 10.0
+#endif
 
 namespace ovni_quality_detail
 {
@@ -71,7 +77,7 @@ TEST_CASE ("OVNI " OVNI_PLUGIN_SLUG ": calidad de senal (piso/DC/null mix0/linea
             for (int i = 0; i < N; ++i) { const float x = 0.4f * w.next(); buf.setSample (0, i, x); buf.setSample (1, i, x); }
             proc.processBlock (buf, midi);
         }
-        const int tailBlocks = (int) std::ceil (10.0 * SR / N);
+        const int tailBlocks = (int) std::ceil (OVNI_QUALITY_TAIL_SECS * SR / N);
         const int measFrom   = tailBlocks - (int) std::ceil (1.0 * SR / N);
         double acc = 0.0; long cnt = 0;
         for (int blk = 0; blk < tailBlocks; ++blk)

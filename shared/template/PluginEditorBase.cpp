@@ -46,10 +46,43 @@ void PluginEditorBase::addToCanvas (juce::Component& c)
     content.addAndMakeVisible (c);
 }
 
+void PluginEditorBase::setFlexibleCanvas (bool on)
+{
+    if (flexible == on) return;
+    flexible = on;
+    if (on)
+    {
+        content.setTransform ({});         // identidad — el canvas llena el editor (sin base×zoom)
+        resized();                         // re-fitea content al tamaño real + layoutCanvas()
+    }
+    else
+    {
+        applyZoom (zoom);                  // vuelve a base×zoom
+    }
+}
+
 void PluginEditorBase::applyZoom (Zoom z)
 {
     zoom = z;
-    const float f = zoomFactor (z);
+    if (flexible) return;                  // en modo flexible el tamaño lo manda la ventana de la app
+    float f = zoomFactor (z);
+
+    // NUNCA más grande que la pantalla (bug de campo en SUPERNOVA: L en una laptop cortaba el editor
+    // y "no podés ni ver"): el factor se clampea al área útil del display donde vive el editor (o el
+    // principal antes de mostrarse), con margen para la barra de título y el chrome del host.
+    {
+        const auto& displays = juce::Desktop::getInstance().getDisplays();
+        const auto* disp = displays.getDisplayForRect (getScreenBounds());
+        if (disp == nullptr) disp = displays.getPrimaryDisplay();
+        if (disp != nullptr && baseW > 0 && baseH > 0)
+        {
+            const auto ua = disp->userArea;
+            const float maxF = juce::jmin (((float) ua.getWidth()  - 24.0f) / (float) baseW,
+                                           ((float) ua.getHeight() - 64.0f) / (float) baseH);
+            f = juce::jlimit (0.5f, juce::jmax (0.5f, maxF), f);
+        }
+    }
+
     content.setTransform (juce::AffineTransform::scale (f));
     setSize (juce::roundToInt (baseW * f), juce::roundToInt (baseH * f));   // dispara resized() del editor
     repaint();
@@ -64,8 +97,11 @@ void PluginEditorBase::setZoom (Zoom z)
 
 void PluginEditorBase::resized()
 {
-    // El canvas vive en coords base; su transform de escala lo lleva al tamaño físico (= getWidth/Height).
-    content.setBounds (0, 0, baseW, baseH);
+    if (flexible)
+        content.setBounds (getLocalBounds());   // el canvas llena el editor (identidad) → Canvas::resized → layout
+    else
+        // El canvas vive en coords base; su transform de escala lo lleva al tamaño físico (= getWidth/Height).
+        content.setBounds (0, 0, baseW, baseH);
 }
 
 void PluginEditorBase::paint (juce::Graphics& g)
@@ -76,7 +112,7 @@ void PluginEditorBase::paint (juce::Graphics& g)
 //==================================================================================================
 void PluginEditorBase::layoutCanvas()
 {
-    auto r = juce::Rectangle<int> (0, 0, baseW, baseH);
+    auto r = juce::Rectangle<int> (0, 0, canvasW(), canvasH());
     headerArea = r.removeFromTop (headerHeight);
 
     // Zonas clickeables del header (mockup pulsar-a): power a la IZQUIERDA junto a la marca;
@@ -114,7 +150,7 @@ void PluginEditorBase::paintCanvas (juce::Graphics& g)
     g.fillAll (ui::theme::bg0);
     panel.setHue (familyHue);
     const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
-    panel.render (baseW, baseH, scale);   // nitidez: el scale acumula host DPI × zoom
+    panel.render (canvasW(), canvasH(), scale);   // nitidez: el scale acumula host DPI × zoom
     panel.paint (g);
 
     paintHeader (g);
@@ -123,6 +159,7 @@ void PluginEditorBase::paintCanvas (juce::Graphics& g)
 
 void PluginEditorBase::paintHeader (juce::Graphics& g)
 {
+    if (headerArea.isEmpty()) return;   // app-mode (setHeaderVisible(false)): sin chrome de plugin
     using namespace ovni::ui;
 
     // ===== superficie del header (mockup): sheen superior + hairline inferior =====
@@ -276,6 +313,7 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
 // Va ENCIMA de los hijos (paintOverChildren del canvas) para "cerrar" el instrumento.
 void PluginEditorBase::paintBezel (juce::Graphics& g)
 {
+    if (flexible) return;   // app full-bleed: sin marco de instrumento (el visual Metal llena la ventana)
     const auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) baseW, (float) baseH).reduced (4.0f);
     g.setColour (juce::Colour (0x0ea0c0e0));                 // hairline tenue (alpha ~0.055)
     g.drawRoundedRectangle (r, 3.0f, 1.0f);

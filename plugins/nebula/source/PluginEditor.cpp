@@ -20,14 +20,17 @@ namespace metrics
 NebulaEditor::NebulaEditor (NebulaProcessor& p)
     : ovni::PluginEditorBase (p, juce::String::fromUTF8 ("SPC·01")),   // designación tras el wordmark
       proc (p),
-      // La nube lee las 4 telemetrías que reacciona (size/decay/tone/breath) y ESCRIBE size/decay en el drag.
-      cloud (p.uiSize, p.uiDecay, p.uiTone, p.uiBreath,
+      // La nube lee las telemetrías que reacciona (size/decay/tone/breath + fase REAL del BreathLFO
+      // del motor — respira en fase con el audio) y ESCRIBE size/decay en el drag.
+      cloud (p.uiSize, p.uiDecay, p.uiTone, p.uiBreath, p.uiBreathLfo,
              p.apvts.getParameter (pid::SIZE), p.apvts.getParameter (pid::DECAY)),
       meter (p.uiOutPeak, p.uiClip),
       inPhase (p.apvts, "monoSafe",
                juce::String::fromUTF8 ("IN PHASE"), juce::String::fromUTF8 ("MONO SAFE"), th::magenta),
       syncCtl (p.apvts, juce::String(), pid::BREATHSYNC, pid::BREATHDIV,
-               nebula::params::sync::labels(), th::magenta)   // rateParamID vacío = FREE orgánico sin knob
+               nebula::params::sync::labels(), th::magenta,
+               juce::String::fromUTF8 ("ORGANIC DRIFT"))   // rateParamID vacío = FREE orgánico sin knob;
+               // el caption llena el slot en FREE (antes quedaba un hueco mudo en el rail izquierdo)
 {
     setFamilyHue (th::magenta);   // Espacio/Profundidad: el fondo (Panel) + header respetan el color de familia
     meter.setSampleRate (p.getSampleRate() > 0.0 ? p.getSampleRate() : 48000.0);
@@ -266,7 +269,10 @@ void NebulaEditor::paintBody (juce::Graphics& g)
     {
         g.setColour (th::lineSoft);
         g.fillRect (specArea.getX(), specArea.getY(), 1, specArea.getHeight());
-        const char* const specs[] = { "FDN NET 16\xc3\x97", "MODULATION", "DIFFUSION", "SHIMMER" };
+        // credenciales HONESTAS del motor (Manifiesto #2): 8 líneas Householder, breath, allpass
+        // de inyección, early reflections FIR. ("16×" y "SHIMMER" eran del mockup: mentían — el
+        // shimmer es identidad de HALO, no de NÉBULA.)
+        const char* const specs[] = { "FDN NET 8\xc3\x97", "MODULATION", "DIFFUSION", "EARLY FIR" };
         g.setFont (fonts::mono (7.0f).withExtraKerningFactor (0.22f));
         int y = specArea.getY() + 4;
         for (auto* s : specs)

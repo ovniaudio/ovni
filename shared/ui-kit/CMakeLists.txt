@@ -44,12 +44,6 @@ endforeach ()
 target_include_directories(ovni_uikit PRIVATE
     $<TARGET_PROPERTY:ovni_uikit_assets,INTERFACE_INCLUDE_DIRECTORIES>)
 
-# ...y ese header lo GENERA un custom command de juce_add_binary_data(ovni_uikit_assets). Fonts.cpp no
-# puede compilarse antes de que exista. En Ninja el grafo global ya ordena la generación; en el
-# generador Visual Studio (MSBuild compila cada .vcxproj por separado) hace falta forzar la dependencia
-# explícita — si no, en Windows falla con: C1083 "Cannot open include file: 'OvniUikitData.h'".
-add_dependencies(ovni_uikit ovni_uikit_assets)
-
 # El target final linkea JUCE (compila su unity una vez) + las fonts embebidas.
 target_link_libraries(ovni_uikit INTERFACE
     juce::juce_gui_basics

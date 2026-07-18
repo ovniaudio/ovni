@@ -40,6 +40,10 @@ AuroraEditor::AuroraEditor (AuroraProcessor& p)
     enableBottomBar (th::green, juce::String::fromUTF8 ("SPL\xc2\xb7""01  \xe2\x80\x94  hover a control to read it"));
     bottomBar().setSignature ("SIGNAL STABLE");
 
+    // PDC real en la telemetría del campo (Manifiesto #3: la latencia STFT se publica, no se esconde).
+    field.pdcProvider = [this] { return proc.getLatencySamples(); };
+    field.refreshTelemetryNow();
+
     addToCanvas (field);
     addToCanvas (meter);
     addToCanvas (inPhase);
@@ -290,7 +294,9 @@ void AuroraEditor::paintBody (juce::Graphics& g)
     {
         g.setColour (th::lineSoft);
         g.fillRect (specArea.getX(), specArea.getY(), 1, specArea.getHeight());
-        const char* const specs[] = { "STFT 2048", "24 BANDS", "SPECTRAL PAN", "LIMITER" };
+        // credenciales HONESTAS del motor (Manifiesto #2): "24 BANDS" era el conteo del visualizador
+        // (el motor panea POR BIN, ~1025 bins); lo real y distintivo es la red mono-safe (60→700 Hz).
+        const char* const specs[] = { "STFT 2048", "SPECTRAL PAN", "MONO-SAFE NET", "LIMITER" };
         g.setFont (fonts::mono (7.0f).withExtraKerningFactor (0.22f));
         int y = specArea.getY() + 4;
         for (auto* s : specs)

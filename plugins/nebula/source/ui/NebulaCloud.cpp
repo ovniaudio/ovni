@@ -1,6 +1,7 @@
 #include "NebulaCloud.h"
 #include "NebulaCloudStatic.h"
 #include "ui-kit/Fonts.h"
+#include "engines/fdn/FdnReverb.h"   // t60ForDecay(): única fuente de verdad del RT60 (telemetría honesta)
 #include <cmath>
 
 namespace nebula::ui
@@ -23,10 +24,12 @@ static constexpr float kBloomFloor = 0.60f;
 
 NebulaCloud::NebulaCloud (std::atomic<float>& size, std::atomic<float>& decay,
                           std::atomic<float>& tone, std::atomic<float>& breath,
+                          std::atomic<float>& breathLfo,
                           juce::RangedAudioParameter* sizeParam,
                           juce::RangedAudioParameter* decayParam)
     : ovni::ui::VisualizerBase (30),
       sizeSrc (size), decaySrc (decay), toneSrc (tone), breathSrc (breath),
+      breathLfoSrc (breathLfo),
       sizeP (sizeParam), decayP (decayParam)
 {
     setSettleHold (45);
@@ -42,9 +45,7 @@ NebulaCloud::NebulaCloud (std::atomic<float>& size, std::atomic<float>& decay,
     breathNow = breathSm = breathSrc.load (std::memory_order_relaxed);
     densitySm = 0.18f + decaySm * 0.82f;
 
-    // Fases de los 2 LFOs incoherentes desfasadas (que el primer frame ya respire, no parta plano).
-    lfoA = 1.3f; lfoB = 4.1f;
-    for (int i = 0; i < 40; ++i) advanceFrame();   // precalentar la respiración (mockup §boot)
+    for (int i = 0; i < 40; ++i) advanceFrame();   // precalentar el settle de los smoothers (mockup §boot)
     refreshTelemetry();
 }
 
@@ -200,9 +201,11 @@ void NebulaCloud::paintMotes (juce::Graphics& g, int w, int h)
     for (int i = 0; i < visN; ++i)
     {
         const auto& m = motes[i];
-        // micro-respiración propia (2 LFOs) → cada mota inhala/exhala desfasada.
-        const float rBreath = 1.0f + std::sin (lfoA + m.ph1) * 0.05f * breathSm
-                                   + std::sin (lfoB + m.ph2) * 0.04f * breathSm;
+        // micro-respiración por mota: la MISMA fase real del motor, desfasada por mota (ph1/ph2)
+        // → cada mota inhala/exhala con el audio, sin un LFO visual aparte.
+        const float bAng = breathPhase01 * juce::MathConstants<float>::twoPi;
+        const float rBreath = 1.0f + std::sin (bAng + m.ph1) * 0.05f * breathSm
+                                   + std::sin (bAng * 0.618f + m.ph2) * 0.04f * breathSm;
         const float rr = m.rad * liveR * rBreath * (0.85f + m.base * 0.30f);
         const float px = cx + std::cos (m.ang) * rr;
         const float py = cy + std::sin (m.ang) * rr;
@@ -274,8 +277,9 @@ void NebulaCloud::refreshTelemetry()
 {
     // DENS: densidad observada (∝ Decay, suavizada) — espejo del mockup §tele.
     teleDens = "DENS " + juce::String (densitySm, 2);
-    // RT60 derivado de DECAY+SIZE, honesto: rango 0.2–12 s (mockup §tele).
-    const float rt = 0.2f + decaySm * juce::jmap (sizeSm, 0.0f, 1.0f, 4.0f, 11.8f);
+    // RT60 HONESTO: la misma fórmula del motor (FdnReverb::t60ForDecay, única fuente de verdad).
+    // El SIZE no entra: el motor recalcula g_i para CONSERVAR el T60 al cambiar de escala.
+    const float rt = ovni::engines::FdnReverb::t60ForDecay (juce::jlimit (0.0f, 1.0f, decaySm));
     teleRt   = juce::String (rt, 1) + " s";
     teleSize = juce::String (juce::jlimit (0.0f, 1.0f, sizeSm), 2);
     teleBreath = juce::String (juce::jlimit (0.0f, 1.0f, breathPhase01), 2);
@@ -308,17 +312,12 @@ bool NebulaCloud::advanceFrame()
     const float dTarget = 0.18f + decaySm * 0.82f;
     densitySm += (dTarget - densitySm) * 0.08f;
 
-    // --- respiración: 2 LFOs incoherentes → inhala/exhala orgánico (mockup §step) -------------------
-    // Avanza SIEMPRE (mientras Breath>0 la nube respira aunque las perillas no se toquen).
-    const float breathAmt = breathSm;
-    constexpr float twoPi = juce::MathConstants<float>::twoPi;
-    const float dt = 1.0f / 30.0f;
-    const float bw = 0.10f + breathAmt * 0.22f;   // orgánica: lenta (rapidez ∝ Breath)
-    lfoA += dt * bw * twoPi * 0.5f;
-    lfoB += dt * bw * twoPi * 0.5f * 0.61803f;    // incoherente (razón áurea)
-    if (lfoA > 1.0e6f) lfoA = std::fmod (lfoA, twoPi);
-    if (lfoB > 1.0e6f) lfoB = std::fmod (lfoB, twoPi);
-    const float raw = 0.5f + 0.5f * (0.62f * std::sin (lfoA) + 0.38f * std::sin (lfoB));
+    // --- respiración REAL: fase del BreathLFO del MOTOR (leída lock-free del processor) ------------
+    // La nube respira EN FASE con lo que suena — SYNC al tempo incluido. (Antes animaba 2 LFOs
+    // visuales propios, desincronizados del audio; QA catálogo 2026-07-16 con OK de Joaquín.)
+    // Si el host no procesa bloques, el valor queda quieto: honesto (el motor tampoco respira).
+    const float raw = 0.5f + 0.5f * juce::jlimit (-1.0f, 1.0f,
+                                                  breathLfoSrc.load (std::memory_order_relaxed));
     breathPhase01 += (raw - breathPhase01) * 0.10f;
 
     // telemetría honesta: refresca strings cada ~0.2 s (6 frames a 30 fps), como el mockup.

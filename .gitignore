@@ -11,8 +11,4 @@ cmake-build-*/
 /tmp/ovni_*_render_*.wav
 /docs/qa-sessions/renders/
 build-universal/
-
-# release artifacts
-dist/
-*.dmg
-*.pkg
+build-uni/

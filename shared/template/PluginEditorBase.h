@@ -45,6 +45,27 @@ public:
     void applyZoom (Zoom z);                     // aplica (transform + setSize). NO persiste. (público: tests)
     void setZoom   (Zoom z);                     // aplica + persiste (lo usa el selector)
 
+    // ======== header browser on/off (H14 · app-mode) ========
+    // La app standalone esconde el chrome de PLUGIN (presets/A-B/power/zoom) y pone su propia barra.
+    // ADITIVO: default visible → ningún plugin del catálogo cambia. paintHeader se guarda con área vacía.
+    void setHeaderVisible (bool on)
+    {
+        if (on == (headerHeight > 0)) return;
+        if (! on) { savedHeaderHeight = headerHeight; headerHeight = 0; }
+        else        headerHeight = savedHeaderHeight > 0 ? savedHeaderHeight : 58;
+        layoutCanvas();
+    }
+
+    // ======== flexible canvas (fix 1 · app full-bleed) ========
+    // Por default el editor es base×zoom (aspecto FIJO): el canvas mide baseW×baseH y un transform lo escala.
+    // Dentro de un DAW eso es correcto. Pero la APP standalone quiere LLENAR una ventana/pantalla de cualquier
+    // tamaño (el visual full-bleed, sin negro muerto al costado). En modo flexible el canvas toma el tamaño
+    // REAL del editor (transform identidad) y layoutCanvas/layoutBody reflowean a ese tamaño → la vista Metal
+    // llena todo el ancho (la figura es invariante al tamaño por resScale). ADITIVO: default OFF → ningún
+    // plugin del catálogo cambia. El render NO se toca → goldens byte-exactos.
+    void setFlexibleCanvas (bool on);
+    bool isFlexibleCanvas() const noexcept { return flexible; }
+
 protected:
     // ======== PUNTOS DE EXTENSIÓN (el plugin concreto los define; coords BASE) ========
 
@@ -94,7 +115,14 @@ private:
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void paintCanvas (juce::Graphics&);                  // ex-paint()  (coords base)
+
+protected:
+    // Re-corre el layout del canvas (header + zonas + layoutBody). PROTECTED a propósito: resized() del
+    // editor NO re-lay-outea el cuerpo (solo fija el canvas base, y con el mismo tamaño es no-op) — un
+    // plugin que cambia su layout interno (p.ej. modo inmersivo de SUPERNOVA) llama esto directamente.
     void layoutCanvas();                                 // ex-resized() (coords base)
+
+private:
     void canvasMouseDown (const juce::MouseEvent&);      // ex-mouseDown()
     void paintHeader (juce::Graphics&);
     void paintBezel (juce::Graphics&);                   // doble hairline inset + corner-brackets (mockup)
@@ -103,10 +131,16 @@ private:
 
     static juce::PropertiesFile& uiSettings();           // settings global del sello (compartido por los 6)
 
+    // Tamaño LÓGICO del canvas: base×zoom por default; en modo flexible = tamaño real del editor.
+    int  canvasW() const noexcept { return flexible ? juce::jmax (1, getWidth())  : baseW; }
+    int  canvasH() const noexcept { return flexible ? juce::jmax (1, getHeight()) : baseH; }
+
     juce::String designation;
     juce::Colour familyHue = ui::theme::cyan;   // hue de familia (lo setea el plugin; tiñe Panel + header)
     Canvas content { *this };
     int  baseW = 0, baseH = 0;
+    int  savedHeaderHeight = 0;   // headerHeight previo a setHeaderVisible(false)
+    bool flexible = false;        // fix 1: canvas full-bleed (app) vs base×zoom (DAW)
     Zoom zoom = Zoom::medium;
 
     juce::Rectangle<int> headerArea;

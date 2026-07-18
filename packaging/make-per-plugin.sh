@@ -88,6 +88,7 @@ desc_of() {
     HALO)    echo "Shimmer that orbits — an endless choir of octaves and fifths." ;;
     HORIZON) echo "Spectral freeze with a pulse — eternal pad to rhythmic stutter." ;;
     AURORA)  echo "Spectral panning — every frequency to its own place in the field." ;;
+    SUPERNOVA) echo "Audio-reactive visual synth — drag an image, the particles live with your sound." ;;
     *)       echo "OVNI Audio spatial FX module." ;;
   esac
 }
@@ -150,6 +151,27 @@ build_components() { # $1 = NAME
       --install-location "/" "$WORK/pkg-$lower-$kind.pkg" >&2 \
       || fail "pkgbuild $name/$kind falló"
   done
+  # Standalone app (solo si el bundle trae <NAME>.app — hoy SUPERNOVA): instala en /Applications,
+  # NO relocalizable. Mismo patrón que VST3/AU: root = filesystem desde "/", install-location "/".
+  if [ -d "$BUNDLES/$name.app" ]; then
+    local rapp="$WORK/root-$lower-app/Applications"
+    mkdir -p "$rapp"
+    ditto "$BUNDLES/$name.app" "$rapp/$name.app" || fail "ditto $name.app"
+    find "$WORK/root-$lower-app" -name .DS_Store -delete 2>/dev/null
+    xattr -cr "$WORK/root-$lower-app" 2>/dev/null || true
+    plist="$WORK/$lower-app.plist"
+    pkgbuild --analyze --root "$WORK/root-$lower-app" "$plist" >/dev/null 2>&1 || fail "pkgbuild --analyze $name/app"
+    i=0
+    while /usr/libexec/PlistBuddy -c "Print :$i" "$plist" >/dev/null 2>&1; do
+      /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$plist" 2>/dev/null || true
+      i=$((i+1))
+    done
+    pkgbuild --root "$WORK/root-$lower-app" --component-plist "$plist" \
+      --identifier "$PKG_ID.$lower.app" --version "$VERSION" \
+      --install-location "/" "$WORK/pkg-$lower-app.pkg" >&2 \
+      || fail "pkgbuild $name/app falló"
+    log "  + app standalone: $name.app → /Applications"
+  fi
 }
 for n in "${NAMES[@]}"; do log "componentes: $n"; build_components "$n"; done
 
@@ -209,6 +231,13 @@ for n in "${NAMES[@]}"; do
     "$n — $(desc_of "$n")" \
     "$n — $(desc_of "$n")" \
     "" ""
+  # Fragmentos de la app standalone — sólo si build_components emitió pkg-$lower-app.pkg.
+  app_line=""; app_choice_line=""; app_ref_line=""
+  if [ -f "$WORK/pkg-$lower-app.pkg" ]; then
+    app_line="<line choice=\"app\"/>"
+    app_choice_line="    <choice id=\"app\" title=\"$n — Standalone app (→ /Applications)\"><pkg-ref id=\"$PKG_ID.$lower.app\"/></choice>"
+    app_ref_line="    <pkg-ref id=\"$PKG_ID.$lower.app\" version=\"$VERSION\">pkg-$lower-app.pkg</pkg-ref>"
+  fi
   cat > "$WORK/dist-$lower.xml" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
@@ -221,15 +250,17 @@ for n in "${NAMES[@]}"; do
     <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
     <domains enable_localSystem="true"/>
     <choices-outline>
-        <line choice="vst3"/><line choice="au"/><line choice="license"/>
+        <line choice="vst3"/><line choice="au"/>${app_line}<line choice="license"/>
     </choices-outline>
     <choice id="vst3" title="$n VST3"><pkg-ref id="$PKG_ID.$lower.vst3"/></choice>
     <choice id="au" title="$n AU"><pkg-ref id="$PKG_ID.$lower.au"/></choice>
+${app_choice_line}
     <choice id="license" title="License &amp; source (AGPLv3)" enabled="false" selected="true">
         <pkg-ref id="$PKG_ID.license"/>
     </choice>
     <pkg-ref id="$PKG_ID.$lower.vst3" version="$VERSION">pkg-$lower-vst3.pkg</pkg-ref>
     <pkg-ref id="$PKG_ID.$lower.au" version="$VERSION">pkg-$lower-au.pkg</pkg-ref>
+${app_ref_line}
     <pkg-ref id="$PKG_ID.license" version="$VERSION">pkg-license.pkg</pkg-ref>
 </installer-gui-script>
 XML
@@ -266,8 +297,9 @@ XML
   printf '        <line choice="license"/>\n    </choices-outline>\n'
   for n in "${NAMES[@]}"; do
     lower="$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]')"
-    printf '    <choice id="%s" title="%s" description="%s" start_selected="true">\n        <pkg-ref id="%s.%s.vst3"/><pkg-ref id="%s.%s.au"/>\n    </choice>\n' \
-      "$lower" "$n" "$(desc_of "$n")" "$PKG_ID" "$lower" "$PKG_ID" "$lower"
+    app_pref=""; [ -f "$WORK/pkg-$lower-app.pkg" ] && app_pref="<pkg-ref id=\"$PKG_ID.$lower.app\"/>"
+    printf '    <choice id="%s" title="%s" description="%s" start_selected="true">\n        <pkg-ref id="%s.%s.vst3"/><pkg-ref id="%s.%s.au"/>%s\n    </choice>\n' \
+      "$lower" "$n" "$(desc_of "$n")" "$PKG_ID" "$lower" "$PKG_ID" "$lower" "$app_pref"
   done
   cat <<XML
     <choice id="license" title="License &amp; source (AGPLv3)" enabled="false" selected="true">
@@ -278,6 +310,7 @@ XML
     lower="$(printf '%s' "$n" | tr '[:upper:]' '[:lower:]')"
     printf '    <pkg-ref id="%s.%s.vst3" version="%s">pkg-%s-vst3.pkg</pkg-ref>\n    <pkg-ref id="%s.%s.au" version="%s">pkg-%s-au.pkg</pkg-ref>\n' \
       "$PKG_ID" "$lower" "$VERSION" "$lower" "$PKG_ID" "$lower" "$VERSION" "$lower"
+    [ -f "$WORK/pkg-$lower-app.pkg" ] && printf '    <pkg-ref id="%s.%s.app" version="%s">pkg-%s-app.pkg</pkg-ref>\n' "$PKG_ID" "$lower" "$VERSION" "$lower"
   done
   printf '    <pkg-ref id="%s.license" version="%s">pkg-license.pkg</pkg-ref>\n</installer-gui-script>\n' "$PKG_ID" "$VERSION"
 } > "$WORK/dist-all.xml"

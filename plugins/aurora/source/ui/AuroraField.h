@@ -46,6 +46,13 @@ public:
     // Debe casar con AuroraEngine/AuroraProcessor::kVizBands (static_assert en PluginEditor.h).
     static constexpr int kBands = 24;
 
+    // PDC real reportada al host (Manifiesto #3: la latencia STFT se PUBLICA, no se esconde). El
+    // editor lo cablea a processor.getLatencySamples(); la telemetría lo muestra en vivo.
+    std::function<int()> pdcProvider;
+    // Refresca los strings YA (el editor lo llama tras cablear pdcProvider: el campo se construye
+    // en la init-list, antes de que exista el provider, y cachearía "PDC 0").
+    void refreshTelemetryNow() { refreshTelemetry(); }
+
     AuroraField (std::atomic<float>& spread,
                  std::atomic<float>& tilt,
                  std::atomic<float>& motion,
@@ -118,7 +125,7 @@ private:
 
     // Telemetría (strings cacheadas; se refrescan cada ~0.2 s, mockup §tele honesta).
     int teleCountdown = 0;
-    juce::String teleGamma, teleSpread, teleTilt, teleDuck, teleLR;
+    juce::String teleGamma, teleSpread, teleTilt, teleDuck, teleLR, telePdc;
     float teleDuckVal = 0.0f;
     float teleEnergyL = 0.5f, teleEnergyR = 0.5f;
 

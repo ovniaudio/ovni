@@ -4,7 +4,6 @@
 // valores para que el halo se vea poblado y orbitando (Shimmer 70 % · Decay 75 % · Orbit 70 %).
 // Headless (ScopedJuceInitialiser_GUI lo provee TestMain).
 #include <catch2/catch_test_macros.hpp>
-#include <cstdlib>   // std::getenv (guard CI headless en [shot4k])
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 #include "PluginProcessor.h"
@@ -59,10 +58,6 @@ TEST_CASE ("snapshot: editor de HALO -> /tmp/ovni_halo_m.png", "[snapshot][halo]
 // -> docs/redesign/real-shots/halo.png
 TEST_CASE ("shot4k: HALO editor real 4x -> real-shots/halo.png", "[shot4k][halo]")
 {
-    // CI/headless: este [shot4k] regenera la foto de marketing en un path local del autor
-    // (docs/redesign/real-shots/*.png) y necesita window-server; en CI se auto-saltea sin tocar
-    // su logica (GitHub Actions exporta CI=true). Corre normal en local para rehornear la foto.
-    if (std::getenv ("CI") != nullptr) { SUCCEED ("shot4k saltado en CI headless"); return; }
     namespace pid = halo::params::id;
     halo::HaloProcessor proc;
     if (auto* s = proc.apvts.getParameter (pid::SHIMMER)) s->setValueNotifyingHost (0.70f);
@@ -97,7 +92,7 @@ TEST_CASE ("shot4k: HALO editor real 4x -> real-shots/halo.png", "[shot4k][halo]
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), false, 4.0f);
     REQUIRE (img.isValid());
 
-    auto out = juce::File ("/path/to/ovni/docs/redesign/real-shots/halo.png");
+    auto out = juce::File ("/Users/musik/PLUGINS/ovni/docs/redesign/real-shots/halo.png");
     out.getParentDirectory().createDirectory();
     out.deleteFile();
     juce::FileOutputStream os2 (out);

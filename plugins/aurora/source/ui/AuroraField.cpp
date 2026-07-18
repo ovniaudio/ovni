@@ -348,9 +348,11 @@ void AuroraField::paintTelemetry (juce::Graphics& g, int w, int h) const
     // TR: SPREAD + TILT (con signo).
     line ("SPREAD " + teleSpread, w - colW - 13, 10,      colW, true, th::mut);
     line ("TILT "   + teleTilt,   w - colW - 13, 10 + lh, colW, true, th::mut);
-    // BL (sobre el rail de macros, mockup bottom:122): BANDAS + DUCK (el duck colorea su valor).
+    // BL (sobre el rail de macros, mockup bottom:122): PDC real + DUCK (el duck colorea su valor).
+    // ("BANDS 24" era el conteo del VISUALIZADOR disfrazado de telemetría — el motor panea POR BIN;
+    // la latencia es el dato honesto que el Manifiesto #3 pide publicar.)
     const int by = h - 122;
-    line (juce::String ("BANDS ") + juce::String (kBands), 13, by, colW, false, th::mut);
+    line (telePdc, 13, by, colW, false, th::mut);
     g.setColour (teleDuckVal > 0.02f ? th::greenD : th::fnt);
     g.setFont (lab);
     g.drawText ("DUCK " + teleDuck, 13, by + lh, colW, 11, juce::Justification::topLeft);
@@ -363,6 +365,7 @@ void AuroraField::refreshTelemetry()
     auto pad3 = [] (int v) { return juce::String (juce::jlimit (0, 999, std::abs (v))).paddedLeft ('0', 3); };
 
     teleGamma  = juce::String::fromUTF8 ("\xce\xb3 ") + juce::String (clamp01 (gammaSm), 2);
+    telePdc    = "PDC " + juce::String (pdcProvider ? pdcProvider() : 0) + " SMP";
     teleSpread = pad3 (juce::roundToInt (clamp01 (spreadSm) * 100.0f)) + "%";
     teleTilt   = juce::String::fromUTF8 (tiltSm >= 0.0f ? "+" : "\xe2\x88\x92")
                + pad3 (juce::roundToInt (std::abs (tiltSm) * 100.0f));

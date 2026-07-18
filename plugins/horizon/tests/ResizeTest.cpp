@@ -34,6 +34,7 @@ TEST_CASE ("resize: HORIZON S/M/L tamaños exactos + snapshots", "[resize][horiz
     if (auto* w  = proc.apvts.getParameter (pid::WHISPER))  w->setValueNotifyingHost (0.30f);
     if (auto* s  = proc.apvts.getParameter (pid::SPREAD))   s->setValueNotifyingHost (0.70f);
     if (auto* sy = proc.apvts.getParameter (pid::RATESYNC)) sy->setValueNotifyingHost (1.0f);
+    proc.prepareToPlay (48000.0, 512);   // la telemetría PDC muestra la latencia REAL reportada
 
     proc.prepareToPlay (48000.0, 512);
 

@@ -4,7 +4,7 @@
 # junto con Catch2 y libmysofa. Compila ovni_dsp + ovni_movement + ovni_data y corre los [s1].
 #
 #   Configurar:  cmake -S shared/engines/movement/tests -B build/s1 \
-#                      -DOVNI_JUCE_DIR=/path/to/orbita/JUCE        # opcional: reusa un checkout
+#                      -DOVNI_JUCE_DIR=/Users/musik/PLUGINS/orbita/JUCE        # opcional: reusa un checkout
 #   Compilar:    cmake --build build/s1 -j
 #   Correr:      ./build/s1/S1Tests "[s1]"
 # =====================================================================================

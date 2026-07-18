@@ -162,6 +162,7 @@ target_sources(OvniNebulaTests PRIVATE
     ${CMAKE_SOURCE_DIR}/plugins/nebula/tests/ReverbMeasure.cpp      # [measure][nebula] T60/CORR/freeze/monosum
     ${CMAKE_SOURCE_DIR}/plugins/nebula/tests/IrRenderTest.cpp       # [irrender][nebula] IRs crudas -> WAV (analisis externo)
     ${CMAKE_SOURCE_DIR}/plugins/nebula/tests/SnapshotTest.cpp       # [snapshot][nebula] → /tmp/ovni_nebula_m.png
+    ${CMAKE_SOURCE_DIR}/plugins/nebula/tests/ResizeTest.cpp         # [resize][nebula] S/M/L exactos + snapshots
     ${CMAKE_SOURCE_DIR}/plugins/nebula/tests/DiccionarioTest.cpp   # [diccionario][nebula]
     ${CMAKE_SOURCE_DIR}/plugins/nebula/tests/AliasTest.cpp          # [alias][nebula] piso de espurias (Manifiesto #3)
     ${CMAKE_SOURCE_DIR}/plugins/nebula/tests/LatencyTest.cpp        # [latency][nebula] reportada == real (lookahead)
@@ -253,7 +254,9 @@ target_sources(OvniHaloTests PRIVATE
     ${CMAKE_SOURCE_DIR}/plugins/halo/tests/MeasureTest.cpp          # [measure][halo] imagen/IACC del wet orbital
     ${CMAKE_SOURCE_DIR}/plugins/halo/tests/IrRenderTest.cpp        # [irrender][halo] IRs/escalera de octavas -> WAV
     ${CMAKE_SOURCE_DIR}/plugins/halo/tests/DiccionarioTest.cpp      # [diccionario][halo] SYNC orbital + FREEZE no pisa IN PHASE
+    ${CMAKE_SOURCE_DIR}/plugins/halo/tests/HonestyTest.cpp          # [honestidad][halo] barrido fino 5 posiciones x 6 macros
     ${CMAKE_SOURCE_DIR}/plugins/halo/tests/SnapshotTest.cpp         # [snapshot][halo] → /tmp/ovni_halo_m.png
+    ${CMAKE_SOURCE_DIR}/plugins/halo/tests/ResizeTest.cpp           # [resize][halo] S/M/L exactos + snapshots
     # HALO ensamblado (motor + processor/editor + UI + su factoryPresets + bases del template):
     ${_halo_src}/engine/HaloEngine.cpp
     ${_halo_src}/PluginProcessor.cpp
@@ -466,6 +469,131 @@ target_link_libraries(OvniHorizonTests PRIVATE
     juce::juce_recommended_config_flags)
 
 set_target_properties(OvniHorizonTests PROPERTIES OSX_ARCHITECTURES "arm64")
+
+# ---------------------------------------------------------------------------------------------
+# SUPERNOVA — herramienta de render offscreen → PNG (semilla de --render-frames M4 + capturas QA).
+# NO es un test Catch: rinde partículas a una MTLTexture y lee de vuelta a RGBA8 (sin ventana ni permisos).
+# Solo APPLE (backend Metal). Compila MetalRenderer.mm como Obj-C++ (mismo patrón que el plugin).
+# ---------------------------------------------------------------------------------------------
+if(APPLE)
+    juce_add_console_app(OvniSupernovaRender PRODUCT_NAME "OvniSupernovaRender")
+    target_sources(OvniSupernovaRender PRIVATE
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/render_tool/RenderMain.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/image/ImageLoader.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/image/ImageField.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/presets/FactoryPresets.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalRenderer.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalSyphonServer.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/image/VisionField.mm)
+    set_source_files_properties(
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalRenderer.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalSyphonServer.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/image/VisionField.mm
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc"
+        TARGET_DIRECTORY OvniSupernovaRender)
+    target_include_directories(OvniSupernovaRender PRIVATE
+        ${CMAKE_SOURCE_DIR}/shared
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source)
+    target_compile_features(OvniSupernovaRender PRIVATE cxx_std_20)
+    target_compile_definitions(OvniSupernovaRender PRIVATE
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(OvniSupernovaRender PRIVATE
+        ovni_syphon
+        juce::juce_gui_basics
+        juce::juce_recommended_config_flags
+        "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework CoreVideo" "-framework IOSurface" "-framework Vision")
+    set_target_properties(OvniSupernovaRender PROPERTIES OSX_ARCHITECTURES "arm64")
+endif()
+
+# ---------------------------------------------------------------------------------------------
+# SUPERNOVA — exe de tests ENSAMBLADO (processor+editor reales). Separado porque createPluginFilter()/
+# factoryPresets() son per-plugin (duplicate-symbol si conviven con otro plugin). M0: smoke de instanciación
+# GPU-opcional + teardown del editor (R1). En M1 se suman [supernova][null] (bit-exacto) y análisis.
+# ---------------------------------------------------------------------------------------------
+if(APPLE)
+    file(GLOB_RECURSE _snv_src CONFIGURE_DEPENDS
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/*.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/*.mm)
+
+    juce_add_console_app(OvniSupernovaTests PRODUCT_NAME "OvniSupernovaTests")
+    target_sources(OvniSupernovaTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/shared/presets/tests/TestMain.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/InstantiationTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/AudioAnalyzerTests.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/AnalysisChainTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/FullscreenLiveSmoke.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/PassThroughTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/GainStagingTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/VisGainTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ImageLoaderTests.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiMapperTests.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/PresetRoundTripTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/GoldenFrameTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/CutoutTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/BoundsContainmentTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ColorGradeTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/PlexusLinksTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/Depth3DTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/LookRampsTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/UiSnapshotTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ImageFieldTests.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/StillCanvasTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/CanvasStateTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/PhotoSequenceTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ImageOrientationTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/FitAspectTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/VideoSourceTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/AppAudioTests.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/BeatClockTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiCcMapTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/LfoBankTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/SceneBankTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/UndoStackTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportPresetTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportSmokeTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiCcQueueTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ThumbnailSmokeTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/WorldCardsTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ProcessorIntegrationTest.cpp
+        ${_snv_src}
+        ${CMAKE_SOURCE_DIR}/shared/template/PluginProcessorBase.cpp
+        ${CMAKE_SOURCE_DIR}/shared/template/PluginEditorBase.cpp)
+    set_source_files_properties(
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalRenderer.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/SupernovaMTKView.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalViewComponent.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalSyphonServer.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/image/VisionField.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/video/VideoSource.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source/video/VideoExporter.mm
+        PROPERTIES COMPILE_FLAGS "-fobjc-arc" TARGET_DIRECTORY OvniSupernovaTests)
+    target_include_directories(OvniSupernovaTests PRIVATE
+        ${CMAKE_SOURCE_DIR}/shared
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/source
+        ${CMAKE_SOURCE_DIR}/plugins/supernova)   # #include "app/AudioSourceModel.h"
+    target_compile_features(OvniSupernovaTests PRIVATE cxx_std_20)
+    target_compile_definitions(OvniSupernovaTests PRIVATE
+        JUCE_MODAL_LOOPS_PERMITTED=1 JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+    target_link_libraries(OvniSupernovaTests PRIVATE
+        Catch2::Catch2
+        ovni_uikit ovni_presets ovni_syphon
+        juce::juce_audio_utils juce::juce_gui_basics juce::juce_gui_extra juce::juce_dsp
+        juce::juce_recommended_config_flags
+        "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework CoreVideo" "-framework IOSurface" "-framework Vision"
+        "-framework AVFoundation" "-framework CoreMedia")
+    set_target_properties(OvniSupernovaTests PROPERTIES OSX_ARCHITECTURES "arm64")
+    catch_discover_tests(OvniSupernovaTests TEST_PREFIX "[supernova] " DISCOVERY_MODE PRE_TEST)
+endif()
+
+# ---------------------------------------------------------------------------------------------
+# [listen] — renders de ESCUCHA para la curaduría (tests/ListenTest.cpp, UN archivo compartido
+# que usa el createPluginFilter()/factoryPresets() propios de cada exe). WAVs → /tmp.
+# ---------------------------------------------------------------------------------------------
+foreach(_t OvniPulsarTests OvniNebulaTests OvniDustTests OvniHaloTests OvniHorizonTests OvniAuroraTests)
+    target_sources(${_t} PRIVATE ${CMAKE_SOURCE_DIR}/tests/ListenTest.cpp)
+    target_compile_definitions(${_t} PRIVATE
+        OVNI_LISTEN_BEAT_WAV="${CMAKE_SOURCE_DIR}/tests/assets/realbeat_90.wav")
+endforeach()
 
 # ---------------------------------------------------------------------------------------------
 # Registro en CTest (descubrimiento diferido a test-time: NO corre los exes durante el build).

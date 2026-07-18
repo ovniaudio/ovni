@@ -285,8 +285,10 @@ void HorizonField::paintTelemetry (juce::Graphics& g, int w, int h) const
     // TR: SPREAD + RATE.
     line ("SPREAD " + teleSpread, w - colW - 12, 10,      colW, true, th::mut);
     line ("RATE "   + teleRate,   w - colW - 12, 10 + lh, colW, true, th::mut);
-    // BL: láminas + DUCK (el duck COLOREA cuando reacciona).
-    line (juce::String::fromUTF8 ("LAYERS ") + juce::String (kBands), 12, h - 8 - 2 * lh, colW, false, th::mut);
+    // BL: PDC real + DUCK (el duck COLOREA cuando reacciona). ("LAYERS 24" era el conteo de bandas
+    // del VISUALIZADOR disfrazado de telemetría — un número muerto; la latencia es el dato honesto
+    // que el Manifiesto #3 pide publicar.)
+    line (telePdc, 12, h - 8 - 2 * lh, colW, false, th::mut);
     g.setColour (duckEnvSm > 0.02f ? th::greenD : th::mut);
     g.setFont (lab);
     g.drawText ("DUCK " + teleDuck, 12, h - 8 - lh, colW, 11, juce::Justification::centredLeft);
@@ -307,6 +309,7 @@ void HorizonField::refreshTelemetry()
              : rateHz < 1.0f  ? juce::String (rateHz, 2) + " Hz"
                               : juce::String (rateHz, 1) + " Hz";
     teleDuck = juce::String (duckEnvSm, 2);
+    telePdc  = "PDC " + juce::String (pdcProvider ? pdcProvider() : 0) + " SMP";
 
     // Balance L/R: energía dibujada a cada lado del eje central, según el abanico REAL del SPREAD.
     float eL = 0.0f, eR = 0.0f;

@@ -20,9 +20,9 @@
 #
 #   Configurar:  cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 #                  -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-#                  -DOVNI_JUCE_DIR=/path/to/orbita/JUCE \
-#                  -DFETCHCONTENT_SOURCE_DIR_LIBMYSOFA=/path/to/orbita/build/_deps/libmysofa-src \
-#                  -DFETCHCONTENT_SOURCE_DIR_CATCH2=/path/to/orbita/build/_deps/catch2-src
+#                  -DOVNI_JUCE_DIR=/Users/musik/PLUGINS/orbita/JUCE \
+#                  -DFETCHCONTENT_SOURCE_DIR_LIBMYSOFA=/Users/musik/PLUGINS/orbita/build/_deps/libmysofa-src \
+#                  -DFETCHCONTENT_SOURCE_DIR_CATCH2=/Users/musik/PLUGINS/orbita/build/_deps/catch2-src
 #   Compilar:    cmake --build build
 # =============================================================================================
 cmake_minimum_required(VERSION 3.25)
@@ -43,7 +43,7 @@ if (APPLE AND NOT DEFINED CMAKE_OSX_ARCHITECTURES)
     endif ()
 endif ()
 
-project(OVNI VERSION 0.1.1 LANGUAGES C CXX)
+project(OVNI VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -113,6 +113,25 @@ add_subdirectory(shared/engines/pitch)      # ovni_pitch  (ScaleQuantizer + Pitc
 add_subdirectory(shared/engines/stft)       # ovni_stft   (StftEngine OLA Hann 75%; AURORA/HORIZON)
 add_subdirectory(shared/ui-kit)             # ovni_uikit  (+ ovni_uikit_assets, fonts del sello)
 add_subdirectory(shared/presets)            # ovni_presets (PresetManager + ABState + tipos)
+
+# ovni_syphon — Syphon-Framework (BSD, vendorizado en third_party/, subconjunto Metal, commit 71351d4).
+# Static lib propia (no framework embebido → sin rpath/codesign anidado en los 3 bundles). Sólo SUPERNOVA la
+# linkea. ARC (las fuentes de master son ARC). NOTICE.md lista la atribución (RNF5).
+if(APPLE)
+    file(GLOB _syphon_src CONFIGURE_DEPENDS
+        ${CMAKE_SOURCE_DIR}/third_party/Syphon-Framework/*.m
+        ${CMAKE_SOURCE_DIR}/third_party/Syphon-Framework/*.c)
+    add_library(ovni_syphon STATIC ${_syphon_src})
+    # Syphon usa un prefix header (Cocoa, con guard __OBJC__ → seguro para el .c). Fuera de Xcode hay que
+    # force-incluirlo (las fuentes no importan Foundation por su cuenta).
+    target_compile_options(ovni_syphon PRIVATE -fobjc-arc -Wno-deprecated-declarations -Wno-everything
+        -include ${CMAKE_SOURCE_DIR}/third_party/Syphon-Framework/Syphon_Prefix.pch)
+    target_include_directories(ovni_syphon PUBLIC ${CMAKE_SOURCE_DIR}/third_party/Syphon-Framework)
+    target_link_libraries(ovni_syphon PUBLIC
+        "-framework Metal" "-framework IOSurface" "-framework IOKit"
+        "-framework Foundation" "-framework CoreFoundation")
+    set_target_properties(ovni_syphon PROPERTIES OSX_ARCHITECTURES "arm64;x86_64")
+endif()
 
 # Convención del CONTRACT (regla 3): includes relativos al raíz de shared/. Cada lib ya lo exporta
 # PUBLIC, pero lo agregamos global por las dudas (lo consumen los plugins y el runner de tests).

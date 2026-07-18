@@ -23,6 +23,7 @@ void writePng (juce::AudioProcessorEditor& ed, const char* path)
 TEST_CASE ("resize: AURORA S/M/L tamaños exactos + snapshots", "[resize][aurora]")
 {
     aurora::AuroraProcessor proc;
+    proc.prepareToPlay (48000.0, 512);   // la telemetría PDC muestra la latencia REAL reportada
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
     REQUIRE (ed != nullptr);
     auto* base = dynamic_cast<ovni::PluginEditorBase*> (ed.get());

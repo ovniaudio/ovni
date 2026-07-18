@@ -74,7 +74,7 @@ Apple, macOS pide un click extra la primera vez — no es un problema del plugin
 |---|---|
 | `CMakePresets.json` (raíz) | preset `release-universal` (distribución) y `dev` (arm64-only, rápido). |
 | `packaging/build-universal.sh` | configura+buildea universal y **verifica con `lipo -archs`** que cada artefacto traiga arm64 **y** x86_64. **No firma nada** → corre sin credenciales. |
-| `packaging/make-dmg.sh` | **alternativa manual**: arma el `.dmg` con los `.vst3`/`.component` + alias a `/Library/Audio/Plug-Ins` + `LÉEME PRIMERO.txt`. Sin firma por default; firma opcional con `DEV_ID`. |
+| `packaging/make-dmg.sh` | **entregable gratis principal**: arma el `.dmg` con los `.vst3`/`.component` + alias a `/Library/Audio/Plug-Ins` + `LÉEME PRIMERO.txt`. Sin firma por default; firma opcional con `DEV_ID`. |
 | `packaging/make-installer.sh` | **alternativa**: arma el `.pkg` (VST3 → `/Library/Audio/Plug-Ins/VST3`, AU → `…/Components`). Sin firma por default; firma opcional con `INSTALLER_SIGN_ID`. |
 | `packaging/make-per-plugin.sh` | **entregable actual de la web**: `.pkg` POR PLUGIN + `.pkg` completo (con "Personalizar") + ZIPs de Windows por plugin + `SHA256SUMS.txt`, desde una carpeta plana de bundles. Los `.pkg` instalan con doble click y **sin cuarentena** (adiós `xattr`). Identificadores por plugin (`com.ovni.plugins.<id>.{vst3,au}`) y `BundleIsRelocatable=false`. |
 | `.github/workflows/ci.yml` | CI: build + ctest + validate por plugin, archiva reportes. |
@@ -154,6 +154,22 @@ Si en el futuro se quiere bajar a 10.14/10.15 (cubrir Intel viejo), hay que: (a)
 8.0.13 + libmysofa compilen contra ese SDK, y (b) confirmar que ningún slice arm64 herede ese
 mínimo. Hasta entonces, **11.0 es la promesa honesta**.
 
+## Firma LOCAL de la app SUPERNOVA (audio del sistema / TCC) — NO confundir con distribución
+
+La app de escritorio captura audio vía ScreenCaptureKit y necesita el permiso de **Grabación de
+pantalla**. macOS ata ese permiso a la firma: con firma **ad-hoc** el permiso muere en cada rebuild
+(filas fantasma, deniega en silencio). El fix es una identidad **self-signed estable** — gratis,
+sin Apple Developer:
+
+```bash
+./packaging/make-signing-cert.sh   # una vez por máquina: crea "SUPERNOVA Local" en el llavero
+./packaging/deploy-app.sh          # cada deploy: copia + firma estable + lsregister
+./packaging/run-app-logged.sh      # lanzar con diagnóstico [sysaudio] capturado (ruta estable)
+```
+
+Historia completa, reglas y troubleshooting: **`docs/AUDIO-TCC.md`**. El $99 de Apple Developer
+sigue siendo SOLO para distribuir (sección siguiente); no aporta nada al audio local.
+
 ## Activar el camino PAGO (el día que se cargue el $99)
 
 Cuando Joaquín pague la cuenta Apple Developer, el camino pago se activa **solo cargando los secrets**
@@ -184,8 +200,8 @@ vaciar) `APPLE_DEVELOPER_ID_APP`.
 
 | Secret | Qué es | Dónde se saca |
 |---|---|---|
-| `APPLE_DEVELOPER_ID_APP` | **interruptor**: identidad de firma de app, p.ej. `Developer ID Application: Your Name (TEAMID1234)` | `security find-identity -v -p codesigning` |
-| `APPLE_DEVELOPER_ID_INSTALLER` | identidad del instalador, p.ej. `Developer ID Installer: Your Name (TEAMID1234)` | idem |
+| `APPLE_DEVELOPER_ID_APP` | **interruptor**: identidad de firma de app, p.ej. `Developer ID Application: Joaquin Cerrano (TEAMID1234)` | `security find-identity -v -p codesigning` |
+| `APPLE_DEVELOPER_ID_INSTALLER` | identidad del instalador, p.ej. `Developer ID Installer: Joaquin Cerrano (TEAMID1234)` | idem |
 | `APPLE_DEV_ID_APP_CERT_P12_BASE64` | cert *Developer ID Application* (.p12) en base64 | Keychain → exportar → `base64 -i …` |
 | `APPLE_DEV_ID_INSTALLER_CERT_P12_BASE64` | cert *Developer ID Installer* (.p12) en base64 | Keychain → exportar → `base64 -i …` |
 | `APPLE_DEV_ID_CERT_PASSWORD` | contraseña con la que exportaste los `.p12` | la elegís vos al exportar |

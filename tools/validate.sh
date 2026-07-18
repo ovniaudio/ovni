@@ -24,6 +24,11 @@ CODE_ARG="${2:-}"
 MANU_ARG="${3:-}"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
 CONFIG="${CONFIG:-Release}"
+# Overrides por-plugin (plugins visuales/pass-through: CEILING; DSP con peaje: ALIAS_FLOOR). Se sourcea ANTES de
+# resolver los defaults; usa ':=' → el env explícito del caller igual gana. SUPERNOVA: CEILING=1.0 (pass-through
+# bit-exacto, su techo honesto es 0 dBFS, no el −1.4 dBFS del catálogo DSP).
+PLUGIN_ENV="$ROOT/plugins/$PLUGIN/validate.env"
+[ -f "$PLUGIN_ENV" ] && . "$PLUGIN_ENV"
 CEILING="${CEILING:-0.85}"
 TEST_FILTER="${TEST_FILTER:-}"
 
@@ -111,7 +116,7 @@ BINARIES=()
 while IFS= read -r bin; do
   [ -n "$bin" ] && BINARIES+=("$bin")
 done < <(
-  find "$BUILD_DIR" -path "*_artefacts/$CONFIG/*" \
+  find "$BUILD_DIR" \( -path "*_artefacts/$CONFIG/*" -o -path "*_artefacts.noindex/$CONFIG/*" \) \
     \( -name '*.vst3' -o -name '*.component' -o -name '*.app' \) 2>/dev/null \
   | while read -r bundle; do
       base="$(basename "$bundle")"; name="${base%.*}"
@@ -144,11 +149,9 @@ if [ -z "$PV_BIN" ]; then
   if [ -x "$CACHED" ]; then
     PV_BIN="$CACHED"
   elif command -v curl >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
-    log "descargando pluginval v1.0.4…"
-    # Pineado a una release fija (no /releases/latest): reproducibilidad — la puerta mide siempre
-    # contra la MISMA versión de pluginval; una release nueva no cambia el veredicto sin querer.
+    log "descargando pluginval…"
     if curl -fsSL -o "$BUILD_DIR/pluginval.zip" \
-        "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip" 2>>"$LOG_FILE" \
+        "https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip" 2>>"$LOG_FILE" \
        && unzip -oq "$BUILD_DIR/pluginval.zip" -d "$BUILD_DIR" 2>>"$LOG_FILE"; then
       PV_BIN="$CACHED"
     fi
@@ -190,11 +193,14 @@ fi
 STAGE="auval"
 CODE="$CODE_ARG"; MANU="$MANU_ARG"
 PLUGIN_CMAKE="$ROOT/plugins/$PLUGIN/CMakeLists.txt"
+# Auto-detect del 2º token (awk), tolera comillas o no. El regex viejo ('"[A-Za-z0-9]{4}"') exigía comillas
+# dobles que NINGÚN CMake del catálogo usa (PLUGIN_CODE Spnv, Plsr, …) → devolvía vacío para TODOS → auval
+# skip → exit 1. El awk arregla el catálogo entero (CODE=Spnv/Plsr/…, MANU=Ovni).
 if [ -z "$CODE" ] && [ -f "$PLUGIN_CMAKE" ]; then
-  CODE="$(grep -E 'PLUGIN_CODE' "$PLUGIN_CMAKE" | grep -oE '"[A-Za-z0-9]{4}"' | head -n1 | tr -d '"')"
+  CODE="$(awk '/PLUGIN_CODE[ \t]/{print $2; exit}' "$PLUGIN_CMAKE" | tr -d '"')"
 fi
 if [ -z "$MANU" ] && [ -f "$PLUGIN_CMAKE" ]; then
-  MANU="$(grep -E 'PLUGIN_MANUFACTURER_CODE|MANUFACTURER_CODE' "$PLUGIN_CMAKE" | grep -oE '"[A-Za-z0-9]{4}"' | head -n1 | tr -d '"')"
+  MANU="$(awk '/MANUFACTURER_CODE[ \t]/{print $2; exit}' "$PLUGIN_CMAKE" | tr -d '"')"
 fi
 if [ "$(uname -s)" != "Darwin" ] || ! command -v auval >/dev/null 2>&1; then
   AUVAL_STATUS="skipped"; AUVAL_OK=0
@@ -223,12 +229,7 @@ else
     fi
   fi
 fi
-# auval-skipped (sin CODE/MANU detectables, o runner no-macOS) NO es fallo: la Puerta 3 ya corrió
-# pluginval lvl8 sobre el AU (que en macOS incluye validación estilo auval del componente), y aborta
-# en rojo si el AU no pasa. Aquí PV_AU siempre == passed. Solo un auval que CORRIÓ y FALLÓ rompe el
-# verde; skipped baja a WARN (se sigue publicando AUVAL_STATUS=skipped/AUVAL_OK=0 en el reporte).
-if [ "$AUVAL_STATUS" = "failed" ]; then emit_and_exit 0; fi
-[ "$AUVAL_STATUS" = "skipped" ] && WARNINGS=$((WARNINGS + 1))
+if [ "$AUVAL_OK" -ne 1 ]; then emit_and_exit 0; fi
 
 # ============ Puerta 5: TESTS (ctest) ============
 STAGE="tests"
@@ -297,13 +298,7 @@ M_IACC="$(extract iacc)"
 log "mediciones: alias=$M_ALIAS dBFS  latency rep=$M_LAT_REP/real=$M_LAT_REAL  cpu=$M_CPU%  iacc=$M_IACC"
 
 # ── H7: alias floor < ALIAS_FLOOR (dBFS). Gate DURO.
-#    ALIAS_FLOOR="na"/"skip" → el gate NO aplica: los plugins que DECORRELAN por diseño (reverb con
-#    cola, movers de caos) producen mucho contenido "no-input" con un tono estático que NO es aliasing
-#    sino el EFECTO. Para esos el gate queda "skip" (honesto: no medimos algo que no corresponde), y
-#    el piso real se declara en la ficha. Los procesadores limpios sí pasan el gate DURO (< ALIAS_FLOOR).
-if [ "$ALIAS_FLOOR" = "na" ] || [ "$ALIAS_FLOOR" = "skip" ]; then
-  H_ALIAS="skip"; log "H7 alias N/A (plugin decorrela por diseño; medido $M_ALIAS dBFS, no es aliasing)"
-elif [ "$M_ALIAS" != "null" ]; then
+if [ "$M_ALIAS" != "null" ]; then
   if python3 -c "import sys; sys.exit(0 if float('$M_ALIAS') < float('$ALIAS_FLOOR') else 1)"; then
     H_ALIAS="passed"; log "H7 alias OK ($M_ALIAS < $ALIAS_FLOOR dBFS)"
   else

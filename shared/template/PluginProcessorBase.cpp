@@ -75,6 +75,13 @@ bool PluginProcessorBase::isBusesLayoutSupported (const BusesLayout& layouts) co
 
 void PluginProcessorBase::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
+    // Un host llama setRateAndBufferSizeDetails ANTES de prepareToPlay; pero un caller DIRECTO (la app
+    // standalone de SUPERNOVA por su AppAudioEngine, o los tests headless) llama prepareToPlay a secas →
+    // getSampleRate() quedaría en 0 y cualquier DSP que dependa de él se rompe silenciosamente (p.ej. el
+    // BeatClock: blockDt = numSamples/getSampleRate() = 0 → el reloj no avanza y el tap-tempo queda muerto).
+    // Fijarlo acá hace que prepareToPlay IMPLIQUE un sample-rate válido en TODO camino (idempotente con el host).
+    setRateAndBufferSizeDetails (sampleRate, samplesPerBlock);
+
     juce::dsp::ProcessSpec spec;
     spec.sampleRate       = sampleRate;
     spec.maximumBlockSize = (juce::uint32) samplesPerBlock;
@@ -101,14 +108,7 @@ void PluginProcessorBase::processBlock (juce::AudioBuffer<float>& buffer, juce::
     {
         const auto m = meta.getMessage();
         if (m.isProgramChange())
-        {
-            const int prog = m.getProgramChangeNumber();
-            if (prog >= 0 && prog < (int) presets::factoryPresets().size())
-            {
-                pendingProgram.store (prog, std::memory_order_relaxed);
-                triggerAsyncUpdate();
-            }
-        }
+            requestFactoryPreset (m.getProgramChangeNumber());   // mismo path RT-safe que nota→preset (DRY)
     }
 
     const int numIn  = getTotalNumInputChannels();
@@ -169,6 +169,15 @@ void PluginProcessorBase::processBlock (juce::AudioBuffer<float>& buffer, juce::
     uiOutPeak.store (outPk, std::memory_order_relaxed);
     const float peakPush = juce::jlimit (0.0f, 1.0f, juce::jmap (outPk, 0.95f, 1.0f, 0.0f, 1.0f));
     uiClip.store (juce::jmax (peakPush, juce::jlimit (0.0f, 1.0f, extraClipPush())), std::memory_order_relaxed);
+}
+
+void PluginProcessorBase::requestFactoryPreset (int index) noexcept
+{
+    if (index >= 0 && index < (int) presets::factoryPresets().size())
+    {
+        pendingProgram.store (index, std::memory_order_relaxed);
+        triggerAsyncUpdate();
+    }
 }
 
 void PluginProcessorBase::handleAsyncUpdate()

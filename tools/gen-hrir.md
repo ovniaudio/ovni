@@ -21,9 +21,9 @@ Receta de punta a punta para hornear los headers HRIR del sello (`HrirData.h` fi
 ## 0. ¿Existe un generador real?
 
 **Sí.** El generador real vive en el repo hermano **ÓRBITA**:
-`/path/to/orbita/tests/GenHrir.cpp`. No hay (todavía) una copia propia en
+`/Users/musik/PLUGINS/orbita/tests/GenHrir.cpp`. No hay (todavía) una copia propia en
 `ovni/tools/` — este documento es la receta para usar el de ÓRBITA y portar la salida a
-las 4 ubicaciones de ÓVNI. (Verificado con `find /path/to -iname 'GenHrir*'`.)
+las 4 ubicaciones de ÓVNI. (Verificado con `find /Users/musik/PLUGINS -iname 'GenHrir*'`.)
 
 `GenHrir.cpp` son **dos TEST_CASE de Catch2** que se corren como parte del target `Tests`:
 
@@ -33,7 +33,7 @@ las 4 ubicaciones de ÓVNI. (Verificado con `find /path/to -iname 'GenHrir*'`.)
 | `[genring]` | **anillo** de movimiento (M2, 72 azimuts a elevación 0) | `source/dsp/HrirRing.h` |
 
 El SOFA de entrada y el directorio de salida llegan por **define de CMake**
-(`/path/to/orbita/CMakeLists.txt`, ~líneas 182-184):
+(`/Users/musik/PLUGINS/orbita/CMakeLists.txt`, ~líneas 182-184):
 
 ```cmake
 target_compile_definitions(Tests PRIVATE

@@ -95,6 +95,10 @@ protected:
     // tu motor ajuste su comportamiento — p.ej. MovementEngine apaga el ITD -> paneo puro, en fase.
     bool isMonoSafe() const noexcept { return pMonoSafe != nullptr && pMonoSafe->load() >= 0.5f; }
 
+    // Pedir un preset de fábrica por índice desde CUALQUIER hilo (RT-safe): difiere al message thread vía
+    // AsyncUpdater (igual que el Program-Change MIDI). Lo usa SUPERNOVA para nota→preset y wiring del choice RF8.
+    void requestFactoryPreset (int index) noexcept;
+
     static BusesProperties stereoBuses();
 
     juce::String pluginName;

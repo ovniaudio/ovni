@@ -1,6 +1,7 @@
 #include "HaloRings.h"
 #include "HaloRingsStatic.h"
 #include "ui-kit/Fonts.h"
+#include "engine/HaloEngine.h"   // estimatedRt60Seconds(): única fuente de verdad del RT60 (telemetría honesta)
 #include <cmath>
 
 namespace halo::ui
@@ -251,9 +252,12 @@ void HaloRings::paintTelemetry (juce::Graphics& g, int w, int h) const
 void HaloRings::refreshTelemetry()
 {
     teleRings = "RINGS " + juce::String (liveCount).paddedLeft ('0', 2);
-    // RT60 derivado de DECAY+SIZE (mockup §tele: rango 0.3–14 s). Honesto: la cola del FDN crece con ambos.
-    const float rt = 0.3f + decaySm * juce::jmap (sizeSm, 4.0f, 13.7f);
-    teleRt    = juce::String (rt, 1) + " s";
+    // RT60 HONESTO: la estimación del MOTOR (HaloEngine::estimatedRt60Seconds, calibrada contra el T60
+    // medido por [honestidad][halo]). La fórmula del mockup (0.3+decay·map(size,4→13.7)) mentía: decía
+    // "0.3 s" a DECAY 0 cuando el difusor glacial fijo solo ya suena ≈9.4 s. En FREEZE la cola es infinita.
+    const float rt = HaloEngine::estimatedRt60Seconds (decaySm, shimmerSm);
+    teleRt    = freezeSm > 0.5f ? juce::String::fromUTF8 ("\xe2\x88\x9e")
+                                : juce::String (rt, 1) + " s";
     teleSize  = juce::String (sizeSm, 2);
     teleOrbit = juce::String (orbitSm, 2);
     teleTone  = juce::String (toneSm, 2);

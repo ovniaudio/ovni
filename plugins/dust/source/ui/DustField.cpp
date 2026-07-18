@@ -205,7 +205,8 @@ int DustField::dbgSpawnsOverFrames (int frames) noexcept
 // ── telemetría honesta: derivada de los atomics suavizados (espejo del DSP) + estado real del campo ─
 void DustField::refreshTelemetry()
 {
-    auto sgn = [] (float v) { return juce::String::fromUTF8 (v >= 0.0f ? "+" : "\xe2\x88\x92"); };
+    // signo consciente del redondeo a 2 decimales: lo que se muestra como 0.00 lleva "+" (nunca "−0.00").
+    auto sgn = [] (float v) { return juce::String::fromUTF8 (v > -0.005f ? "+" : "\xe2\x88\x92"); };
 
     // Burbujas vivas / capacidad (mockup: "00 / 48").
     int alive = 0;

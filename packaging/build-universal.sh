@@ -50,7 +50,7 @@ while IFS= read -r b; do
   [ -n "$b" ] && BINARIES+=("$b")
 done < <(
   find "$BUILD_DIR" -path "*_artefacts/$CONFIG/*" \
-    \( -name '*.vst3' -o -name '*.component' \) 2>/dev/null \
+    \( -name '*.vst3' -o -name '*.component' -o -name '*.app' \) -prune 2>/dev/null \
   | while read -r bundle; do
       base="$(basename "$bundle")"; name="${base%.*}"
       bin="$bundle/Contents/MacOS/$name"

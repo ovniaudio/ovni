@@ -10,9 +10,8 @@
 # productbuild. El product archive es el que firmamos con la identidad de INSTALADOR
 # (Developer ID Installer) y el que se notariza después (release.yml).
 #
-# Nota de distribución: el ENTREGABLE PRINCIPAL de la web son los .pkg de make-per-plugin.sh
-# (por plugin + catálogo completo); el DMG quedó como alternativa manual. Este .pkg monolítico
-# se mantiene por compatibilidad con release.yml. Tanto el .pkg
+# Nota de distribución: el DMG (packaging/make-dmg.sh) es el ENTREGABLE GRATIS PRINCIPAL. Este .pkg
+# se mantiene como alternativa (instala en rutas SYSTEM con un doble-click guiado). Tanto el .pkg
 # como el .dmg SIN FIRMAR son 100% legales y funcionan: el usuario solo ve el aviso de Gatekeeper la
 # primera vez (workaround: click derecho → Abrir, o `xattr -dr com.apple.quarantine …`). Ver README.
 #
@@ -48,7 +47,7 @@ PKG_IDENTIFIER="com.ovni.plugins"
 # SOURCE_URL: URL pública del repositorio fuente. PLACEHOLDER — confirmar la URL real del repo
 # (ver reporte). Se puede sobrescribir por entorno: SOURCE_URL=… packaging/make-installer.sh …
 LICENSE_FILE="${LICENSE_FILE:-$ROOT/LICENSE}"
-SOURCE_URL="${SOURCE_URL:-https://github.com/ovniaudio}"
+SOURCE_URL="${SOURCE_URL:-https://github.com/ovniaudio/ovni}"
 
 # --- args ---
 VERSION=""

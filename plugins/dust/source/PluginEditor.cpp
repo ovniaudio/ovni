@@ -281,7 +281,10 @@ void DustEditor::paintBody (juce::Graphics& g)
     {
         g.setColour (th::lineSoft);
         g.fillRect (specArea.getX(), specArea.getY(), 1, juce::jmin (specArea.getHeight(), 80));
-        const char* const specs[] = { "BINAURAL ECHOES", "BUBBLE FIELD", "NEAR-FIELD", "LIMITER" };
+        // credenciales HONESTAS del motor (Manifiesto #2): el banco de direcciones es el anillo
+        // SADIE II KU100 (16 buses FIR + ITD Woodworth). "NEAR-FIELD" mentía: eso es del
+        // SpatialEngine de ORBIT/PULSAR — DUST no modela distancia.
+        const char* const specs[] = { "BINAURAL ECHOES", "BUBBLE FIELD", "SADIE II RING", "LIMITER" };
         g.setFont (fonts::mono (7.0f).withExtraKerningFactor (0.20f));
         int y = specArea.getY() + 4;
         for (auto* s : specs)

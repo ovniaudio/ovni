@@ -85,3 +85,31 @@ TEST_CASE ("NEBULA: snapshot del sync en FREE y SYNC", "[snapshot][nebula]")
     shoot (1.0f, "/tmp/nebula_sync.png");
     SUCCEED ("snapshots written");
 }
+
+// =============================================================================
+// [honestidad] La telemetría RT60 de la nube dice LA VERDAD del motor: el readout
+// tiene que salir de FdnReverb::t60ForDecay (única fuente de verdad), no de una
+// fórmula propia del mockup. Regresión del bug 2026-07-16: la nube mostraba
+// "RT60 6.3 s" (0.2 + decay·map(size, 4→11.8)) cuando el motor apuntaba a ~2.9 s,
+// y el SIZE ni siquiera cambia el T60 real (el motor recalcula g_i para conservarlo).
+// =============================================================================
+#include "ui/NebulaCloud.h"
+#include "engines/fdn/FdnReverb.h"
+
+TEST_CASE ("NEBULA: el readout RT60 == t60ForDecay del motor (no formula de mockup)", "[diccionario][honestidad][nebula]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    std::atomic<float> size { 0.6f }, decay { 0.5f }, tone { 0.4f }, breath { 0.25f }, breathLfo { 0.0f };
+    nebula::ui::NebulaCloud cloud (size, decay, tone, breath, breathLfo, nullptr, nullptr);
+
+    for (float d : { 0.25f, 0.5f, 0.7f, 0.75f, 1.0f })
+        for (float s : { 0.0f, 0.6f, 1.0f })         // el SIZE NO debe mover el readout
+        {
+            decay.store (d); size.store (s);
+            cloud.dbgSettleTelemetry();
+            const float shown  = cloud.dbgRt60Text().upToFirstOccurrenceOf (" ", false, false).getFloatValue();
+            const float target = ovni::engines::FdnReverb::t60ForDecay (d);
+            INFO ("decay=" << d << " size=" << s << "  readout=" << shown << "  motor=" << target);
+            REQUIRE (shown == Catch::Approx (target).margin (0.06));   // margen del redondeo "%.1f s"
+        }
+}

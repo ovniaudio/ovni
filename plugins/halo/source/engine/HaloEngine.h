@@ -68,7 +68,10 @@ namespace halo {
 
 struct HaloParams
 {
-    float shimmer01 = 0.55f;   // cantidad de capa pitched reinyectada al lazo (0 = reverb a secas)
+    float shimmer01 = 0.55f;   // capa pitched: re-inyección al lazo Y presencia en el wet de salida.
+                               // 0 = reverb A SECAS (el primer paso pitched se desvanece por debajo del
+                               // default vía kShimmerFullOut; al default 0.55 la salida es IDÉNTICA a la
+                               // histórica — fix de honestidad QA 2026-07-16 con OK de Joaquín).
     float decay01   = 0.75f;   // feedback del lazo (piso log; "cuánto dura"; cap kRegenMax)
     float size01    = 0.65f;   // tamaño del difusor FDN + pre-delay (ataque/tamaño percibido)
     float tone01    = 0.45f;   // LP del lazo: más TONE = más oscuro (LP más bajo) = más estable
@@ -119,6 +122,11 @@ public:
     static float feedbackForRegen (float decay01) noexcept;
     // tone01 -> corte del LP de banda del lazo (Hz). Más TONE = más bajo = más oscuro y más estable.
     static float loopCutoffForTone (float tone01) noexcept;
+    // RT60 ESTIMADO de la cola audible (s) — para el readout de la UI. El piso lo pone el difusor
+    // glacial fijo (t60ForDecay(kFdnDecay01) ≈ 9.4 s, independiente del usuario); el lazo lo estira
+    // con DECAY·SHIMMER. Calibrado contra el T60 MEDIDO en [honestidad][halo] (2026-07-16, size=0.5):
+    // {9.4, 9.7, 10.4, 11.8, 14.9} s a decay {0,25,50,75,100} con shimmer 0.55 → error < ±6%.
+    static float estimatedRt60Seconds (float decay01, float shimmer01) noexcept;
 
     // Techo del feedback del lazo (NUNCA llega a 1 → el shimmer no diverge). En FREEZE se usa 1.0 exacto
     // (modo aparte). Ver feedbackForRegen + el LP del lazo en process().
@@ -186,6 +194,8 @@ private:
     using ItdLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Lagrange3rd>;
     ItdLine orbitItdL { 64 }, orbitItdR { 64 };
     float   orbitItdMaxSamp = 34.0f;       // ITD máx en samples (se computa en prepare según SR)
+    float   orbitBassCoef = 0.0f;          // crossover bass-mono (IN PHASE) ~250 Hz (1-polo)
+    float   orbitBassLpL = 0.0f, orbitBassLpR = 0.0f;
     // High-shelf de sombra de cabeza (ILD dependiente de frecuencia): LP 1-polo fijo @ kHeadShadowHz cuyo
     // residuo HF se atenúa en el oído lejano. Estado del LP por canal (sin alloc en process()).
     float   orbitShelfCoef = 0.0f;         // coef del LP del corner del shelf ~1.6 kHz (1-polo), fijo en prepare
@@ -201,6 +211,15 @@ private:
     struct OnePoleHP64 { double z = 0.0, a = 0.0; void setCutoff (double fc, double sr) noexcept; double process (double x) noexcept; void reset() noexcept { z = 0.0; } };
     std::array<OnePoleLP64, 2> loopLP;
     std::array<OnePoleHP64, 2> loopHP;
+
+    // SHIMMER honesto en la SALIDA (QA 2026-07-16, OK de Joaquín): el wet de salida mezcla el camino
+    // PRE-pitch (reverb a secas, con su PROPIO par EQ que sigue el mismo cutoff de TONE — así TONE no
+    // muere a shimmer bajo) y el POST-pitch, por w = min(1, shimmer/kShimmerFullOut). A shimmer ≥
+    // default (0.55) w=1 → salida idéntica a la histórica; a 0 → cero capa pitched. El LAZO (ret =
+    // shimmer·EQ(postPitch)) NO cambia: estabilidad/anti-divergencia intactas.
+    std::array<OnePoleLP64, 2> outLP;
+    std::array<OnePoleHP64, 2> outHP;
+    juce::AudioBuffer<float> prePitch;
 
     // El "retorno" del lazo (la cola pitched+EQ del bloque anterior) reinyectada al input. float64 (lazo).
     std::array<std::vector<double>, 2> shimmerReturn;

@@ -377,6 +377,7 @@ void FdnReverb::process (juce::AudioBuffer<float>& buffer, const FdnParams& p)
         //    SYNC: si breathRateHz>0 respira ENGANCHADO al tempo (esa frecuencia); ≤0 = libre/orgánico.
         //    El de-zipper del rate vive dentro del LFO → togglear SYNC no salta la respiración. ────
         const float lfo   = breath.next ((double) p.breathRateHz);
+        lastBreathLfo     = lfo;   // telemetría (la nube de NÉBULA respira en fase con esto)
         const float scale = baseScale * (1.0f + kBreathMaxFrac * breathDepth * lfo);
 
         // ── Cross-fade de las longitudes (anti-click): rampa suave delaySamplesSm → objetivo. ────

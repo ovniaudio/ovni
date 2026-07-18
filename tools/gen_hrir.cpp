@@ -13,8 +13,8 @@
 //
 // Build (build dir AISLADO; NO toca el build/ principal):
 //   cmake -G Ninja -B build-genhrir -S tools/genhrir \
-//       -DOVNI_JUCE_DIR=/path/to/orbita/JUCE \
-//       -DFETCHCONTENT_SOURCE_DIR_LIBMYSOFA=/path/to/orbita/build/_deps/libmysofa-src
+//       -DOVNI_JUCE_DIR=/Users/musik/PLUGINS/orbita/JUCE \
+//       -DFETCHCONTENT_SOURCE_DIR_LIBMYSOFA=/Users/musik/PLUGINS/orbita/build/_deps/libmysofa-src
 //   cmake --build build-genhrir
 //   ./build-genhrir/gen_hrir  <ruta-al-SOFA>  <ruta-repo-ovni>
 // =====================================================================================

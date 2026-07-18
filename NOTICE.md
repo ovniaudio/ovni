@@ -8,9 +8,9 @@ no se puede comprobar, es un bug — abrí un issue.
 > **Licencia, en una línea:** OVNI free catalog: AGPLv3 (matches JUCE open-source
 > terms). ORBIT (if sold closed): JUCE Starter free tier (<US$20k/yr).
 
-> **Código fuente correspondiente (AGPLv3):** los 6 plugins del catálogo → este repo,
+> **Código fuente correspondiente (AGPLv3):** los 6 plugins de audio del catálogo y **SUPERNOVA** → este repo,
 > **<https://github.com/ovniaudio/ovni>** · el flagship **ORBIT** → su propio repo,
-> **<https://github.com/ovniaudio/orbita>**. Los instaladores del release (`OVNI-v<versión>.pkg`, los `.pkg` por plugin, el `.dmg`) incluyen los 7;
+> **<https://github.com/ovniaudio/orbita>**. Los instaladores de cada release (los `.pkg` por módulo y los bundles que correspondan) incluyen los módulos de esa ola;
 > el fuente de cada uno está en uno de esos dos repos.
 
 > **Cómo se usa este archivo:** las mismas atribuciones viven, en forma compacta,
@@ -68,6 +68,13 @@ por red), pero las cumplimos al publicar el código completo del repo en el rele
 - **Versión:** v3.8.1 (FetchContent, solo al compilar tests)
 - **Licencia:** **BSL-1.0** (Boost Software License 1.0)
 - **Uso en el proyecto:** framework de tests. **No** se enlaza en los binarios de release.
+
+### Syphon-Framework
+- **Origen / autor:** Syphon — bangnoise (Tom Butterworth) & vade (Anton Marini) — <https://github.com/Syphon/Syphon-Framework>
+- **Versión:** commit `71351d4` (fuentes vendorizadas en `third_party/Syphon-Framework/`, subconjunto Metal).
+- **Licencia:** **BSD-2-Clause** (compatible con AGPLv3).
+- **Uso en el proyecto:** servidor Syphon (macOS) — SUPERNOVA publica su textura final a OBS/Resolume/VDMX (RF7).
+  Compilado estáticamente como `ovni_syphon`, sólo en SUPERNOVA.
 
 ### Intel IPP — ya no se usa (histórico ≤ v0.1.0)
 - **Desde v0.1.1, ningún plugin del catálogo — ORBIT incluido — enlaza Intel IPP** ni ninguna

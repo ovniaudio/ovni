@@ -31,6 +31,8 @@ SOFTWARE
     Carga de HRTF en formato SOFA / AES69 (modulos binaurales).
   Catch2 v3.8.1 - catchorg contributors - BSL-1.0
     Framework de tests (no se enlaza en release).
+  Syphon-Framework - Tom Butterworth & Anton Marini - BSD-2-Clause
+    Servidor Syphon (macOS): SUPERNOVA publica su textura a OBS/Resolume (RF7).
 
 DATASETS HRIR / HRTF
   Dataset de PRODUCCION: SADIE II KU100 (Apache-2.0). HALO NO usa HRIR (es un

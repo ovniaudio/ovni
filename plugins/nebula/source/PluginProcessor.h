@@ -46,7 +46,8 @@ public:
     std::atomic<float> uiSize   { 0.5f };   // radio base de la nube
     std::atomic<float> uiDecay  { 0.5f };   // densidad / partículas de la cola
     std::atomic<float> uiTone   { 0.4f };   // tinte / oscuridad (damping HF)
-    std::atomic<float> uiBreath { 0.25f };  // expansión-contracción animada
+    std::atomic<float> uiBreath { 0.25f };  // expansión-contracción animada (profundidad = knob)
+    std::atomic<float> uiBreathLfo { 0.0f }; // FASE real del BreathLFO del motor [−1,1] — la nube respira con esto
     std::atomic<float> uiMix    { 0.35f };  // presencia del wet
 
 protected:

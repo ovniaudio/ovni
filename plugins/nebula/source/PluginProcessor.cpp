@@ -202,6 +202,7 @@ void NebulaProcessor::processAudio (juce::AudioBuffer<float>& buffer, juce::Midi
     uiDecay.store  (decay01,  std::memory_order_relaxed);
     uiTone.store   (tone01,   std::memory_order_relaxed);
     uiBreath.store (breath01, std::memory_order_relaxed);
+    uiBreathLfo.store (fdn.breathLfoValue(), std::memory_order_relaxed);   // fase REAL del motor
     uiMix.store    (mix01,    std::memory_order_relaxed);
 }
 

@@ -183,7 +183,9 @@ void HaloEditor::layoutBody (juce::Rectangle<int> body)
     // ===== rail INFERIOR: 6 knobs reparten el ancho central (MIX/SIZE/DECAY/SHIMMER/TONE/ORBIT) =====
     {
         auto col = rail.reduced (10, 0).withTrimmedTop (8).withTrimmedBottom (8);
-        Knob* knobs[] = { &mix, &size, &decay, &shimmer, &tone, &orbit };
+        // MIX al FINAL como en el resto del catálogo (NEBULA/DUST/AURORA/HORIZON lo llevan último;
+        // acá estaba primero — coherencia de catálogo, QA 2026-07-16 con OK de Joaquín).
+        Knob* knobs[] = { &size, &decay, &shimmer, &tone, &orbit, &mix };
         const char* idx[] = { "01", "02", "03", "04", "05", "06" };
         const int n  = 6;
         const int kw = col.getWidth() / n;
@@ -275,7 +277,9 @@ void HaloEditor::paintBody (juce::Graphics& g)
     {
         g.setColour (th::lineSoft);
         g.fillRect (specArea.getX(), specArea.getY(), 1, specArea.getHeight());
-        const char* const specs[] = { "FDN NET 16x", "SHIMMER +12 / +7", "HALOS", "ORBIT TEMPO" };
+        // credenciales HONESTAS del motor (Manifiesto #2): el FDN compartido tiene kN=8 líneas
+        // ("16x" venía del mockup y mentía — mismo bug que tenía NÉBULA).
+        const char* const specs[] = { "FDN NET 8x", "SHIMMER +12 / +7", "HALOS", "ORBIT TEMPO" };
         g.setFont (fonts::mono (7.0f).withExtraKerningFactor (0.20f));
         int y = specArea.getY() + 4;
         for (auto* s : specs)

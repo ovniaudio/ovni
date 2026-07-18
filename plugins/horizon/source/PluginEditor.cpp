@@ -41,6 +41,10 @@ HorizonEditor::HorizonEditor (HorizonProcessor& p)
     enableBottomBar (th::green, juce::String::fromUTF8 ("SPL\xc2\xb7""02  \xe2\x80\x94  hover a control to read it"));
     bottomBar().setSignature (juce::String::fromUTF8 ("SIGNAL STABLE"));
 
+    // PDC real en la telemetría del campo (Manifiesto #3: la latencia STFT se publica, no se esconde).
+    field.pdcProvider = [this] { return proc.getLatencySamples(); };
+    field.refreshTelemetryNow();
+
     addToCanvas (field);
     addToCanvas (freezeBtn);
     addToCanvas (meter);
@@ -294,8 +298,11 @@ void HorizonEditor::paintBody (juce::Graphics& g)
     {
         g.setColour (th::lineSoft);
         g.fillRect (specArea.getX(), specArea.getY(), 1, specArea.getHeight());
+        // credenciales HONESTAS del motor (Manifiesto #2): "24 LAYERS" era el conteo de bandas del
+        // VISUALIZADOR (kVizBands) vendido como feature del motor; lo real y distintivo del freeze
+        // vidrioso es la resíntesis con avance de fase COHERENTE por bin.
         const char* const specs[] = { "SPECTRAL FREEZE", "STFT 2048",
-                                      "24 LAYERS", "RE-TRIGGER", "LIMITER" };
+                                      "PHASE-COHERENT", "RE-TRIGGER", "LIMITER" };
         g.setFont (fonts::mono (7.0f).withExtraKerningFactor (0.20f));
         int y = specArea.getY() + 4;
         for (auto* s : specs)

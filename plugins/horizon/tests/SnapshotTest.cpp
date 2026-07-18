@@ -4,7 +4,6 @@
 // FREEZE no pisan la utilidad. Congela una señal rica + RATE SYNC para que el espectro suspendido tenga
 // energía/posición reales del motor y el latido se vea. Headless (ScopedJuceInitialiser_GUI lo provee TestMain).
 #include <catch2/catch_test_macros.hpp>
-#include <cstdlib>   // std::getenv (guard CI headless en [shot4k])
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 #include "PluginProcessor.h"
@@ -69,10 +68,6 @@ TEST_CASE ("snapshot: editor de HORIZON -> /tmp/ovni_horizon_m.png", "[snapshot]
 // web/ficha. -> docs/redesign/real-shots/horizon.png
 TEST_CASE ("shot4k: HORIZON editor real 4x -> real-shots/horizon.png", "[shot4k][horizon]")
 {
-    // CI/headless: este [shot4k] regenera la foto de marketing en un path local del autor
-    // (docs/redesign/real-shots/*.png) y necesita window-server; en CI se auto-saltea sin tocar
-    // su logica (GitHub Actions exporta CI=true). Corre normal en local para rehornear la foto.
-    if (std::getenv ("CI") != nullptr) { SUCCEED ("shot4k saltado en CI headless"); return; }
     namespace pid = horizon::params::id;
     horizon::HorizonProcessor proc;
     if (auto* fz = proc.apvts.getParameter (pid::FREEZE))   fz->setValueNotifyingHost (1.0f);
@@ -116,7 +111,7 @@ TEST_CASE ("shot4k: HORIZON editor real 4x -> real-shots/horizon.png", "[shot4k]
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), false, 4.0f);
     REQUIRE (img.isValid());
 
-    auto out = juce::File ("/path/to/ovni/docs/redesign/real-shots/horizon.png");
+    auto out = juce::File ("/Users/musik/PLUGINS/ovni/docs/redesign/real-shots/horizon.png");
     out.getParentDirectory().createDirectory();
     out.deleteFile();
     juce::FileOutputStream os2 (out);

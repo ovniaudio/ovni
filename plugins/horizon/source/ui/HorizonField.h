@@ -44,6 +44,13 @@ class HorizonField : public ovni::ui::VisualizerBase
 public:
     static constexpr int kBands = 24;   // debe casar con HorizonProcessor::kVizBands
 
+    // PDC real reportada al host (Manifiesto #3: la latencia se PUBLICA, no se esconde). El editor
+    // lo cablea a processor.getLatencySamples(); la telemetría lo muestra en vivo (0 = sin preparar).
+    std::function<int()> pdcProvider;
+    // Refresca los strings de telemetría YA (el editor lo llama tras cablear pdcProvider: el campo
+    // se construye en la init-list, antes de que exista el provider, y cachea "PDC 0").
+    void refreshTelemetryNow() { refreshTelemetry(); }
+
     HorizonField (std::atomic<float>& whisper,
                   std::atomic<float>& spread,
                   std::atomic<float>& duck,
@@ -111,7 +118,7 @@ private:
     void paintTelemetry (juce::Graphics& g, int w, int h) const;
     void refreshTelemetry();
     int          teleCountdown = 0;
-    juce::String teleState, teleSpread, teleRate, teleDuck, teleBalance;
+    juce::String teleState, teleSpread, teleRate, teleDuck, teleBalance, telePdc;
     bool         teleFrozen  = false;
 
     // Tinte por banda: familia VERDE (Espectral) SIEMPRE. Graves = verde profundo,

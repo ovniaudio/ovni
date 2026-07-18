@@ -86,6 +86,11 @@ public:
     };
     void setProbe (MeterProbe* pr) noexcept { probe = pr; }
 
+    // ── Telemetría del BreathLFO (no RT-crítica de leer): último valor [−1,1] del oscilador de
+    //    respiración. La UI de NÉBULA lo usa para que la nube respire EN FASE con el audio real
+    //    (antes animaba un LFO visual propio, desincronizado del motor). Aditivo: no cambia el DSP.
+    float breathLfoValue() const noexcept { return lastBreathLfo; }
+
     static constexpr int kN = 8;   // líneas de la FDN
 
     // ── Mapeos perceptuales públicos (única fuente de verdad: el motor y los tests comparten estas
@@ -187,6 +192,7 @@ private:
     std::vector<float> wetScratchL, wetScratchR;
 
     MeterProbe* probe = nullptr;         // clip-scan: si != null, process() llena las etapas (costo cero si null).
+    float lastBreathLfo = 0.0f;          // telemetría: último valor [−1,1] del BreathLFO (ver breathLfoValue()).
     float limiterProbeGain = 1.0f;       // estado de la réplica del limiter del probe (continuidad entre bloques).
 };
 

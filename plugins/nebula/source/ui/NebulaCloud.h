@@ -37,11 +37,13 @@ namespace nebula::ui
 class NebulaCloud : public ovni::ui::VisualizerBase
 {
 public:
-    // Telemetría (lee) + los params size/decay (escribe en el drag). Todos los atomics en 0..1.
+    // Telemetría (lee) + los params size/decay (escribe en el drag). Atomics en 0..1, salvo
+    // breathLfo = fase REAL del BreathLFO del motor en [−1,1] (la nube respira en fase con el audio).
     NebulaCloud (std::atomic<float>& size,
                  std::atomic<float>& decay,
                  std::atomic<float>& tone,
                  std::atomic<float>& breath,
+                 std::atomic<float>& breathLfo,
                  juce::RangedAudioParameter* sizeParam,
                  juce::RangedAudioParameter* decayParam);
     ~NebulaCloud() override = default;
@@ -49,6 +51,16 @@ public:
     // Capacidad del banco de motas de polvo (la cantidad VISIBLE ∝ Decay; ver el .cpp). Público para que
     // la constante de densidad del .cpp lo use como tope. (mockup DUST_N = 240.)
     static constexpr int kMotes = 240;
+
+    // ======== accesores test-only (Diccionario §5: la telemetría se verifica, no se mira) ========
+    // Fuerza el settle del de-zipper visual (sm = valor actual de los atomics) + refresca los strings.
+    void dbgSettleTelemetry()
+    {
+        sizeSm = sizeNow = sizeSrc.load();   decaySm = decayNow = decaySrc.load();
+        toneSm = toneNow = toneSrc.load();   breathSm = breathNow = breathSrc.load();
+        refreshTelemetry();
+    }
+    juce::String dbgRt60Text() const { return teleRt; }
 
 protected:
     void renderStatic (juce::Graphics& g, int w, int h) override;
@@ -65,6 +77,7 @@ private:
     std::atomic<float>& decaySrc;
     std::atomic<float>& toneSrc;
     std::atomic<float>& breathSrc;
+    std::atomic<float>& breathLfoSrc;   // fase real [−1,1] del BreathLFO del motor
     juce::RangedAudioParameter* sizeP   = nullptr;
     juce::RangedAudioParameter* decayP  = nullptr;
 
@@ -73,9 +86,8 @@ private:
     float sizeSm = 0.5f, decaySm = 0.5f, toneSm = 0.4f, breathSm = 0.25f;
     float densitySm = 0.5f;   // densidad observada (∝ Decay, suavizada) — la telemetría DENS
 
-    // Respiración: 2 LFOs incoherentes (mockup §step) → inhala/exhala orgánico; centrada en 0.5.
-    float lfoA = 0.0f, lfoB = 0.0f;
-    float breathPhase01 = 0.5f;   // [0,1] valor de respiración suavizado (lo refleja el dibujo + tele)
+    // Respiración: fase REAL del motor suavizada a [0,1] (lo refleja el dibujo + la telemetría).
+    float breathPhase01 = 0.5f;
 
     // Motas de polvo: posición en disco unidad + semilla de fase propia (titilar/derivar). Cantidad
     // VISIBLE ∝ decay; radio del disco ∝ size·respiración. (mockup §buildDustGeometry, LCG fijo.)

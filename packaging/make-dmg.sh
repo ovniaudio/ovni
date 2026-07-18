@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # packaging/make-dmg.sh — Arma un .dmg de distribución GRATIS del catálogo OVNI (VST3 + AU).
 #
-# Es la ALTERNATIVA MANUAL del camino gratis (el principal: los .pkg de make-per-plugin.sh) (sin pagar la cuenta Apple Developer de 99 USD):
+# Es el ENTREGABLE PRINCIPAL del camino gratis (sin pagar la cuenta Apple Developer de 99 USD):
 # un .dmg que el usuario abre, arrastra los plugins a su carpeta de Plug-Ins, y listo. El plugin
 # SIN FIRMAR es 100% legal y funciona (AGPLv3 + JUCE); la única diferencia es que macOS muestra el
 # aviso de Gatekeeper la primera vez. El "LÉEME PRIMERO.txt" de adentro explica el workaround exacto.
@@ -39,18 +39,20 @@ DEV_ID="${DEV_ID:-}"
 # SOURCE_URL: URL pública del repositorio fuente. PLACEHOLDER — confirmar la URL real del repo
 # (ver reporte). Se puede sobrescribir por entorno: SOURCE_URL=… packaging/make-dmg.sh …
 LICENSE_FILE="${LICENSE_FILE:-$ROOT/LICENSE}"
-SOURCE_URL="${SOURCE_URL:-https://github.com/ovniaudio}"
+SOURCE_URL="${SOURCE_URL:-https://github.com/ovniaudio/ovni}"
 
 # --- args ---
 VERSION=""
 OUT=""
 PLUGINS_FILTER=""
+APPS_FILTER=""          # opt-in: bundlea la(s) .app standalone (RF9). p.ej. --apps "supernova"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) VERSION="${2:-}"; shift 2 ;;
     --out)     OUT="${2:-}"; shift 2 ;;
     --plugins) PLUGINS_FILTER="${2:-}"; shift 2 ;;
-    *) fail "argumento desconocido: $1 (uso: --version <X.Y.Z> --out <ruta.dmg> [--plugins \"a b c\"])" ;;
+    --apps)    APPS_FILTER="${2:-}"; shift 2 ;;
+    *) fail "argumento desconocido: $1 (uso: --version <X.Y.Z> --out <ruta.dmg> [--plugins \"a b c\"] [--apps \"a b\"])" ;;
   esac
 done
 [ -n "$VERSION" ] || fail "falta --version <X.Y.Z>"
@@ -62,11 +64,12 @@ command -v hdiutil >/dev/null 2>&1 || fail "no encuentro 'hdiutil' (¿es macOS?)
 # ¿Este bundle entra según el filtro --plugins? (sin filtro → entra todo). Match case-insensitive
 # por nombre de archivo (p.ej. "halo" matchea HALO.vst3 / HALO.component).
 matches_filter() {
-  [ -z "$PLUGINS_FILTER" ] && return 0
+  local filter="${2:-$PLUGINS_FILTER}"
+  [ -z "$filter" ] && return 0
   local base lower want
   base="$(basename "$1")"
   lower="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
-  for want in $PLUGINS_FILTER; do
+  for want in $filter; do
     case "$lower" in
       "$(printf '%s' "$want" | tr '[:upper:]' '[:lower:]')".*) return 0 ;;
     esac
@@ -90,6 +93,29 @@ done < <(
 )
 
 [ "$n_added" -gt 0 ] || fail "no encontré .vst3/.component en $BUILD_DIR/*_artefacts/$CONFIG/ (¿buildeaste? ¿el filtro --plugins matchea?)"
+
+# --- .app standalone (RF9), opt-in con --apps. La app propia (gui_app) vive en
+#     <slug>_app_artefacts/$CONFIG/<PRODUCT>.app; la matcheamos por nombre de archivo. ---
+if [ -n "$APPS_FILTER" ]; then
+  n_apps=0
+  while IFS= read -r appb; do
+    [ -n "$appb" ] || continue
+    matches_filter "$appb" "$APPS_FILTER" || continue
+    cp -R "$appb" "$STAGE/"
+    n_apps=$((n_apps+1))
+    log "+ $(basename "$appb") (app)"
+  done < <(
+    find "$BUILD_DIR" -path "*_artefacts/$CONFIG/*" -name '*.app' -prune 2>/dev/null
+  )
+  if [ "$n_apps" -gt 0 ]; then
+    # Alias a /Applications para arrastrar la app (paralelo al de Plug-Ins).
+    if ! ln -s "/Applications" "$STAGE/Applications (arrastrá la app acá)" 2>/dev/null; then
+      log "aviso: no pude crear el alias a /Applications (sigo igual)"
+    fi
+  else
+    log "aviso: --apps \"$APPS_FILTER\" no matcheó ninguna .app en $BUILD_DIR (¿buildeaste el gui_app?)"
+  fi
+fi
 
 # --- Alias a la carpeta de Plug-Ins del sistema (arrastrar de un lado al otro). ---
 # Es un alias real de Finder; si por algún motivo falla (entorno headless raro), seguimos: el
@@ -167,8 +193,6 @@ LEEME
 [ -f "$LICENSE_FILE" ] || fail "no encuentro el LICENSE en $LICENSE_FILE (requerido por AGPLv3)"
 cp "$LICENSE_FILE" "$STAGE/LICENSE.txt"
 log "+ LICENSE.txt (AGPLv3)"
-# NOTICE (atribuciones de terceros: JUCE, libmysofa, SADIE HRIR, Intel IPP…). Opcional pero pro.
-if [ -f "$ROOT/NOTICE.md" ]; then cp "$ROOT/NOTICE.md" "$STAGE/NOTICE.txt"; log "+ NOTICE.txt (atribuciones de terceros)"; fi
 cat > "$STAGE/SOURCE.txt" <<SOURCE
 ============================================================
   OVNI Audio — Código fuente (AGPLv3)

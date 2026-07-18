@@ -2,7 +2,6 @@
 // y deja snapshots /tmp/ovni_pulsar_{s,m,l}.png para mirar a ojo. Headless (ScopedJuceInitialiser_GUI
 // lo provee TestMain de S3).
 #include <catch2/catch_test_macros.hpp>
-#include <cstdlib>   // std::getenv (guard CI headless en [shot4k])
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
@@ -54,10 +53,6 @@ TEST_CASE ("resize: PULSAR S/M/L tamaños exactos + snapshots", "[resize][pulsar
 // headless). Fuente unica de la foto de web/ficha. -> docs/redesign/real-shots/pulsar.png
 TEST_CASE ("shot4k: PULSAR editor real 4x -> real-shots/pulsar.png", "[shot4k][pulsar]")
 {
-    // CI/headless: este [shot4k] regenera la foto de marketing en un path local del autor
-    // (docs/redesign/real-shots/*.png) y necesita window-server; en CI se auto-saltea sin tocar
-    // su logica (GitHub Actions exporta CI=true). Corre normal en local para rehornear la foto.
-    if (std::getenv ("CI") != nullptr) { SUCCEED ("shot4k saltado en CI headless"); return; }
     namespace pid = pulsar::params::id;
     pulsar::PulsarProcessor proc;
 
@@ -105,7 +100,7 @@ TEST_CASE ("shot4k: PULSAR editor real 4x -> real-shots/pulsar.png", "[shot4k][p
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), false, 4.0f);   // 4x (real 4K)
     REQUIRE (img.isValid());
 
-    auto out = juce::File ("/path/to/ovni/docs/redesign/real-shots/pulsar.png");
+    auto out = juce::File ("/Users/musik/PLUGINS/ovni/docs/redesign/real-shots/pulsar.png");
     out.getParentDirectory().createDirectory();
     out.deleteFile();
     juce::FileOutputStream os (out);
