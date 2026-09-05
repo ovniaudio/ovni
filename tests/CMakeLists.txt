@@ -501,7 +501,7 @@ if(APPLE)
         ovni_syphon
         juce::juce_gui_basics
         juce::juce_recommended_config_flags
-        "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework CoreVideo" "-framework IOSurface" "-framework Vision")
+        "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework CoreVideo" "-framework IOSurface" "-framework Vision" "-framework ImageIO")
     set_target_properties(OvniSupernovaRender PROPERTIES OSX_ARCHITECTURES "arm64")
 endif()
 
@@ -540,6 +540,12 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/StillCanvasTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/CanvasStateTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/PhotoSequenceTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/CanvasFormatTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MediaThumbsTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/DecodedImageCacheTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MediaStripTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MediaSessionEditorTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/HeicDecodeTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ImageOrientationTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/FitAspectTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/VideoSourceTest.cpp
@@ -547,11 +553,14 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/BeatClockTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiCcMapTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/LfoBankTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/LfoModulationTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/SceneBankTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/PersistenceLocaleTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/UndoStackTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportPresetTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportSmokeTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiCcQueueTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiCueQueueTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ThumbnailSmokeTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/WorldCardsTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ProcessorIntegrationTest.cpp
@@ -580,7 +589,7 @@ if(APPLE)
         juce::juce_audio_utils juce::juce_gui_basics juce::juce_gui_extra juce::juce_dsp
         juce::juce_recommended_config_flags
         "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework CoreVideo" "-framework IOSurface" "-framework Vision"
-        "-framework AVFoundation" "-framework CoreMedia")
+        "-framework AVFoundation" "-framework CoreMedia" "-framework ImageIO")
     set_target_properties(OvniSupernovaTests PROPERTIES OSX_ARCHITECTURES "arm64")
     catch_discover_tests(OvniSupernovaTests TEST_PREFIX "[supernova] " DISCOVERY_MODE PRE_TEST)
 endif()

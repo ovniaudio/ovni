@@ -38,8 +38,10 @@ public:
     // Decodifica desde archivo (PNG/JPEG/GIF… lo que decodifica JUCE). Inválida si no existe/no decodifica.
     static LoadedImage fromFile (const juce::File& file);
 
-    // Decodifica desde bytes crudos (algunos drops entregan datos, no una ruta).
-    static LoadedImage fromEncodedData (const void* data, size_t numBytes);
+    // Decodifica desde bytes crudos (algunos drops entregan datos, no una ruta). maxSide = tope del lado mayor
+    // para los formatos que van por ImageIO (HEIC/WebP/TIFF, mac): el motor pide kMaxSide; las miniaturas
+    // piden mucho menos y así un HEIC de 48 MP no pasa entero por memoria para un tile de 58 px.
+    static LoadedImage fromEncodedData (const void* data, size_t numBytes, int maxSide = kMaxSide);
 
     // Convierte una juce::Image ya decodificada → RGBA8 (aplica downsample RNF7). Inválida si la imagen es nula.
     static LoadedImage fromImage (const juce::Image& image);
@@ -53,10 +55,15 @@ public:
     static int  exifOrientation (const void* data, size_t numBytes) noexcept;
     // applyOrientation: rota/espeja el RGBA in-place según la orientación EXIF (1..8). 1 = no-op.
     static void applyOrientation (LoadedImage& im, int orientation);
+    // orientationOf: la orientación (1..8) de CUALQUIER formato que decodificamos: JPEG por el APP1 (parser
+    // propio), HEIC/TIFF/WebP por ImageIO en macOS (el `irot` del HEIF no vive en APP1). 1 si no hay dato.
+    static int  orientationOf (const void* data, size_t numBytes) noexcept;
     // rotate90: gira el RGBA in-place `turns` cuartos de vuelta CW (el botón manual ⟳). turns se toma mod 4.
     static void rotate90 (LoadedImage& im, int turns);
 
     // ¿Esta ruta parece una imagen que sabemos decodificar? (para filtrar el drop antes de leer el archivo).
     static bool looksLikeImage (const juce::File& file);
+    // Las extensiones aceptadas ("png;jpg;…"; en macOS también heic/heif/webp/tif/tiff/bmp) — drop y FileChooser.
+    static const char* imageExtensions() noexcept;
 };
 }

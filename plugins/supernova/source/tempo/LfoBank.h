@@ -2,6 +2,8 @@
 // LfoBank — moduladores sync al tempo (Phase B). 4 LFOs asignables; cada uno late a una división del BeatClock
 // (1/4, 1 bar, etc.), con forma y profundidad, y modula un param destino. Puro (sin JUCE): el editor lee
 // valueFor(phaseInBeats) y suma depth·valor al param base. Testeable con fases sintéticas.
+#include "util/LocaleSafeNumber.h"   // to_chars/from_chars: la persistencia no depende del locale
+#include <algorithm>
 #include <cmath>
 #include <string>
 
@@ -15,9 +17,13 @@ struct LfoSlot
     float       beatsPerCycle = 4.0f;    // 4 = 1 compás, 1 = 1 negra, 0.25 = semicorchea…
     LfoShape    shape         = LfoShape::Sine;
     float       depth         = 0.5f;    // 0..1 — cuánto modula (se escala al rango del destino en el editor)
-    float       phaseOffset   = 0.0f;    // 0..1 — corrimiento de fase
+    float       phaseOffset   = 0.0f;    // 0..1 — corrimiento de fase que fija el usuario (perilla PHASE)
     bool        bipolar       = true;    // true: −1..+1 alrededor del valor base; false: 0..1
     std::string target;                  // param id destino (vacío = sin asignar)
+    float       retrigOffset  = 0.0f;    // 0..1 — corrimiento que deja el botón RETRIG ("arrancá AHORA").
+                                         // Vive aparte de phaseOffset para que retrigger no mueva la perilla.
+    bool        freeHz        = false;   // true: el ciclo lo manda el RELOJ, no el tempo (VJ sin transport)
+    float       hz            = 2.0f;    // 0.05..20 Hz — sólo se usa con freeHz
 };
 
 class LfoBank
@@ -44,30 +50,73 @@ public:
         return 0.0f;
     }
 
-    // Valor MODULADOR de un slot dada la posición en beats del BeatClock. bipolar → [−depth, +depth];
-    // unipolar → [0, depth]. Slot deshabilitado o sin destino → 0 (identidad).
-    float valueFor (int i, double phaseInBeats) const noexcept
+    // Posición del ciclo (en ciclos, sin plegar). SYNC: la manda la fase en beats del BeatClock. LIBRE (Hz):
+    // la manda el reloj en segundos, así que el LFO late aunque el transport esté parado o no haya host.
+    // A las dos se les suma la perilla PHASE del usuario y el corrimiento que dejó RETRIG.
+    double cyclePos (int i, double phaseInBeats, double timeSeconds) const noexcept
     {
         const LfoSlot& s = slot (i);
-        if (! s.enabled || s.target.empty() || s.beatsPerCycle <= 1e-6f) return 0.0f;
-        const double cyc = phaseInBeats / (double) s.beatsPerCycle + (double) s.phaseOffset;
-        const float  w   = wave (s.shape, cyc);                 // 0..1
+        const double base = s.freeHz ? timeSeconds * (double) s.hz
+                                     : phaseInBeats / (double) s.beatsPerCycle;
+        return base + (double) s.phaseOffset + (double) s.retrigOffset;
+    }
+
+    // ¿El slot tiene una tasa utilizable? (división de tempo > 0, o frecuencia > 0 en modo libre)
+    static bool hasRate (const LfoSlot& s) noexcept
+    { return s.freeHz ? s.hz > 1e-6f : s.beatsPerCycle > 1e-6f; }
+
+    // Valor MODULADOR de un slot dada la posición en beats del BeatClock (y el reloj en segundos, que sólo
+    // usa el modo libre en Hz). bipolar → [−depth, +depth]; unipolar → [0, depth]. Slot deshabilitado o sin
+    // destino → 0 (identidad).
+    float valueFor (int i, double phaseInBeats, double timeSeconds = 0.0) const noexcept
+    {
+        const LfoSlot& s = slot (i);
+        if (! s.enabled || s.target.empty() || ! hasRate (s)) return 0.0f;
+        const float w = wave (s.shape, cyclePos (i, phaseInBeats, timeSeconds));   // 0..1
         return s.bipolar ? (w * 2.0f - 1.0f) * s.depth : w * s.depth;
     }
 
-    // Persistencia compacta: "en,beats,shape,depth,off,bip,target;" por slot.
+    // RETRIGGER: "arrancá ahora" — deja el ciclo del slot en fase 0 para la posición de beat dada, SIN tocar
+    // la perilla PHASE del usuario (por eso el corrimiento vive en su propio campo). Sin host el BeatClock
+    // corre libre, así que esto es lo que le da al VJ un punto de partida.
+    void retrigger (int i, double phaseInBeats, double timeSeconds = 0.0) noexcept
+    {
+        LfoSlot& s = slot (i);
+        if (! hasRate (s)) { s.retrigOffset = 0.0f; return; }
+        s.retrigOffset = 0.0f;                                   // partir de cero: cyclePos ya no lo incluye
+        double f = -cyclePos (i, phaseInBeats, timeSeconds);
+        f -= std::floor (f);                                     // pliega a [0,1)
+        s.retrigOffset = (float) (f >= 1.0 ? 0.0 : f);
+    }
+
+    // ¿Algún slot habilitado apunta a este param? Consulta barata para el camino caliente del render: sin
+    // LFO asignado el editor ni siquiera busca el rango del parámetro (una búsqueda por string en el APVTS).
+    bool targets (const char* paramId) const noexcept
+    {
+        if (paramId == nullptr) return false;
+        for (const auto& s : slots_)
+            if (s.enabled && ! s.target.empty() && s.target == paramId) return true;
+        return false;
+    }
+
+    // Persistencia compacta: "en,beats,shape,depth,off,bip,target,retrig,freeHz,hz;" por slot. Los tres
+    // últimos campos son de la ronda 5 y van AL FINAL: un estado viejo (7 campos) se sigue leyendo entero,
+    // con retrig = 0, freeHz = false y hz = 2.
     std::string serialize() const
     {
         std::string out;
         for (const auto& s : slots_)
         {
             out += (s.enabled ? '1' : '0'); out += ',';
-            out += fmt (s.beatsPerCycle) + ',';
-            out += std::to_string ((int) s.shape) + ',';
-            out += fmt (s.depth) + ',';
-            out += fmt (s.phaseOffset) + ',';
+            out += num::toString (s.beatsPerCycle) + ',';
+            out += num::toString ((int) s.shape) + ',';
+            out += num::toString (s.depth) + ',';
+            out += num::toString (s.phaseOffset) + ',';
             out += (s.bipolar ? '1' : '0'); out += ',';
-            out += s.target; out += ';';
+            out += s.target; out += ',';
+            out += num::toString (s.retrigOffset); out += ',';
+            out += (s.freeHz ? '1' : '0'); out += ',';
+            out += num::toString (s.hz); out += ';';
         }
         return out;
     }
@@ -90,11 +139,9 @@ private:
     static float hash01 (double n) noexcept
     { double s = std::sin (n * 127.1 + 3.7) * 43758.5453; return (float) (s - std::floor (s)); }
 
-    static std::string fmt (float v) { std::string s = std::to_string (v); return s; }
-
     static void parseSlot (const std::string& rec, LfoSlot& s)
     {
-        // en,beats,shape,depth,off,bip,target
+        // en,beats,shape,depth,off,bip,target[,retrig,freeHz,hz]
         size_t p = 0; int field = 0; std::string tok;
         auto next = [&] (std::string& out) -> bool {
             size_t c = rec.find (',', p);
@@ -102,15 +149,17 @@ private:
             out = rec.substr (p, c - p); p = c + 1; return true;
         };
         std::string f;
-        try {
-            if (next (f)) s.enabled = (f == "1");
-            if (next (f) && ! f.empty()) s.beatsPerCycle = std::stof (f);
-            if (next (f) && ! f.empty()) s.shape = (LfoShape) std::stoi (f);
-            if (next (f) && ! f.empty()) s.depth = std::stof (f);
-            if (next (f) && ! f.empty()) s.phaseOffset = std::stof (f);
-            if (next (f)) s.bipolar = (f == "1");
-            std::string t; next (t); s.target = t;
-        } catch (...) { s = LfoSlot {}; }
+        if (next (f)) s.enabled = (f == "1");
+        if (next (f) && ! f.empty()) s.beatsPerCycle = num::toFloat (f, s.beatsPerCycle);
+        if (next (f) && ! f.empty()) s.shape = (LfoShape) std::clamp (num::toInt (f, (int) s.shape), 0, 5);
+        if (next (f) && ! f.empty()) s.depth = num::toFloat (f, s.depth);
+        if (next (f) && ! f.empty()) s.phaseOffset = num::toFloat (f, s.phaseOffset);
+        if (next (f)) s.bipolar = (f == "1");
+        std::string t; next (t); s.target = t;
+        // Campos de la ronda 5 — opcionales: un estado viejo se corta acá y los deja en su default.
+        if (next (f) && ! f.empty()) s.retrigOffset = num::toFloat (f, s.retrigOffset);
+        if (next (f) && ! f.empty()) s.freeHz = (f == "1");
+        if (next (f) && ! f.empty()) s.hz = num::toFloat (f, s.hz);
         (void) field; (void) tok;
     }
 

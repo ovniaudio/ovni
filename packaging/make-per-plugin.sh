@@ -21,6 +21,21 @@
 # usuario ya tenía una copia vieja en ~/Library (instalación manual del DMG), el Installer NO
 # debe "relocalizar" la nueva ahí — siempre instala en /Library.
 #
+# BUG DEL 2026-09-03 — POR QUÉ ESTE SCRIPT AHORA DESCONFÍA DE LAS VERSIONES.
+# El .pkg de ORBIT v0.2.0 dejaba a los usuarios sin el AU. Los bundles se habían buildeado con el
+# VERSION sin bumpear, así que declaraban CFBundleVersion 0.1.1; macOS Installer compara ese
+# <bundle-version> con lo instalado, encontraba 0.1.1 ya presente y SALTEABA el componente (agravado
+# porque VST3 y AU comparten CFBundleIdentifier com.ovni.orbit y el Installer los resuelve como un
+# único bundle). Diagnóstico completo: mision-control/bugs/2026-09-03-orbit-au-no-se-instala.md.
+# Tres defensas, en orden de cuándo atajan el problema:
+#   1. GUARDIA DE VERSIÓN (antes de empaquetar): si un bundle no declara exactamente --version,
+#      el script FALLA. Es lo que hubiera atajado el bug el 25-ago, con el bundle en la mano.
+#   2. BundleIsVersionChecked=false + BundleOverwriteAction=upgrade en cada component plist: el
+#      Installer deja de comparar versiones y SIEMPRE escribe el bundle, aunque el usuario tenga
+#      la misma versión (o una "mayor" por error).
+#   3. POST-CHECK (después de productbuild): se expande cada .pkg emitido y se verifica que el
+#      PackageInfo de cada componente y el Distribution declaren la versión pedida.
+#
 # Cumplimiento AGPLv3 (§4/§6): cada instalador incluye y muestra la licencia, e instala
 # LICENSE.txt + NOTICE.txt + SOURCE.txt en /Library/Audio/Plug-Ins/OVNI Audio/.
 #
@@ -39,9 +54,30 @@ set -uo pipefail
 log()  { printf '  make-per-plugin: %s\n' "$*" >&2; }
 fail() { printf '  make-per-plugin: ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Escribe una clave en un component plist de pkgbuild. `Set` si ya está (--analyze suele emitirla),
+# `Add` con tipo si no — así no dependemos de qué versión de pkgbuild generó el plist.
+plist_set() { # $1 = plist · $2 = ruta de la clave (sin ':' inicial) · $3 = tipo · $4 = valor
+  /usr/libexec/PlistBuddy -c "Set :$2 $4" "$1" >/dev/null 2>&1 && return 0
+  /usr/libexec/PlistBuddy -c "Add :$2 $3 $4" "$1" >/dev/null 2>&1 && return 0
+  fail "no pude escribir $2=$4 en $(basename "$1")"
+}
+
+# Versión declarada por un bundle (CFBundleShortVersionString del Info.plist).
+bundle_version() { # $1 = ruta al .vst3/.component/.app
+  /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$1/Contents/Info.plist" 2>/dev/null
+}
+
+# Valores de un atributo XML, uno por línea. Aplana el XML a una etiqueta por línea primero, así
+# funciona igual con el Distribution (indentado) que con el PackageInfo (una sola línea larga).
+xml_attr() { # $1 = etiqueta · $2 = atributo · XML por stdin
+  tr '\n' ' ' | tr '<' '\n' | grep "^$1[ />]" | sed -n "s/.*[[:space:]]$2=\"\([^\"]*\)\".*/\1/p"
+}
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER_SIGN_ID="${INSTALLER_SIGN_ID:-}"
 PKG_ID="com.ovni.plugins"
+# Arte del instalador (opcional). Si la carpeta no está, se emite igual que siempre, sin branding.
+ART_DIR="${ART_DIR:-$ROOT/packaging/installer-resources}"
 
 VERSION=""; BUNDLES=""; OUTDIR=""; WINZIP=""
 LICENSE_FILE="${LICENSE_FILE:-$ROOT/LICENSE}"
@@ -78,6 +114,21 @@ done
 [ "${#NAMES[@]}" -gt 0 ] || fail "no encontré ningún .vst3 en $BUNDLES"
 log "plugins: ${NAMES[*]}"
 
+# --- GUARDIA DE VERSIÓN (defensa 1 del bug del 3-sep, ver cabecera). ---
+# Cada bundle tiene que declarar EXACTAMENTE --version. Si no, el .pkg saldría prometiendo una
+# versión que el payload no tiene y el Installer podría saltear el componente en quien ya tenga
+# la vieja. Se falla acá, con el bundle en la mano, y no cuatro semanas después por email.
+for n in "${NAMES[@]}"; do
+  for b in "$BUNDLES/$n.vst3" "$BUNDLES/$n.component" "$BUNDLES/$n.app"; do
+    [ -d "$b" ] || continue
+    bv="$(bundle_version "$b")"
+    [ -n "$bv" ] || fail "$(basename "$b") no declara CFBundleShortVersionString en su Info.plist"
+    [ "$bv" = "$VERSION" ] || fail \
+      "$(basename "$b") declara la versión $bv pero se está empaquetando como $VERSION — rebuildeá el bundle con el VERSION bumpeado (o pasá --version $bv)"
+  done
+done
+log "guardia de versión: los bundles declaran $VERSION ✓"
+
 # Descripción corta por plugin (para la vista Personalizar del instalador completo).
 desc_of() {
   case "$1" in
@@ -113,6 +164,8 @@ complete corresponding source of this version:
         https://github.com/ovniaudio/ovni
     · ORBIT (el flagship):
         https://github.com/ovniaudio/orbita
+    · SUPERNOVA (visual synth, macOS):
+        https://github.com/ovniaudio/ovni/tree/v0.3.0   (branch feat/supernova · tag v0.3.0)
 
 (source available per AGPLv3 §6)
 
@@ -143,7 +196,10 @@ build_components() { # $1 = NAME
     pkgbuild --analyze --root "$root" "$plist" >/dev/null 2>&1 || fail "pkgbuild --analyze $name/$kind"
     i=0
     while /usr/libexec/PlistBuddy -c "Print :$i" "$plist" >/dev/null 2>&1; do
-      /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$plist" 2>/dev/null || true
+      plist_set "$plist" "$i:BundleIsRelocatable"    bool   false
+      # Defensa 2 del bug del 3-sep: que el Installer NO compare versiones y escriba SIEMPRE.
+      plist_set "$plist" "$i:BundleIsVersionChecked" bool   false
+      plist_set "$plist" "$i:BundleOverwriteAction"  string upgrade
       i=$((i+1))
     done
     pkgbuild --root "$root" --component-plist "$plist" \
@@ -163,7 +219,9 @@ build_components() { # $1 = NAME
     pkgbuild --analyze --root "$WORK/root-$lower-app" "$plist" >/dev/null 2>&1 || fail "pkgbuild --analyze $name/app"
     i=0
     while /usr/libexec/PlistBuddy -c "Print :$i" "$plist" >/dev/null 2>&1; do
-      /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$plist" 2>/dev/null || true
+      plist_set "$plist" "$i:BundleIsRelocatable"    bool   false
+      plist_set "$plist" "$i:BundleIsVersionChecked" bool   false
+      plist_set "$plist" "$i:BundleOverwriteAction"  string upgrade
       i=$((i+1))
     done
     pkgbuild --root "$WORK/root-$lower-app" --component-plist "$plist" \
@@ -175,11 +233,37 @@ build_components() { # $1 = NAME
 }
 for n in "${NAMES[@]}"; do log "componentes: $n"; build_components "$n"; done
 
+# --- Branding del instalador: fondo del panel izquierdo, claro + oscuro. ---
+#
+# Installer.app dibuja el <background> en el panel izquierdo, debajo de la lista de pasos: por eso
+# el arte va anclado "bottomleft" y en PNG transparente (un PNG opaco recorta un rectángulo sucio).
+# <background-darkAqua> NO es opcional — sin él, el texto claro del arte se pierde en modo oscuro.
+#
+# Degradación elegante: si $ART_DIR no existe o le falta el par de PNG, BG_XML queda vacío y el
+# instalador sale exactamente como antes de que existiera el branding.
+BG_XML=""
+install_background() { # $1 = dir de resources · $2 = slug del módulo (vacío = genérico)
+  local res="$1" slug="${2:-}" light dark
+  BG_XML=""
+  [ -d "$ART_DIR" ] || return 0
+  # Arte propio del módulo si existe; si no, el genérico. Un plugin nuevo nunca queda sin marca.
+  for cand in "$slug" ""; do
+    [ -n "$cand" ] && { light="$ART_DIR/bg-$cand-light.png"; dark="$ART_DIR/bg-$cand-dark.png"; } \
+                   || { light="$ART_DIR/bg-light.png";       dark="$ART_DIR/bg-dark.png"; }
+    [ -f "$light" ] && [ -f "$dark" ] && break
+    light=""; dark=""
+  done
+  [ -n "$light" ] || { log "aviso: sin arte de instalador para ${slug:-genérico} — sale sin branding"; return 0; }
+  cp "$light" "$res/background.png" && cp "$dark" "$res/background-dark.png" || return 0
+  BG_XML=$(printf '    <background file="background.png" mime-type="image/png" alignment="bottomleft" scaling="proportional"/>\n    <background-darkAqua file="background-dark.png" mime-type="image/png" alignment="bottomleft" scaling="proportional"/>')
+}
+
 # --- Resources del Installer: licencia + bienvenida/cierre EN + ES (.lproj). ---
-make_resources() { # $1 = dir · $2 = qué instala (frase EN) · $3 = idem ES · $4 = extra EN · $5 = extra ES
-  local res="$1"
+make_resources() { # $1 = dir · $2 = frase EN · $3 = idem ES · $4 = extra EN · $5 = extra ES · $6 = slug
+  local res="$1" slug="${6:-}"
   mkdir -p "$res/en.lproj" "$res/es.lproj"
   cp "$LICENSE_FILE" "$res/LICENSE.txt"
+  install_background "$res" "$slug"
   cat > "$res/en.lproj/welcome.html" <<HTML
 <!doctype html><html><head><meta charset="utf-8"><style>body{font-family:-apple-system,'Helvetica Neue',sans-serif;font-size:13px}</style></head><body>
 <p><b>$2</b></p>
@@ -212,6 +296,42 @@ HTML
 HTML
 }
 
+# --- POST-CHECK del .pkg emitido (defensa 3 del bug del 3-sep, ver cabecera). ---
+# Se expande el producto dentro de $WORK y se exige que TODO lo que declara una versión declare
+# $VERSION: el PackageInfo de cada component package, los <pkg-ref> del Distribution y —si
+# productbuild todavía sintetizó alguno— los <bundle CFBundle…> del Distribution, que son
+# exactamente los que decían 0.1.1 en el .pkg roto de ORBIT v0.2.0.
+verify_pkg() { # $1 = .pkg emitido
+  local pkg="$1" n x pi comp v seen=0
+  n="$(basename "$pkg")"
+  x="$WORK/verify-${n%.pkg}"
+  rm -rf "$x"
+  pkgutil --expand "$pkg" "$x" >/dev/null 2>&1 || fail "post-check: pkgutil --expand falló en $n"
+  [ -f "$x/Distribution" ] || fail "post-check: $n no tiene Distribution"
+
+  for pi in "$x"/*.pkg/PackageInfo; do
+    [ -f "$pi" ] || fail "post-check: $n no trae ningún component package adentro"
+    comp="$(basename "$(dirname "$pi")")"
+    v="$(xml_attr pkg-info version < "$pi" | head -1)"
+    [ "$v" = "$VERSION" ] || fail "post-check: $n → $comp/PackageInfo declara version=${v:-<vacío>} (esperaba $VERSION)"
+    seen=$((seen+1))
+  done
+  [ "$seen" -gt 0 ] || fail "post-check: $n sin componentes verificables"
+
+  while read -r v; do
+    [ "$v" = "$VERSION" ] || fail "post-check: $n → Distribution tiene un <pkg-ref version=\"$v\"> (esperaba $VERSION)"
+  done < <(xml_attr pkg-ref version < "$x/Distribution")
+
+  for attr in CFBundleShortVersionString CFBundleVersion; do
+    while read -r v; do
+      [ "$v" = "$VERSION" ] || fail "post-check: $n → Distribution tiene un <bundle $attr=\"$v\"> (esperaba $VERSION)"
+    done < <(xml_attr bundle "$attr" < "$x/Distribution")
+  done
+
+  rm -rf "$x"
+  log "  post-check OK: $n declara $VERSION en $seen componentes + Distribution"
+}
+
 # --- productbuild común (firma opcional). ---
 product() { # $1 dist.xml · $2 resources · $3 out.pkg
   if [ -n "$INSTALLER_SIGN_ID" ]; then
@@ -221,6 +341,7 @@ product() { # $1 dist.xml · $2 resources · $3 out.pkg
     productbuild --distribution "$1" --package-path "$WORK" --resources "$2" \
       --version "$VERSION" "$3" >&2 || fail "productbuild $3"
   fi
+  verify_pkg "$3"
 }
 
 # --- Instalador individual por plugin. ---
@@ -230,7 +351,7 @@ for n in "${NAMES[@]}"; do
   make_resources "$res" \
     "$n — $(desc_of "$n")" \
     "$n — $(desc_of "$n")" \
-    "" ""
+    "" "" "$lower"
   # Fragmentos de la app standalone — sólo si build_components emitió pkg-$lower-app.pkg.
   app_line=""; app_choice_line=""; app_ref_line=""
   if [ -f "$WORK/pkg-$lower-app.pkg" ]; then
@@ -243,6 +364,7 @@ for n in "${NAMES[@]}"; do
 <installer-gui-script minSpecVersion="2">
     <title>OVNI Audio — $n (v$VERSION)</title>
     <organization>com.ovni</organization>
+${BG_XML}
     <welcome file="welcome.html"/>
     <license file="LICENSE.txt"/>
     <conclusion file="conclusion.html"/>
@@ -275,13 +397,14 @@ make_resources "$res" \
   "The complete OVNI catalog — all ${#NAMES[@]} plugins (VST3 + AU each)." \
   "El catálogo OVNI completo — los ${#NAMES[@]} plugins (VST3 + AU cada uno)." \
   "<p>Click <b>Customize</b> during install to pick specific modules.</p>" \
-  "<p>Tocá <b>Personalizar</b> durante la instalación para elegir módulos sueltos.</p>"
+  "<p>Tocá <b>Personalizar</b> durante la instalación para elegir módulos sueltos.</p>" "all"
 {
   cat <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
     <title>OVNI Audio — ${#NAMES[@]} Plugins (v$VERSION)</title>
     <organization>com.ovni</organization>
+${BG_XML}
     <welcome file="welcome.html"/>
     <license file="LICENSE.txt"/>
     <conclusion file="conclusion.html"/>

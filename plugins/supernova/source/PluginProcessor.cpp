@@ -192,8 +192,13 @@ void SupernovaProcessor::prepareEngine (const juce::dsp::ProcessSpec& spec)
     audioFifo.reset();
     midiTriggerQueue.reset();
     ccQueue.reset();
+    cueQueue.reset();      // el arranque no arrastra cues de foto pedidos antes del re-prepare
     beatClock.reset();
     audioTimeSec = 0.0;
+    // Toca la tabla de fábrica ACÁ para que su static local ya esté construido: si la primera consulta
+    // cayera en requestFactoryPreset desde el audio thread (un Program Change antes que nada más), serían
+    // una alocación y el candado del guard de inicialización estática en el hot path (informe 24 · B.8).
+    (void) ovni::presets::factoryPresets();
     if (analysisThread) analysisThread->prepare (spec.sampleRate, 11);
 }
 
@@ -232,8 +237,19 @@ void SupernovaProcessor::processAudio (juce::AudioBuffer<float>& buffer, juce::M
         }
         if (! m.isNoteOn()) continue;
         const auto ev = midiMapper.mapNoteOn (m.getNoteNumber(), m.getVelocity());
-        if (ev.type == MidiTriggerType::PresetChange) requestFactoryPreset (ev.preset);
-        else if (ev.isValid())                        midiTriggerQueue.push (ev);
+        // El CUE DE FOTOS va a SU cola (la drena el timer del editor, único dueño de la PhotoSequence);
+        // se intercepta antes del push visual, que es para explosión/rayo.
+        if (ev.type == MidiTriggerType::PresetChange)  requestFactoryPreset (ev.preset);
+        else if (ev.type == MidiTriggerType::PhotoCue)
+        {
+            // El cue viaja con el beatPos de LA NOTA: fase del bloque (el BeatClock avanza más abajo, así que
+            // acá todavía es la del comienzo) + el offset en samples del mensaje. Todo aritmética: RT-safe.
+            const double sr = getSampleRate();
+            const double atBeat = beatClock.phaseInBeats()
+                                + (sr > 0.0 ? (double) meta.samplePosition / sr * beatClock.bpm() / 60.0 : 0.0);
+            cueQueue.push ({ ev.cue, ev.photo, m.getVelocity(), atBeat });
+        }
+        else if (ev.isValid())                         midiTriggerQueue.push (ev);
     }
 
     // TEMPO SYNC (Phase B · BeatClock): avanza el reloj con el playhead del host (dentro del DAW la fase se
@@ -260,6 +276,7 @@ void SupernovaProcessor::processAudio (juce::AudioBuffer<float>& buffer, juce::M
         pubBeatPhase.store (beatClock.beatPhase());
         pubPhaseBeats.store (beatClock.phaseInBeats());
         pubPlaying.store (host.isPlaying);
+        pubTimeSeconds.store (audioTimeSec);
     }
 
     const int n   = buffer.getNumSamples();

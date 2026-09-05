@@ -5,7 +5,7 @@
 namespace supernova
 {
 FullscreenOutputWindow::FullscreenOutputWindow (MetalRenderer& r, const juce::Rectangle<int>& area,
-                                                std::function<void()> onClose)
+                                                float canvasAspect, std::function<void()> onClose)
     : juce::DocumentWindow (juce::String::fromUTF8 ("SUPERNOVA \xE2\x80\x94 salida"), juce::Colours::black, 0),
       onCloseCb (std::move (onClose)), renderer (r)
 {
@@ -21,18 +21,32 @@ FullscreenOutputWindow::FullscreenOutputWindow (MetalRenderer& r, const juce::Re
     renderer.addPresentTarget (layer, /*primary*/ true);
     view->setView (nsView);
 
-    setContentNonOwned (view.get(), false);
+    // Holder negro → letterbox al aspecto del lienzo (0 = pantalla entera). Ni el holder ni la vista
+    // interceptan el mouse: el click burbujea a la ventana → mouseDown cierra.
+    holder = std::make_unique<Holder>();
+    holder->inner  = view.get();
+    holder->aspect = canvasAspect > 0.0f ? canvasAspect : 0.0f;
+    holder->addAndMakeVisible (*view);
+    holder->setInterceptsMouseClicks (false, false);
+    view->setInterceptsMouseClicks (false, false);
+
+    setContentNonOwned (holder.get(), false);
     setBounds (area);
     setAlwaysOnTop (true);
     addToDesktop (0);                    // borderless
     setVisible (true);
-    view->setBounds (getLocalBounds());
+    holder->setBounds (getLocalBounds());
+    holder->resized();
     setWantsKeyboardFocus (true);
     toFront (true);          // foco real (en un DAW el editor puede retenerlo) → Esc funciona siempre
     grabKeyboardFocus();
-    // el click en la vista burbujea a la ventana → mouseDown cierra (la NSView Metal no intercepta el mouse
-    // porque el hit va al Component contenedor JUCE)
-    if (view != nullptr) view->setInterceptsMouseClicks (false, false);
+}
+
+void FullscreenOutputWindow::setCanvasAspect (float aspect)
+{
+    if (holder == nullptr) return;
+    holder->aspect = aspect > 0.0f ? aspect : 0.0f;
+    holder->resized();
 }
 
 void FullscreenOutputWindow::mouseDown (const juce::MouseEvent&)
@@ -46,7 +60,9 @@ FullscreenOutputWindow::~FullscreenOutputWindow()
     // preview a primary. Un cb en vuelo retiene sus propias texturas hasta completar (no hay UAF).
     renderer.removePresentTarget (layer);
     if (view != nullptr) view->setView (nullptr);
+    if (holder != nullptr) { holder->removeAllChildren(); holder->inner = nullptr; }   // nada apunta a la vista muerta
     view.reset();
+    holder.reset();
     if (nsView != nullptr) { destroySupernovaMTKView (nsView); nsView = nullptr; }
 }
 

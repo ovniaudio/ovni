@@ -51,7 +51,10 @@ TEST_CASE ("midimap: nota → preset con clamp al presetCount real", "[supernova
 
     REQUIRE (m.map (0x90, 51, 100).preset == 3);   // note 51-48 = 3
     REQUIRE (m.map (0x90, 55, 100).preset == 3);   // 7 → clamp a 3
-    REQUIRE (m.map (0x90, 72, 100).type == MidiTriggerType::None);   // fuera de la zona de preset
+    // Arriba de prsHi ya no hay preset. (La 72 dejó de ser "nada": desde la ronda 3 es el cue del tile 1;
+    // el silencio de verdad arranca después del mapa de cue, en la 91.)
+    REQUIRE (m.map (0x90, 72, 100).type != MidiTriggerType::PresetChange);
+    REQUIRE (m.map (0x90, 100, 100).type == MidiTriggerType::None);
 }
 
 TEST_CASE ("midimap: Program-Change → PresetChange{fromProgramChange} + clamp; canal ignorado", "[supernova][midimap]")
@@ -86,4 +89,61 @@ TEST_CASE ("midimap: fuera de rango y canal-agnóstico", "[supernova][midimap]")
     REQUIRE (b.angle == Catch::Approx (a.angle).margin (1e-6));
 
     REQUIRE (m.map (0xB0, 7, 64).type == MidiTriggerType::None);     // CC volume → None
+}
+
+// ======================= RONDA 3 · CUE DE FOTOS POR MIDI (el instrumento en vivo) =======================
+// En inmersivo o fullscreen la tira no se ve y sólo quedan ← → y Space: un VJ dispara las fotos desde un
+// pad. Contrato por NÚMERO de nota, igual que el resto del mapper: 72-87 = tiles 1..16, 88 = siguiente,
+// 89 = anterior, 90 = aleatoria. No pisa rayo (24-35), explosión (36-47) ni preset (48-71).
+TEST_CASE ("midimap: 72-87 cuean el tile 1..16 (contrato por número de nota)", "[supernova][midimap]")
+{
+    MidiMapper m;
+    auto first = m.map (0x90, 72, 100);
+    REQUIRE (first.type == MidiTriggerType::PhotoCue);
+    REQUIRE (first.cue  == supernova::PhotoCueKind::Tile);
+    REQUIRE (first.photo == 0);                                        // tile 1 = índice 0
+    REQUIRE (first.strength == Catch::Approx (100.0f / 127.0f).margin (1e-4));
+
+    REQUIRE (m.map (0x90, 73, 100).photo == 1);
+    REQUIRE (m.map (0x90, 87, 100).photo == 15);                       // tile 16 = el último del rango
+    REQUIRE (m.map (0x90, 87, 100).type  == MidiTriggerType::PhotoCue);
+}
+
+TEST_CASE ("midimap: 88 / 89 / 90 = siguiente / anterior / aleatoria", "[supernova][midimap]")
+{
+    MidiMapper m;
+    auto nx = m.map (0x90, 88, 127);
+    REQUIRE (nx.type == MidiTriggerType::PhotoCue);
+    REQUIRE (nx.cue  == supernova::PhotoCueKind::Next);
+    REQUIRE (nx.photo == -1);                                          // los relativos no traen índice
+
+    REQUIRE (m.map (0x90, 89, 127).cue == supernova::PhotoCueKind::Prev);
+    REQUIRE (m.map (0x90, 90, 127).cue == supernova::PhotoCueKind::Random);
+    REQUIRE (m.map (0x90, 91, 127).type == MidiTriggerType::None);     // fuera del mapa: nada
+}
+
+TEST_CASE ("midimap: el cue por MIDI no pisa rayo/explosión/preset ni dispara en el release", "[supernova][midimap]")
+{
+    MidiMapper m;
+    REQUIRE (m.map (0x90, 24, 100).type == MidiTriggerType::DirectionalRay);   // 24-35 intactos
+    REQUIRE (m.map (0x90, 35, 100).type == MidiTriggerType::DirectionalRay);
+    REQUIRE (m.map (0x90, 36, 100).type == MidiTriggerType::Explosion);        // 36-47 intactos
+    REQUIRE (m.map (0x90, 47, 100).type == MidiTriggerType::Explosion);
+    REQUIRE (m.map (0x90, 48, 100).type == MidiTriggerType::PresetChange);     // 48-71 intactos
+    REQUIRE (m.map (0x90, 71, 100).type == MidiTriggerType::PresetChange);
+
+    REQUIRE (m.map (0x90, 72, 0).type  == MidiTriggerType::None);              // NoteOn vel 0 = release
+    REQUIRE (m.map (0x80, 72, 64).type == MidiTriggerType::None);              // NoteOff
+    REQUIRE (m.mapNoteOn (88, 0).type  == MidiTriggerType::None);
+}
+
+TEST_CASE ("midimap: los rangos del cue son inyectables (Config)", "[supernova][midimap]")
+{
+    MidiMapper::Config c;
+    c.cueLo = 96; c.cueHi = 99; c.cueNext = 100; c.cuePrev = 101; c.cueRandom = 102;
+    MidiMapper m (c);
+    REQUIRE (m.map (0x90, 96, 100).photo == 0);
+    REQUIRE (m.map (0x90, 99, 100).photo == 3);
+    REQUIRE (m.map (0x90, 100, 100).cue == supernova::PhotoCueKind::Next);
+    REQUIRE (m.map (0x90, 72,  100).type == MidiTriggerType::None);   // el rango default ya no vale
 }

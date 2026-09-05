@@ -24,10 +24,13 @@ inline ParticleParams mapParticleParams (const std::function<float (const char*)
     const auto map = [&] (const char* id, float lo, float hi) { return lo + get (id) / 100.0f * (hi - lo); };
 
     ParticleParams pp;
-    pp.intensity    = get (pid::INTENSITY) / 100.0f;
-    pp.chaos        = get (pid::CHAOS) / 100.0f;
-    pp.particleSize = 0.5f + get (pid::PARTICLE_SIZE) / 100.0f * 3.5f;   // 0.5..4 px
-    pp.glow         = get (pid::GLOW) / 100.0f;
+    // Los 12 destinos de LFO se CLAMPEAN a su dominio físico: la modulación se suma DESPUÉS de que el APVTS
+    // recortó, y sin esto un LFO a fondo (o dos al mismo destino) manda tamaño/saturación negativos al shader.
+    // Con valores en rango el clamp es identidad → los goldens no se mueven.
+    pp.intensity    = std::clamp (get (pid::INTENSITY) / 100.0f, 0.0f, 1.0f);
+    pp.chaos        = std::clamp (get (pid::CHAOS) / 100.0f, 0.0f, 1.0f);
+    pp.particleSize = std::clamp (0.5f + get (pid::PARTICLE_SIZE) / 100.0f * 3.5f, 0.5f, 4.0f);   // 0.5..4 px
+    pp.glow         = std::clamp (get (pid::GLOW) / 100.0f, 0.0f, 1.0f);
     pp.explode      = get (pid::EXPLODE);                                // 0/1
     pp.cutoutAmt    = get (pid::CUTOUT) / 100.0f;                         // 0..1 — borrar fondo (escultura)
 
@@ -43,16 +46,16 @@ inline ParticleParams mapParticleParams (const std::function<float (const char*)
     const int motionIdx = std::clamp ((int) get (pid::MOTION), 0, kMotionChoiceCount - 1);
     pp.motionMode = kMotionModes[motionIdx];
     pp.shapeMode  = std::clamp ((int) get (pid::SHAPE), 0, kShapeChoiceCount - 1);
-    pp.trailAmt   = get (pid::TRAILS) / 100.0f;
-    pp.linksAmt   = get (pid::LINKS) / 100.0f;
-    pp.satAmt     = get (pid::SAT) / 50.0f;                               // 0..100 → 0..2 (50 = neutro)
-    pp.hueShift   = get (pid::HUE) * 0.01745329252f;                      // grados → radianes
+    pp.trailAmt   = std::clamp (get (pid::TRAILS) / 100.0f, 0.0f, 1.0f);
+    pp.linksAmt   = std::clamp (get (pid::LINKS) / 100.0f, 0.0f, 1.0f);
+    pp.satAmt     = std::clamp (get (pid::SAT) / 50.0f, 0.0f, 2.0f);      // 0..100 → 0..2 (50 = neutro)
+    pp.hueShift   = std::clamp (get (pid::HUE), -180.0f, 180.0f) * 0.01745329252f;   // grados → radianes
 
     // TIER 1 PRO (fila 3). SPEED es LOGARÍTMICO: 0→×0.25, 50→×1.0 EXACTO, 100→×4 (16^0.5·0.25 = 1).
     pp.densityAmt   = std::clamp (get (pid::DENSITY) / 100.0f, 0.01f, 1.0f);
-    pp.scatterAmt   = get (pid::SCATTER) / 100.0f;
+    pp.scatterAmt   = std::clamp (get (pid::SCATTER) / 100.0f, 0.0f, 1.0f);
     pp.speedMul     = 0.25f * std::pow (16.0f, get (pid::SPEED) / 100.0f);
-    pp.rotateRate   = get (pid::ROTATE) / 100.0f * 0.5235988f;            // ±100 → ±30°/s en rad
+    pp.rotateRate   = std::clamp (get (pid::ROTATE), -100.0f, 100.0f) / 100.0f * 0.5235988f;   // ±30°/s en rad
     pp.pumpAmt      = get (pid::PUMP) / 100.0f * 2.0f;                    // 0..2 (30 → 0.6 = clásico exacto)
     pp.hueCycleRate = get (pid::HUE_CYCLE) / 100.0f * 1.0471976f;         // ±100 → ±60°/s en rad
     static constexpr int kKaleidoSegs[] = { 0, 2, 4, 6, 8 };
@@ -60,10 +63,10 @@ inline ParticleParams mapParticleParams (const std::function<float (const char*)
 
     // 3D + FIGURA (fila 4). Defaults (0/0/0/0, Imagen, 100) = identidad byte-exacta: depth 0 y ángulos 0
     // toman el camino legacy exacto del vertex; FIGURA Imagen apaga el remap de hogar aunque FORM sea 100.
-    pp.depthAmt   = get (pid::DEPTH) / 100.0f;
+    pp.depthAmt   = std::clamp (get (pid::DEPTH) / 100.0f, 0.0f, 1.0f);
     pp.rotXRad    = get (pid::ROT_X) * 0.01745329252f;                    // grados → rad (pitch)
     pp.rotYRad    = get (pid::ROT_Y) * 0.01745329252f;                    // grados → rad (yaw)
-    pp.orbitRate  = get (pid::ORBIT) / 100.0f * 0.7853982f;               // ±100 → ±45°/s en rad
+    pp.orbitRate  = std::clamp (get (pid::ORBIT), -100.0f, 100.0f) / 100.0f * 0.7853982f;   // ±45°/s en rad
     pp.formMode   = std::clamp ((int) get (pid::FIGURE), 0, kFigureChoiceCount - 1);
     pp.formAmt    = get (pid::FORM) / 100.0f;
 

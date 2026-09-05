@@ -202,6 +202,46 @@ struct VideoSource::Impl : private juce::Thread
     }
 };
 
+juce::Image VideoSource::firstFrameThumbnail (const juce::File& file, int maxSide)
+{
+    if (! file.existsAsFile() || maxSide < 8) return {};
+    @autoreleasepool
+    {
+        NSString* path = [NSString stringWithUTF8String:file.getFullPathName().toRawUTF8()];
+        AVURLAsset* asset = [AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+        if ([asset tracksWithMediaType:AVMediaTypeVideo].count == 0) return {};
+        AVAssetImageGenerator* gen = [[AVAssetImageGenerator alloc] initWithAsset:asset];
+        gen.appliesPreferredTrackTransform = YES;                 // el video vertical de celular sale vertical
+        gen.maximumSize = CGSizeMake ((CGFloat) maxSide, (CGFloat) maxSide);
+        gen.requestedTimeToleranceBefore = kCMTimeZero;
+        gen.requestedTimeToleranceAfter  = CMTimeMakeWithSeconds (1.0, 600);
+        NSError* err = nil;
+        CMTime actual;
+        CGImageRef cg = [gen copyCGImageAtTime:CMTimeMakeWithSeconds (0.5, 600) actualTime:&actual error:&err];
+        if (cg == nullptr)
+            cg = [gen copyCGImageAtTime:kCMTimeZero actualTime:&actual error:&err];   // clips < 0.5 s
+        if (cg == nullptr) return {};
+
+        const int w = (int) CGImageGetWidth (cg), h = (int) CGImageGetHeight (cg);
+        juce::Image img (juce::Image::ARGB, juce::jmax (1, w), juce::jmax (1, h), true);
+        {
+            juce::Image::BitmapData bd (img, juce::Image::BitmapData::writeOnly);
+            CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+            // BGRA premultiplicado little-endian = el layout ARGB de juce::Image (mismo que usa JUCE en mac).
+            const CGBitmapInfo info = (CGBitmapInfo) kCGImageAlphaPremultipliedFirst | (CGBitmapInfo) kCGBitmapByteOrder32Little;
+            CGContextRef ctx = CGBitmapContextCreate (bd.data, (size_t) w, (size_t) h, 8, (size_t) bd.lineStride, cs, info);
+            if (ctx != nullptr)
+            {
+                CGContextDrawImage (ctx, CGRectMake (0, 0, (CGFloat) w, (CGFloat) h), cg);
+                CGContextRelease (ctx);
+            }
+            CGColorSpaceRelease (cs);
+        }
+        CGImageRelease (cg);
+        return img;
+    }
+}
+
 VideoSource::VideoSource() : impl (std::make_unique<Impl>()) {}
 VideoSource::~VideoSource() { impl->close(); }
 

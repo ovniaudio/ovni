@@ -5,6 +5,7 @@
 #include "analysis/AnalysisFrame.h"
 #include "analysis/MidiTriggerQueue.h"
 #include "analysis/MidiCcQueue.h"
+#include "analysis/MidiCueQueue.h"
 #include "image/PhotoSequence.h"
 #include "midi/MidiMapper.h"
 #include "midi/MidiCcMap.h"
@@ -45,6 +46,9 @@ public:
     double beatPhase01()     const noexcept { return pubBeatPhase.load(); }   // 0..1 dentro de la negra
     double phaseInBeats()    const noexcept { return pubPhaseBeats.load(); }
     bool   transportPlaying() const noexcept { return pubPlaying.load(); }
+    // Reloj MONOTÓNICO del audio (segundos desde prepareToPlay). Lo usan los LFO en modo libre (Hz):
+    // laten aunque el transport esté parado o no haya host, que es el caso del VJ con la app.
+    double timeInSeconds()   const noexcept { return pubTimeSeconds.load(); }
     // TAP TEMPO (message thread, app standalone sin host): marca un golpe; processAudio lo consume con su reloj.
     void   tapTempo() noexcept { tapPending.store (true); }
 
@@ -52,6 +56,9 @@ public:
     // params. El editor: dcha-click en un knob → armLearn(paramId); drena la cola cada tick → feed → APVTS.
     MidiCcQueue& midiCcQueue() noexcept { return ccQueue; }
     MidiCcMap&   midiCcMap()   noexcept { return ccMap; }
+    // CUE DE FOTOS por MIDI (ronda 3): notas 72-90 → esta cola → el TIMER del editor. No va por
+    // midiTriggers(): esa la drena el render tick y la PhotoSequence sólo se toca en el message thread.
+    MidiCueQueue& midiCueQueue() noexcept { return cueQueue; }
     // LFOs sync al tempo + banco de ESCENAS (Phase B). El editor los configura/aplica; viven acá para que el
     // getState del chasis (apvts.state) los serialice gratis, como el ccMap y la secuencia.
     LfoBank&   lfoBank()   noexcept { return lfos; }
@@ -65,6 +72,10 @@ public:
     // EXPORT CON SONIDO: snapshot desenrollado (viejo→nuevo, interleaved L/R) de los últimos ~12s del
     // MISMO audio que alimenta el análisis — el export lo muxea al MP4 en sync con recentFrames.
     std::vector<float> audioRingSnapshot (double& srOut) const;
+
+    // Cuántos segundos de audio guarda el anillo del export-con-sonido. Es CONTRATO con el editor: la
+    // ventana de análisis que se exporta tiene que cubrir el mismo tramo que este audio.
+    static constexpr int kAudioRingSeconds = 12;
 
     // PHOTO SEQUENCE (spec §D): fuente de verdad; el editor la maneja SOLO en el message thread.
     PhotoSequence& photoSequence() noexcept { return photoSeq; }
@@ -92,7 +103,6 @@ private:
 
     // Anillo de audio del export-con-sonido (~12s, interleaved L/R). RT-safe: escritura memcpy-style a
     // buffer pre-alocado + índice de frame atómico (release); el snapshot (consumer) copia y desenrolla.
-    static constexpr int kAudioRingSeconds = 12;
     std::vector<float>   audioRing;
     std::atomic<int>     audioRingWriteFrame { 0 };
     int                  audioRingFrames = 0;
@@ -101,6 +111,7 @@ private:
     MidiMapper                   midiMapper;    // nota/PC → evento tipado (C++ puro, RF5)
     MidiTriggerQueue             midiTriggerQueue;   // triggers visuales → render tick (SPSC lock-free)
     MidiCcQueue                  ccQueue;            // CC crudos → editor (MIDI-learn, SPSC lock-free)
+    MidiCueQueue                 cueQueue;           // cues de foto → timer del editor (SPSC lock-free)
     MidiCcMap                    ccMap;              // CC → param (message thread; persistido al state)
     LfoBank                      lfos;               // moduladores sync al tempo (message thread; persistido)
     SceneBank                    scenes;             // snapshots del usuario (message thread; persistido)
@@ -113,6 +124,7 @@ private:
     std::atomic<double>          pubBeatPhase { 0.0 };
     std::atomic<double>          pubPhaseBeats { 0.0 };
     std::atomic<bool>            pubPlaying { false };
+    std::atomic<double>          pubTimeSeconds { 0.0 };
     std::unique_ptr<PresetApplier> presetApplier;    // 'preset' choice → continuos del APVTS (RF8 + morph B)
     PhotoSequence                photoSeq;           // rotación de fotos (spec §D; msg thread)
     std::atomic<int>             stateStampCount { 0 };

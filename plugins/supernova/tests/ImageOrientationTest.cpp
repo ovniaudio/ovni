@@ -112,3 +112,73 @@ TEST_CASE ("exif: rotate90(1) == applyOrientation(6)", "[supernova][exif]")
     REQUIRE (a.height == b.height);
     REQUIRE (a.rgba == b.rgba);
 }
+
+// RONDA 4 · R1 — el remap se hizo POR BLOQUES (girar 12 MP leía una columna por cada fila de salida: 4 bytes
+// útiles por línea de caché). Esta característica fija el mapeo EXACTO de las 8 orientaciones a un tamaño que
+// NO es múltiplo del bloque (130×70: bordes parciales en las dos direcciones) contra una referencia ingenua,
+// para que la optimización no pueda cambiar un solo píxel en silencio.
+namespace
+{
+// Referencia ingenua, píxel por píxel, del contrato de applyOrientation (EXIF 1..8).
+LoadedImage remapNaive (const LoadedImage& im, int o)
+{
+    const int w = im.width, h = im.height;
+    const bool swap = (o >= 5);
+    LoadedImage out;
+    out.width  = swap ? h : w;
+    out.height = swap ? w : h;
+    out.rgba.resize (im.rgba.size());
+    for (int oy = 0; oy < out.height; ++oy)
+        for (int ox = 0; ox < out.width; ++ox)
+        {
+            int sx = 0, sy = 0;
+            switch (o)
+            {
+                case 2: sx = w - 1 - ox; sy = oy;         break;
+                case 3: sx = w - 1 - ox; sy = h - 1 - oy; break;
+                case 4: sx = ox;         sy = h - 1 - oy; break;
+                case 5: sx = oy;         sy = ox;         break;
+                case 6: sx = oy;         sy = h - 1 - ox; break;
+                case 7: sx = w - 1 - oy; sy = h - 1 - ox; break;
+                case 8: sx = w - 1 - oy; sy = ox;         break;
+                default: sx = ox;        sy = oy;         break;
+            }
+            const uint8_t* s = im.rgba.data() + ((size_t) sy * w + sx) * 4;
+            uint8_t* d = out.rgba.data() + ((size_t) oy * out.width + ox) * 4;
+            d[0] = s[0]; d[1] = s[1]; d[2] = s[2]; d[3] = s[3];
+        }
+    return out;
+}
+
+// 130×70 con un valor único por píxel repartido en R/G/B (130*70 = 9100 > 255: hace falta más de un canal).
+LoadedImage tagged130x70()
+{
+    LoadedImage im;
+    im.width = 130; im.height = 70;
+    im.rgba.resize ((size_t) 130 * 70 * 4);
+    for (int y = 0; y < 70; ++y)
+        for (int x = 0; x < 130; ++x)
+        {
+            uint8_t* p = im.rgba.data() + ((size_t) y * 130 + x) * 4;
+            const int id = y * 130 + x;
+            p[0] = (uint8_t) (id & 0xFF); p[1] = (uint8_t) ((id >> 8) & 0xFF); p[2] = (uint8_t) x; p[3] = 255;
+        }
+    return im;
+}
+}
+
+TEST_CASE ("exif: las 8 orientaciones son byte-exactas contra la referencia ingenua a 130×70",
+           "[supernova][exif]")
+{
+    const auto src = tagged130x70();
+    for (int o = 1; o <= 8; ++o)
+    {
+        auto got = src;
+        ImageLoader::applyOrientation (got, o);
+        const auto want = remapNaive (src, o);
+        INFO ("orientación " << o);
+        REQUIRE (got.width  == want.width);
+        REQUIRE (got.height == want.height);
+        REQUIRE (got.rgba   == want.rgba);
+    }
+}

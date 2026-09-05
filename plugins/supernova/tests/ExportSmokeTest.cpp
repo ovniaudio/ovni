@@ -4,12 +4,16 @@
 #include <catch2/catch_test_macros.hpp>
 #include <juce_core/juce_core.h>
 #include <vector>
+#include <set>
+#include <algorithm>
 #include "render/metal/MetalRenderer.h"
 #include "render/ParticleParams.h"
 #include "render/RenderScenarios.h"
+#include "analysis/AnalysisFrame.h"
 #include "image/FactoryImage.h"
 #include "video/VideoExporter.h"
 #include "video/ExportPreset.h"
+#include "image/PhotoSequence.h"
 
 TEST_CASE ("exportsmoke: renderer + VideoExporter escriben un MP4 reproducible", "[supernova][exportsmoke][.gpu]")
 {
@@ -173,4 +177,118 @@ TEST_CASE ("exportsmoke: la secuencia de fotos CICLA en el MP4 (dos fotos, dos v
     REQUIRE (! frameA.empty());
     REQUIRE (! frameB.empty());
     REQUIRE (meanAbsDiff (frameA, frameB) > 6.0);   // fuego vs hielo → diferencia de color neta
+}
+
+// [exportsmoke] — MEDIA SESSION PRO ronda 2 + 2b: el export sigue el RELOJ de la secuencia Y reproduce el
+// análisis a su tasa REAL, con sonido. Con el reloj en BEATS (4 beats a 120 BPM = 2 s por foto) un clip de
+// 4 s cambia de foto UNA vez; con el reloj viejo (SECONDS, intervalo por defecto de 8 s) no cambiaba nunca.
+// Y el anillo de análisis corre a 30 Hz: un clip a 60 fps consume DOS cuadros por frame de análisis (antes
+// uno, o sea al doble de velocidad) y el audio muxeado cubre el mismo tramo. Camino idéntico al de
+// SupernovaEditor::exportVideo; escribe un MP4 real. Auto-skip sin GPU.
+TEST_CASE ("exportsmoke: en BEATS, con sonido y el análisis a su tasa real (30 Hz en un clip de 60 fps)",
+           "[supernova][exportsmoke][.gpu]")
+{
+    supernova::MetalRenderer r;
+    if (! r.isAvailable()) { WARN ("sin GPU — export beats smoke salteado"); SUCCEED(); return; }
+    r.prepare (512, 512);
+
+    const auto warm = solidField (512, 512, 255,  96,  40);   // foto A · fuego
+    const auto cool = solidField (512, 512,  40, 120, 255);   // foto B · hielo
+
+    const int W = 640, H = 360, FPS = 60, SECONDS = 4, SR = 48000;
+    const int FRAMES = SECONDS * FPS;                         // 240 cuadros
+    const int RING_HZ = 30;                                   // = SupernovaEditor::kAnalysisRingHz
+    const double BPM = 120.0, AUDIO_SECS = 12.0;              // = SupernovaProcessor::kAudioRingSeconds
+
+    // ---- el plan de fotos (reloj BEATS) ----
+    supernova::PhotoSequence seq;
+    seq.setFiles ({ "/tmp/snv-beats-a.png", "/tmp/snv-beats-b.png" });   // sintética: sólo da orden y reloj
+    seq.setClock (supernova::SeqClock::Beats);
+    seq.setIntervalBeats (4.0);                               // un compás de 4/4 = 2 s a 120 BPM
+    seq.setBurst (true);
+
+    const int perPhoto = supernova::framesPerPhotoBeats (seq.intervalBeats(), BPM, FPS);
+    REQUIRE (perPhoto == 120);                                // 2 s × 60 fps
+    const auto plan = supernova::exportSlotPlan (FRAMES, perPhoto, supernova::playOrderFrom (seq, 4));
+    REQUIRE (plan.size() == (size_t) FRAMES);
+    int changes = 0;
+    for (const auto& sl : plan) if (sl.changed) ++changes;
+    REQUIRE (changes >= 1);
+    REQUIRE (plan[120].changed);                              // justo en el compás
+    REQUIRE (supernova::framesPerPhoto (seq.intervalSeconds(), FPS) > FRAMES);   // el reloj viejo no cambiaba
+
+    // ---- la ventana de análisis: 12 s a 30 Hz, el MISMO tramo que cubre el audio ----
+    std::vector<supernova::AnalysisFrame> ring;
+    const int RING_N = (int) (AUDIO_SECS * RING_HZ);          // 360
+    for (int k = 0; k < RING_N; ++k) ring.push_back (supernova::scenarioFrame ("kick", k, RING_N));
+    const auto win = supernova::exportLoopWindow ((int) ring.size(), RING_HZ, AUDIO_SECS, true);
+    REQUIRE (win.first == 0);
+    REQUIRE (win.count == RING_N);
+    const int loopV = supernova::exportLoopFrames (win.count, FPS, RING_HZ);
+    REQUIRE (loopV == 720);                                   // 12 s de análisis = 720 cuadros a 60 fps
+
+    // ---- audio: 12 s de seno, loopeado con el MISMO período que el análisis ----
+    const size_t ringF   = (size_t) (AUDIO_SECS * SR);
+    const size_t periodA = std::min (ringF, (size_t) std::llround ((double) loopV * SR / (double) FPS));
+    REQUIRE (periodA == ringF);                               // análisis y audio cubren exactamente lo mismo
+    std::vector<float> audio (ringF * 2);
+    { double ph = 0.0; const double w0 = 2.0 * juce::MathConstants<double>::pi * 220.0 / SR;
+      for (size_t k = 0; k < ringF; ++k) { const float v = 0.35f * (float) std::sin (ph); ph += w0;
+                                           audio[k * 2] = v; audio[k * 2 + 1] = v; } }
+
+    supernova::VideoExporter ex;
+    supernova::VideoExporter::Config cfg;
+    cfg.width = W; cfg.height = H; cfg.fps = FPS;
+    cfg.bitsPerSecond = supernova::recommendedBitrate ({ W, H }, FPS);
+    cfg.withAudio = true; cfg.audioSampleRate = SR; cfg.audioChannels = 2;
+    auto out = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("snv-export-beats.mp4");
+    cfg.path = out.getFullPathName().toStdString();
+    REQUIRE (ex.begin (cfg));
+
+    supernova::ParticleParams pp;
+    std::vector<uint8_t> rgba ((size_t) W * H * 4);
+    std::vector<uint8_t> frameA, frameB;
+    std::vector<float> aChunk;
+    std::set<int> analysisUsed;
+    double aAcc = 0.0; size_t aPos = 0;
+    const double samplesPerFrame = (double) SR / FPS;
+    int curSlot = -1, bursts = 0;
+
+    for (int f = 0; f < FRAMES; ++f)
+    {
+        const int slot = plan[(size_t) f].slot;
+        if (slot != curSlot) { curSlot = slot; r.uploadImage ({ (slot == 0 ? warm : cool).data(), 512, 512 }); }
+
+        const int ai = supernova::analysisIndexForFrame (f, FPS, RING_HZ, win.count);
+        analysisUsed.insert (ai);
+        const auto af = ring[(size_t) (win.first + ai)];
+        pp.explode = (seq.burst() && plan[(size_t) f].changed) ? 1.0f : 0.0f;   // BURST: un solo cuadro
+        if (pp.explode > 0.0f) ++bursts;
+        r.renderOffscreen (af, pp, W, H, rgba.data());
+
+        aAcc += samplesPerFrame;                              // AUDIO PRIMERO (el muxer lo exige)
+        const int nA = (int) aAcc; aAcc -= (double) nA;
+        if (nA > 0)
+        {
+            aChunk.resize ((size_t) nA * 2);
+            for (int k = 0; k < nA; ++k)
+            {
+                const size_t src = ((aPos + (size_t) k) % periodA) * 2;
+                aChunk[(size_t) k * 2 + 0] = audio[src + 0];
+                aChunk[(size_t) k * 2 + 1] = audio[src + 1];
+            }
+            aPos = (aPos + (size_t) nA) % periodA;
+            REQUIRE (ex.pushAudio (aChunk.data(), nA));
+        }
+        REQUIRE (ex.pushFrame (rgba.data(), W, H));
+        if (f == 60)  frameA = rgba;                          // centro de la foto A
+        if (f == 180) frameB = rgba;                          // centro de la foto B
+    }
+    REQUIRE (bursts == changes);                              // una explosión por cambio, ni una de más
+    // 4 s de clip = 4 s de análisis: 120 frames del anillo, no 240 (eso era correr al doble de velocidad).
+    REQUIRE ((int) analysisUsed.size() == SECONDS * RING_HZ);
+    REQUIRE (ex.finish());
+    REQUIRE (out.existsAsFile());
+    REQUIRE (out.getSize() > 20000);                          // video + AAC
+    REQUIRE (meanAbsDiff (frameA, frameB) > 6.0);             // fuego vs hielo: cambió de verdad
 }

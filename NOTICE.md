@@ -8,11 +8,6 @@ no se puede comprobar, es un bug — abrí un issue.
 > **Licencia, en una línea:** OVNI free catalog: AGPLv3 (matches JUCE open-source
 > terms). ORBIT (if sold closed): JUCE Starter free tier (<US$20k/yr).
 
-> **Código fuente correspondiente (AGPLv3):** los 6 plugins de audio del catálogo y **SUPERNOVA** → este repo,
-> **<https://github.com/ovniaudio/ovni>** · el flagship **ORBIT** → su propio repo,
-> **<https://github.com/ovniaudio/orbita>**. Los instaladores de cada release (los `.pkg` por módulo y los bundles que correspondan) incluyen los módulos de esa ola;
-> el fuente de cada uno está en uno de esos dos repos.
-
 > **Cómo se usa este archivo:** las mismas atribuciones viven, en forma compacta,
 > en [`shared/legal/Attributions.h`](shared/legal/Attributions.h) (`kThirdPartyNotice`)
 > para que la pantalla **About** del chasis las muestre dentro del plugin. Mantener
@@ -36,8 +31,8 @@ commercial JUCE licence."*
   por red. El `LICENSE` de la raíz ya es el texto oficial completo de la AGPLv3.
 - **ORBIT (si se vende cerrado) → JUCE Starter.** El tier gratuito de JUCE Starter
   cubre hasta US$20k/año de facturación; pasado ese umbral, JUCE Indie (US$800 pago
-  único). Esto sólo se documenta acá; no requiere cambios de código mientras ORBIT
-  se distribuya gratis bajo AGPLv3 como el resto.
+  único). Esto sólo se documenta acá y en `skill/references/legal.md`; no requiere
+  cambios de código mientras ORBIT se distribuya gratis bajo AGPLv3 como el resto.
 
 Distribuir un binario que enlaza JUCE 8 bajo AGPLv3 es conforme: AGPLv3 impone
 obligaciones extra frente a GPLv3 (ofrecer el fuente también a usuarios que interactúan
@@ -75,13 +70,6 @@ por red), pero las cumplimos al publicar el código completo del repo en el rele
 - **Licencia:** **BSD-2-Clause** (compatible con AGPLv3).
 - **Uso en el proyecto:** servidor Syphon (macOS) — SUPERNOVA publica su textura final a OBS/Resolume/VDMX (RF7).
   Compilado estáticamente como `ovni_syphon`, sólo en SUPERNOVA.
-
-### Intel IPP — ya no se usa (histórico ≤ v0.1.0)
-- **Desde v0.1.1, ningún plugin del catálogo — ORBIT incluido — enlaza Intel IPP** ni ninguna
-  otra librería propietaria: todas las plataformas corren JUCE puro (ver notas del release
-  v0.1.1). La atribución de IPP que vivía acá aplicaba sólo a la porción x86_64 de ORBIT
-  hasta v0.1.0 y se retiró junto con la dependencia. El detalle de ORBIT vive en su repo:
-  **<https://github.com/ovniaudio/orbita>** (ver el `NOTICE.md` de ese repo).
 
 ---
 
@@ -135,19 +123,29 @@ por red), pero las cumplimos al publicar el código completo del repo en el rele
   simétrico (la imagen binaural resultante es más simétrica que el CIPIC anterior). Re-bake
   offline con `tools/gen_hrir.cpp`; receta en `tools/gen-hrir.md`.
 
-### CIPIC HRTF Database  ← **fixture HISTÓRICO (subject 003, de TEST) — ya NO horneado**
+### CIPIC HRTF Database — subject 003  ← **fixture histórico acá; HRIR horneada en ORBIT**
 - **Origen / autor:** CIPIC Interface Laboratory, U.C. Davis — V. R. Algazi, R. O. Duda,
   D. M. Thompson, C. Avendano. <https://www.ece.ucdavis.edu/cipic/>
-- **Licencia / términos:** distribución libre, de **dominio público para investigación**;
-  pide atribución a los autores. Licencia gris para uso comercial — por eso **se reemplazó
-  por SADIE II KU100** (Apache-2.0) en el re-bake de producción.
+- **Aviso de copyright — reproducirlo es condición de la licencia:**
+
+  > Copyright (c) 2001 The Regents of the University of California. All Rights Reserved
+
+- **Licencia / términos:** el apartado *"Use of Materials"* del `read_me.txt` del dataset permite
+  usar los materiales *"for any purpose-educational, research or commercial"*, con la **condición**
+  de reproducir ese aviso de copyright. No es dominio público ni está limitado a investigación:
+  es un permiso amplio con obligación de atribución, que este archivo cumple.
+- **Cortesía prevista por los mismos términos:** avisar por escrito a CIPIC cuando el uso es
+  comercial. Ese aviso queda a cargo de Joaquín Cerrano (OVNI Audio), fuera del código.
 - **Cita:** V. R. Algazi, R. O. Duda, D. M. Thompson, C. Avendano, *"The CIPIC HRTF
   Database"*, Proc. 2001 IEEE Workshop on Applications of Signal Processing to Audio
   and Acoustics (WASPAA), pp. 99–102, 2001.
-- **Uso en el proyecto:** **ya NO se usa.** Fue el fixture de test que se horneó de forma
-  transitoria (sujeto 003 → HRIR fijo + anillo de 72 azimuts) hasta que se ejecutó el
-  re-bake a SADIE II KU100. Sigue siendo el SOFA del test del `SofaLoader` (`OVNI_TEST_SOFA`),
-  que es independiente del HRIR horneado.
+- **Uso en el proyecto:** **ningún plugin de este repo lo hornea.** Fue el fixture que se horneó
+  de forma transitoria (sujeto 003 → HRIR fijo + anillo de 72 azimuts) hasta que se ejecutó el
+  re-bake a SADIE II KU100, y sigue siendo el SOFA del test del `SofaLoader` (`OVNI_TEST_SOFA`),
+  que es independiente del HRIR horneado. **Pero el instalador completo del catálogo shipea
+  ORBIT**, que se construye en su propio repo ([`ovniaudio/orbita`](https://github.com/ovniaudio/orbita))
+  y **conserva el bake CIPIC subject 003** — por eso el aviso de copyright de arriba viaja en este
+  archivo, que es el `NOTICE.txt` que se instala dentro de cada `.pkg`.
 
 ### MIT KEMAR HRTF
 - **Origen / autor:** Bill Gardner y Keith Martin, MIT Media Laboratory (1994).
@@ -168,14 +166,14 @@ por red), pero las cumplimos al publicar el código completo del repo en el rele
   permisivos (ISC); **no** activar `saf_tracker` ni `saf_hades` (vuelven todo GPLv2).
 - **Impulse Responses (IRs):** solo IRs propias o CC0 / permisivas. Nunca IRs extraídas
   de productos comerciales.
+- **CIPIC subject 003 viaja en el instalador completo, dentro de ORBIT.** ORBIT se construye en
+  `ovniaudio/orbita` y conserva su bake CIPIC; sus términos permiten el uso comercial **a condición**
+  de reproducir el aviso `Copyright (c) 2001 The Regents of the University of California. All Rights
+  Reserved` — reproducido arriba, en la sección del dataset. Ningún plugin construido en ESTE repo
+  hornea CIPIC.
 - **El HRIR horneado** deriva de **SADIE II KU100** (Apache-2.0), bajado de su fuente
   canónica (Univ. de York vía Zenodo). El re-bake se ejecutó offline con
   `tools/gen_hrir.cpp`; el SOFA NO se commitea (vive fuera del repo). El SOFA de CIPIC que
   aún figura en el árbol es **sólo** el fixture del test del `SofaLoader` (`OVNI_TEST_SOFA`,
   dato de test de libmysofa), no la fuente del HRIR horneado. Receta completa en
   `tools/gen-hrir.md`.
-
-## Fonts embedded in the UI (ui-kit assets)
-- **Clash Grotesk** (Semibold) — Indian Type Foundry, distributed via Fontshare — ITF Free Font License.
-- **General Sans** (Regular, Medium) — Indian Type Foundry, distributed via Fontshare — ITF Free Font License.
-- **JetBrains Mono** (Regular) — The JetBrains Mono Project Authors — SIL Open Font License, Version 1.1 (OFL-1.1). Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono).

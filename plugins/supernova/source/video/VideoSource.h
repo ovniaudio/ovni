@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_core/juce_core.h>
+#include <juce_graphics/juce_graphics.h>   // juce::Image (miniatura)
 #include <memory>
 #include <vector>
 
@@ -31,6 +32,11 @@ public:
     {
         return file.hasFileExtension ("mp4;mov;m4v");
     }
+
+    // MINIATURA (MEDIA SESSION PRO): un frame temprano del video, ya enderezado por su preferredTransform,
+    // con el lado mayor <= maxSide. Bloqueante (llamar desde el hilo de miniaturas). Imagen nula si falla
+    // o en plataformas sin AVFoundation.
+    static juce::Image firstFrameThumbnail (const juce::File& file, int maxSide);
 
 private:
     struct Impl;

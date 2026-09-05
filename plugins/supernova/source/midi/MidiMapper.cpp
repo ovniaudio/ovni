@@ -29,6 +29,23 @@ MidiTriggerEvent MidiMapper::mapNote (int note, int vel) const noexcept
         e.type   = MidiTriggerType::PresetChange;
         e.preset = clampi (note - cfg.prsLo, 0, cfg.presetCount - 1);
     }
+    // CUE DE FOTOS (ronda 3): el pad dispara la sesión. El índice va tal cual (0-based); si ese tile no
+    // existe lo descarta el editor, que es el único que sabe cuántas fotos hay cargadas.
+    else if (note >= cfg.cueLo && note <= cfg.cueHi)
+    {
+        e.type     = MidiTriggerType::PhotoCue;
+        e.cue      = PhotoCueKind::Tile;
+        e.photo    = note - cfg.cueLo;
+        e.strength = strength;
+    }
+    else if (note == cfg.cueNext || note == cfg.cuePrev || note == cfg.cueRandom)
+    {
+        e.type     = MidiTriggerType::PhotoCue;
+        e.cue      = note == cfg.cueNext ? PhotoCueKind::Next
+                   : note == cfg.cuePrev ? PhotoCueKind::Prev
+                                         : PhotoCueKind::Random;
+        e.strength = strength;
+    }
     // fuera de rango → None (default)
     return e;
 }

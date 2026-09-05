@@ -1,0 +1,54 @@
+# OVNI — job de GitHub Actions para compilar el instalador de Windows de ORBIT.
+# GRATIS: Inno Setup viene preinstalado en los runners windows-latest y Actions es
+# gratis en repos públicos. Listo para pegar como job dentro de release.yml del repo
+# público (ovniaudio/ovni) en la ola 2 — o correrlo suelto como workflow_dispatch.
+#
+# Entrada esperada: el zip de Windows del release (OVNI-ORBIT-v<VER>-Windows.zip)
+# como artefacto del job anterior, o descargado del draft con gh. Salida:
+# OVNI-ORBIT-v<VER>-Setup.exe + smoke test de instalación silenciosa REAL en el runner.
+
+  windows-installer:
+    name: Windows installer (Inno Setup)
+    runs-on: windows-latest
+    needs: [windows-zip]            # ajustar al nombre real del job que produce el zip
+    env:
+      VER: ${{ needs.windows-zip.outputs.version }}   # p.ej. "0.2.0" (sin la v)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Traer el zip de Windows
+        uses: actions/download-artifact@v4
+        with:
+          name: orbit-windows-zip   # ajustar al artefacto real
+          path: zipdir
+
+      - name: Extraer el bundle VST3 a stage/
+        shell: pwsh
+        run: |
+          Expand-Archive -Path (Get-ChildItem zipdir\OVNI-*-Windows.zip).FullName -DestinationPath unz -Force
+          $vst3 = Get-ChildItem -Path unz -Recurse -Directory -Filter 'ORBIT.vst3' | Select-Object -First 1
+          if (-not $vst3) { Write-Error 'No se encontró ORBIT.vst3 dentro del zip'; exit 1 }
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          Copy-Item -Recurse -Force $vst3.FullName stage\ORBIT.vst3
+
+      - name: Compilar el Setup.exe (Inno preinstalado)
+        shell: pwsh
+        run: |
+          iscc /DAppVersion=$env:VER /DBundleDir=stage packaging\windows\OVNI-ORBIT.iss
+
+      - name: "Smoke real: instalación silenciosa + verificación de aterrizaje"
+        shell: pwsh
+        run: |
+          $setup = "out\OVNI-ORBIT-v$env:VER-Setup.exe"
+          Start-Process -Wait -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
+          $dest = "C:\Program Files\Common Files\VST3\ORBIT.vst3"
+          if (-not (Test-Path $dest)) { Write-Error "El VST3 no llegó a $dest"; exit 1 }
+          Get-ChildItem -Recurse $dest | Select-Object -First 5
+          Write-Host "OK: ORBIT.vst3 instalado y verificado en el runner."
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: OVNI-ORBIT-Setup
+          path: out/OVNI-ORBIT-v*.exe
+          if-no-files-found: error

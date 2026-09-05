@@ -3,6 +3,7 @@
 // params morphables) como "Escena N" y lo lanzás con click/nota/CC; el CROSSFADE al recuperar reusa el
 // PresetMorph que ya existe (mismo ease A→B). Puro (sin JUCE), testeable. Persiste al ValueTree del plugin.
 #include "presets/PresetMorph.h"     // MorphSnapshot (30 params morphables)
+#include "util/LocaleSafeNumber.h"   // to_chars/from_chars: la persistencia no depende del locale
 #include <string>
 #include <sstream>
 
@@ -30,14 +31,15 @@ public:
     // Persistencia: por slot ocupado "slot:v0,v1,...,v29;".
     std::string serialize() const
     {
-        std::ostringstream os;
+        std::string out;
         for (int i = 0; i < kNum; ++i)
         {
             if (! used_[i]) continue;
-            os << i << ':';
-            for (int k = 0; k < MorphSnapshot::N; ++k) os << scenes_[i].v[k] << (k + 1 < MorphSnapshot::N ? ',' : ';');
+            out += num::toString (i) + ':';
+            for (int k = 0; k < MorphSnapshot::N; ++k)
+                out += num::toString (scenes_[i].v[k]) + (k + 1 < MorphSnapshot::N ? ',' : ';');
         }
-        return os.str();
+        return out;
     }
     void deserialize (const std::string& in)
     {
@@ -49,16 +51,14 @@ public:
             if (rec.empty()) continue;
             const size_t colon = rec.find (':');
             if (colon == std::string::npos) continue;
-            try {
-                const int slot = std::stoi (rec.substr (0, colon));
-                if (slot < 0 || slot >= kNum) continue;
-                std::stringstream vs (rec.substr (colon + 1));
-                std::string tok; int k = 0;
-                MorphSnapshot s;
-                while (std::getline (vs, tok, ',') && k < MorphSnapshot::N)
-                { if (! tok.empty()) s.v[k] = std::stof (tok); ++k; }
-                if (k >= MorphSnapshot::N) { scenes_[slot] = s; used_[slot] = true; }
-            } catch (...) { /* registro corrupto → se omite */ }
+            const int slot = num::toInt (rec.substr (0, colon), -1);
+            if (slot < 0 || slot >= kNum) continue;                    // registro corrupto → se omite
+            std::stringstream vs (rec.substr (colon + 1));
+            std::string tok; int k = 0;
+            MorphSnapshot s;
+            while (std::getline (vs, tok, ',') && k < MorphSnapshot::N)
+            { if (! tok.empty()) s.v[k] = num::toFloat (tok, s.v[k]); ++k; }
+            if (k >= MorphSnapshot::N) { scenes_[slot] = s; used_[slot] = true; }
         }
     }
 

@@ -91,6 +91,9 @@ static void dumpLfo (int w, int h, const juce::String& path)
     auto& s1 = bank.slot (1); s1.enabled = true;  s1.target = pid::PARTICLE_SIZE; s1.beatsPerCycle = 0.5f; s1.shape = supernova::LfoShape::Triangle; s1.depth = 0.75f;
     auto& s2 = bank.slot (2); s2.enabled = false; s2.target = pid::GLOW;   s2.beatsPerCycle = 2.0f;  s2.shape = supernova::LfoShape::Square;     s2.depth = 0.30f;
     auto& s3 = bank.slot (3); s3.enabled = true;  s3.target = pid::ROTATE; s3.beatsPerCycle = 4.0f;  s3.shape = supernova::LfoShape::SampleHold; s3.depth = 0.90f;
+    s0.phaseOffset = 0.25f;                       // PHASE a 90°
+    s1.bipolar = false;                           // fila UNI
+    s3.freeHz = true; s3.hz = 3.5f;               // modo libre en Hz → aparece el slider de frecuencia
 
     supernova::LfoPanel panel (bank);
     panel.setSize (w, h);

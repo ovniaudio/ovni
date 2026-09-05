@@ -76,7 +76,7 @@ Apple, macOS pide un click extra la primera vez — no es un problema del plugin
 | `packaging/build-universal.sh` | configura+buildea universal y **verifica con `lipo -archs`** que cada artefacto traiga arm64 **y** x86_64. **No firma nada** → corre sin credenciales. |
 | `packaging/make-dmg.sh` | **entregable gratis principal**: arma el `.dmg` con los `.vst3`/`.component` + alias a `/Library/Audio/Plug-Ins` + `LÉEME PRIMERO.txt`. Sin firma por default; firma opcional con `DEV_ID`. |
 | `packaging/make-installer.sh` | **alternativa**: arma el `.pkg` (VST3 → `/Library/Audio/Plug-Ins/VST3`, AU → `…/Components`). Sin firma por default; firma opcional con `INSTALLER_SIGN_ID`. |
-| `packaging/make-per-plugin.sh` | **entregable actual de la web**: `.pkg` POR PLUGIN + `.pkg` completo (con "Personalizar") + ZIPs de Windows por plugin + `SHA256SUMS.txt`, desde una carpeta plana de bundles. Los `.pkg` instalan con doble click y **sin cuarentena** (adiós `xattr`). Identificadores por plugin (`com.ovni.plugins.<id>.{vst3,au}`) y `BundleIsRelocatable=false`. |
+| `packaging/make-per-plugin.sh` | **entregable actual de la web**: `.pkg` POR PLUGIN + `.pkg` completo (con "Personalizar") + ZIPs de Windows por plugin + `SHA256SUMS.txt`, desde una carpeta plana de bundles. Los `.pkg` instalan con doble click y **sin cuarentena** (adiós `xattr`). Identificadores por plugin (`com.ovni.plugins.<id>.{vst3,au}`), `BundleIsRelocatable=false`, `BundleIsVersionChecked=false` y `BundleOverwriteAction=upgrade` (ver **Versiones**, abajo). Falla si los bundles no declaran la `--version` pedida, y post-checkea cada `.pkg` emitido. |
 | `.github/workflows/ci.yml` | CI: build + ctest + validate por plugin, archiva reportes. |
 | `.github/workflows/release.yml` | Release: build universal → (firma opcional) → `.dmg` + `.pkg` → (notarización opcional) → publica. No falla sin secrets. |
 
@@ -134,6 +134,51 @@ quedan coherentes entre "instalar uno" e "instalar todo". La web (`sello/web`) e
 de asset: `OVNI-v<V>.pkg` · `OVNI-<NAME>-v<V>.pkg` · `OVNI-<NAME>-v<V>-Windows.zip`, resueltos por
 el catch-all `/download/*` de `_redirects` (actualizar la versión ahí + `plugins.json` "version" +
 el hero de `index.html` al releasear).
+
+## Versiones: por qué el empaquetado desconfía (bug del 2026-09-03)
+
+**Lo que pasó.** El `.pkg` de ORBIT v0.2.0 dejó sin AU a todo el que ya tenía ORBIT instalado. Los
+bundles se habían buildeado con el `VERSION` del repo sin bumpear, así que declaraban
+`CFBundleVersion` **0.1.1** aunque el binario fuera nuevo. macOS Installer usa ese `<bundle-version>`
+para decidir si un componente hace falta: encontraba `com.ovni.orbit` 0.1.1 ya presente en el
+volumen y **salteaba el componente**. Lo agravaba que VST3 y AU comparten `CFBundleIdentifier`
+(`com.ovni.orbit`), así que el Installer los resuelve como un único bundle: instalaba el primero del
+`choices-outline` (VST3) y daba por satisfecho el segundo (AU). SUPERNOVA, del mismo release, sí
+declaraba 0.2.0 y por eso instalaba bien.
+
+Diagnóstico completo con evidencia: `mision-control/bugs/2026-09-03-orbit-au-no-se-instala.md`.
+
+**Las tres defensas que hoy tiene `make-per-plugin.sh`** (ninguna reemplaza a la otra):
+
+1. **Guardia de versión**, antes de empaquetar. Lee el `CFBundleShortVersionString` de cada `.vst3`,
+   `.component` y `.app` de `--bundles` y **falla** si alguno no coincide con `--version`, diciendo
+   qué bundle y qué dos versiones. Es lo que hubiera atajado el bug el día que se empaquetó.
+2. **`BundleIsVersionChecked=false` + `BundleOverwriteAction=upgrade`** en cada component plist. El
+   `PackageInfo` sale con `<bundle-version/>` **vacío** → el Installer deja de comparar versiones y
+   escribe el bundle **siempre**, aunque el usuario tenga la misma (o una "mayor" por error).
+3. **Post-check** de cada `.pkg` emitido: se lo expande con `pkgutil --expand` y se exige que el
+   `PackageInfo` de cada componente y los `<pkg-ref>` / `<bundle CFBundle…>` del `Distribution`
+   declaren la versión pedida.
+
+**La regla de la casa, entonces**: subir de versión es **bumpear el `VERSION` del repo del plugin y
+rebuildear**, no sólo pasar un `--version` distinto al script. ORBIT vive en `ovniaudio/orbita`
+(su propio `VERSION`); el resto del catálogo, en este repo.
+
+**Verificación que sí o sí va antes de publicar** (no estaba en el smoke y por eso pasó): instalar el
+`.pkg` en una Mac que **ya tenga la versión anterior** y comprobar que quedan **los dos** formatos:
+
+```bash
+# con la versión vieja ya instalada en /Library, instalar el .pkg nuevo y después:
+/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Library/Audio/Plug-Ins/VST3/ORBIT.vst3/Contents/Info.plist
+/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Library/Audio/Plug-Ins/Components/ORBIT.component/Contents/Info.plist
+pkgutil --pkg-info com.ovni.plugins.orbit.au   # tiene que existir y decir la versión nueva
+auval -v aufx Orbt Ovni | tail -3
+```
+
+**Pendiente conocido**: VST3 y AU comparten `CFBundleIdentifier` en los 8 plugins. Con las defensas
+de arriba ya no rompe, pero separar los ids (p. ej. `com.ovni.orbit.vst3` / `com.ovni.orbit.au`)
+sacaría la ambigüedad de raíz. Es un cambio de C++/CMake y los plugins están congelados, así que
+queda anotado para cuando se abra esa puerta.
 
 ## Deployment target: 11.0 (decisión documentada)
 

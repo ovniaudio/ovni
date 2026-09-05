@@ -109,6 +109,7 @@ struct MetalRenderer::Impl
     int lastPalette = -1;
     float contentCX = 0.5f, contentCY = 0.5f;   // centroide de luminancia de la imagen cargada
     float imgAspect = 1.0f;                      // w/h de la imagen cargada → FIT del aspecto por target
+    int   fitMode   = 0;                         // 0 = FIT (contain) · 1 = FILL (cover) — MEDIA SESSION PRO
 
     std::vector<PresentTarget> targets;   // present N pantallas con 1 sim (preview + fullscreen)
     Uniforms curU {};                     // uniforms del tick (encodeSimulate → lo reusa el draw por target)
@@ -775,8 +776,16 @@ void MetalRenderer::Impl::encodeComposite (id<MTLCommandBuffer> cb, PresentTarge
         {
             const float vpAspect  = tu.aspect;                       // target w/h
             const float ratio     = (vpAspect > 0.0f) ? imgAspect / vpAspect : 1.0f;
-            tu.fitX = (ratio >= 1.0f) ? 1.0f : ratio;
-            tu.fitY = (ratio >= 1.0f) ? 1.0f / ratio : 1.0f;
+            if (fitMode == 1)   // FILL (cover): el lado que sobra se AGRANDA (>1) y el target lo recorta
+            {
+                tu.fitX = (ratio >= 1.0f) ? ratio : 1.0f;
+                tu.fitY = (ratio >= 1.0f) ? 1.0f : 1.0f / ratio;
+            }
+            else                // FIT (contain): el lado que sobra se ENCOGE (<1) → aire centrado
+            {
+                tu.fitX = (ratio >= 1.0f) ? 1.0f : ratio;
+                tu.fitY = (ratio >= 1.0f) ? 1.0f / ratio : 1.0f;
+            }
         }
         // INVARIANCIA AL TAMAÑO (bug de campo "al ampliar la vista se ve más suave/menos intenso"): el
         // glifo escala con min(w,h)/1024 → la figura cubre la MISMA fracción de pantalla con knobs, en
@@ -1038,4 +1047,6 @@ bool MetalRenderer::renderOffscreen (const AnalysisFrame& frame, const ParticleP
         return true;
     }
 }
+void MetalRenderer::setFitMode (int mode) { impl->fitMode = (mode == 1) ? 1 : 0; }
+int  MetalRenderer::fitMode() const       { return impl->fitMode; }
 }

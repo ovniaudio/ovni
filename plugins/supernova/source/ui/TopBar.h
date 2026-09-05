@@ -1,11 +1,14 @@
 #pragma once
 // TopBar — la barra PRO de SUPERNOVA en DOS filas (look del sello: ui-kit Theme/Fonts, hue fuego),
 // COMPARTIDA por la app y el plugin (pedido Joaquín 2026-07-16: "el plugin igual a la app").
-//   Fila 1 · AUDIO:  INPUT · medidor · IN gain                ⤢ ⛶ SYPHON · BPM TAP
-//   Fila 2 · MEDIOS: CLEAR LOAD ⟳ EXPORT LFO PRESETS    ◂ MUNDO ▸ ⊞    SEQ n/N · 8s − + ▸
+//   Fila 1 · AUDIO:  INPUT · medidor · IN gain                        ⤢ ⛶ SYPHON · BPM TAP
+//   Fila 2 · MEDIOS: CLEAR LOAD ⟳ ▦ EXPORT FORMAT LFO PRESETS   ◂ MUNDO ▸ ⊞   SEQ n/N · 8s − + ▸
 // La app (AppTopBar) reemplaza el cluster izquierdo de la fila 1 por su selector de fuente (SOURCE /
 // permiso SCK / MIC-MIDI / TOP); el plugin no lo necesita: el DAW ES la fuente (el insert alimenta el
 // análisis). El fader IN escribe el param visGain (sensibilidad visual, solo análisis — RNF1 intacto).
+// MEDIA SESSION PRO (2026-09-02): ▦ muestra/oculta la tira de miniaturas; FORMAT = formato del lienzo
+// (AUTO/FREE/16:9/9:16/1:1/4:5/4:3 + FIT/FILL); el label SEQ es un botón → reloj (seconds/beats/kick),
+// orden (loop/shuffle) y transición (cut/burst); − / + ajustan la tasa del reloj activo.
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
@@ -51,8 +54,9 @@ protected:
     void stepPreset (int delta);
     void showPresetsMenu();                               // "Save current…" + lista de presets de usuario
     void savePresetDialog();
-    void showExportMenu();                                // export a video: formatos + duración + sonido
-    void stepSeqSeconds (double delta);
+    void showExportMenu();                                // export a video: formatos (el del lienzo primero) + duración + sonido
+    void showFormatMenu();                                // formato del lienzo + FIT/FILL (MEDIA SESSION PRO)
+    void showSeqMenu();                                   // reloj / orden / transición de la secuencia
     void refreshSeqAndPreset();
 
     SupernovaEditor&    editor;
@@ -75,13 +79,15 @@ protected:
     juce::TextButton clearBtn      { "CLEAR" };
     juce::TextButton imageBtn      { "LOAD" };
     juce::TextButton rotateBtn     { juce::String::fromUTF8 ("\xE2\x9F\xB3") };  // ⟳
+    juce::TextButton mediaBtn      { juce::String::fromUTF8 ("\xE2\x96\xA6") };  // ▦ tira de media (toggle)
+    juce::TextButton formatBtn     { "AUTO" };                                   // formato del lienzo (chip)
     juce::TextButton presetPrevBtn { juce::String::fromUTF8 ("\xE2\x97\x82") };  // ◂
     juce::TextButton presetNextBtn { juce::String::fromUTF8 ("\xE2\x96\xB8") };  // ▸
     juce::TextButton worldsBtn     { juce::String::fromUTF8 ("\xE2\x8A\x9E") };  // ⊞ grilla de mundos
     juce::TextButton lfoBtn        { "LFO" };                                    // panel de LFOs sync
     juce::TextButton presetsBtn    { "PRESETS" };                                // presets de usuario
     juce::Label      presetLabel;
-    juce::Label      seqLabel;
+    juce::TextButton seqBtn        { "SEQ" };                                    // SEQ n/N · tasa → menú
     juce::TextButton seqMinusBtn { "-" }, seqPlusBtn { "+" };
     juce::TextButton seqPlayBtn  { juce::String::fromUTF8 ("\xE2\x96\xB8") };
 

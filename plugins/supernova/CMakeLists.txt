@@ -83,6 +83,7 @@ if(APPLE)
         "-framework IOSurface"
         "-framework AVFoundation"             # decodificador de VIDEO (VideoSource)
         "-framework CoreMedia"
+        "-framework ImageIO"                  # orientación HEIC/TIFF/WebP (ImageLoader::orientationOf)
         "-framework Vision")                  # saliencia real (VisionField, modo NATURAL)
 endif()
 # Backend D3D11 (Windows) — M5: if(WIN32) con source/render/d3d11/*.cpp + d3d11/dxgi.

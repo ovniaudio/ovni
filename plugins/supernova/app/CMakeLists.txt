@@ -62,5 +62,5 @@ target_link_libraries(supernova_app PRIVATE
     juce::juce_audio_utils juce::juce_audio_devices juce::juce_gui_extra juce::juce_dsp
     juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags
     "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework CoreVideo"
-    "-framework IOSurface" "-framework AVFoundation" "-framework CoreMedia" "-framework Vision"
+    "-framework IOSurface" "-framework AVFoundation" "-framework CoreMedia" "-framework Vision" "-framework ImageIO"
     "-framework ScreenCaptureKit" "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreGraphics")

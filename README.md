@@ -1,113 +1,93 @@
-# OVNI 🛸 — free, open-source spatial-audio plugins
+# OVNI 🛸
 
-[![CI](https://github.com/ovniaudio/ovni/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ovniaudio/ovni/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/ovniaudio/ovni?label=release)](https://github.com/ovniaudio/ovni/releases/latest)
-[![License: AGPLv3](https://img.shields.io/github/license/ovniaudio/ovni)](LICENSE)
+**A free, open-source catalog of spacey audio plugins — now with SUPERNOVA, an audio-reactive visual synth.**
 
-Seven creative spatial-audio effects **plus SUPERNOVA, an audio-reactive visual synth** — all **free and open-source (AGPLv3)**.
-macOS: VST3 + AU, universal (Apple Silicon + Intel), 11+. Windows: VST3, x64, 10+ (audio catalog — SUPERNOVA is macOS-only: VST3 + AU + a standalone app on Metal).
-Simple interface, pro sound backed by real physics: HRTF, Doppler, physical reverberation.
+OVNI is a small label of audio plugins with a simple interface and pro sound backed by physics. Everything is free and open source under **AGPLv3** (compatible with JUCE's open-source terms). This monorepo holds the shared library (`shared/`), the plugins (`plugins/`), and the orchestrator that builds them (`orchestrator/`).
 
-**→ [Download the latest release](https://github.com/ovniaudio/ovni/releases/latest)** ·
-**[ovniaudio.com](https://ovniaudio.com)**
+![SUPERNOVA — 50 built-in worlds](docs/manual/images/worlds/_contact-sheet.png)
 
----
+## SUPERNOVA
 
-## The plugins
+SUPERNOVA is the label's first **audiovisual** module: an audio-reactive **visual synthesizer / VJ instrument**. It listens to your audio and drives a real-time GPU particle field on Apple Metal.
 
-This repo holds the **six audio catalog plugins and SUPERNOVA**, the audiovisual flagship. The flagship, **ORBIT**, is the engine the
-rest are born from and lives in its own repo → **[github.com/ovniaudio/orbita](https://github.com/ovniaudio/orbita)**.
+It is **not** an audio effect. SUPERNOVA is **bit-exact audio pass-through** — it never alters the sound. Audio in equals audio out, verified by a null/identity test and a full-scale gain identity test. It's a visual instrument that happens to live in your signal chain.
 
-| Plugin | What it does |
-|---|---|
-| **ORBIT** ↗ | The binaural movement engine the whole family is born from. Place sound in real 3D, set it orbiting, fly it past — backed by physics. *(source in [ovniaudio/orbita](https://github.com/ovniaudio/orbita))* |
-| **PULSAR** | Auto-pan that throws your sound into orbit. Chaos, Doppler and binaural width — motion that obeys physics, not an LFO. |
-| **NEBULA** | Reverb of impossible, infinite spaces. An FDN cloud you sculpt — it breathes, it freezes, it never ends. |
-| **DUST** | Binaural echoes. Reflections of your sound scattered as bubbles orbiting the head — from a few discrete taps to a growing cloud. |
-| **HALO** | Shimmer that orbits. A pitched reverb feeds back into itself — an endless choir of octaves and fifths circling the head. |
-| **HORIZON** | Spectral freeze with a pulse. Capture an instant and hold it, then re-trigger it to the beat — eternal pad to rhythmic stutter. |
-| **AURORA** | Spectral panning: every frequency to its own place in the field. Your sound unfurled across the stereo — real width, mono-compatible. |
-| **SUPERNOVA** | Audio-reactive **visual synth**: 262,144 GPU particles deform your image or video with the sound. VST3 + AU plus a standalone app that hears your Mac's system audio driver-free (ScreenCaptureKit); the audio path is bit-exact pass-through. macOS-only (Metal). |
+**Headline features**
 
-Every module carries an **IN PHASE** mono-safe path, and latency is honest: zero in most
-modules, 3 ms lookahead in NEBULA, one PDC-reported STFT frame in the spectral pair
-(HORIZON, AURORA). If a control claims something the DSP doesn't do, that's a bug.
+- **50 built-in worlds** — factory presets rendered as instant, procedural cards.
+- **Drag an image, the particles become it** — Vision-based saliency + subject cutout turn any picture into a particle field.
+- **Tempo-synced LFOs with a live output meter** — modulate parameters in time, watch them move.
+- **MIDI-learn + MIDI CC** — map any control to your hardware.
+- **Scenes and user presets** — save, recall, undo/redo.
+- **Video export to MP4 / H.264, WITH SOUND** — 4 format presets, a real-time audio ring buffer muxed to an in-sync AAC track, plus free **custom duration** (1–600 s).
+- **Syphon output (macOS)** — publish the texture straight into OBS, Resolume, or VDMX.
 
-## Install — macOS
+**Platform (be honest about this)**
 
-Grab the installer from the [latest release](https://github.com/ovniaudio/ovni/releases/latest):
+- **macOS only, for now.** Universal binary (Apple Silicon `arm64` + Intel `x86_64`), minimum **macOS 11.0 (Big Sur)**.
+- Ships as **VST3 + AU plug-ins** and a dedicated **Standalone desktop app** (a custom JUCE shell, not the generic standalone). The plug-in editor is the **same experience as the app**: same pro top bar (worlds, LFO, presets, export, Syphon, sequences), full-bleed resizable visual — only the system-audio source selector stays app-only (in a DAW the host is the source).
+- The visual engine is **Apple Metal**. There is **no Windows visual renderer yet** — the WASAPI loopback audio-capture code exists, but the D3D11 render backend is future work, and video export uses AVFoundation (macOS-only). So SUPERNOVA does **not** run on Windows today.
 
-> **Staged launch:** releases roll out in waves — each release carries the modules shipping
-> in that wave (v0.2.0: **ORBIT + SUPERNOVA**; the rest of the catalog is coming soon at
-> [ovniaudio.com](https://ovniaudio.com)).
+## Quickstart
 
-- **`OVNI-<version>.pkg`** — all seven plugins, one double-click. It places VST3 + AU in the
-  system plug-in folders (`/Library/Audio/Plug-Ins`) and asks for your password itself.
-  Click **Customize** to pick specific plugins.
-- **`OVNI-<PLUGIN>-<version>.pkg`** — just the one you want.
-
-Files installed by the .pkg carry **no quarantine flag**, so your DAW loads them with no
-Gatekeeper warnings. The installer itself is unsigned (no paid Apple certificate yet), so
-macOS may block it on first open — once: **right-click → Open** (macOS 14 or earlier) or
-**System Settings → Privacy & Security → "Open Anyway"** (macOS 15+).
-
-Prefer manual install? **`OVNI-<version>.dmg`** has the raw bundles; that path needs the
-`xattr -dr com.apple.quarantine …` step described in the `LÉEME PRIMERO` inside.
-
-Then rescan plugins in your DAW. macOS 11+, universal (Apple Silicon + Intel).
-
-## Install — Windows
-
-Download **`OVNI-<version>-Windows.zip`** (all seven) or a single
-**`OVNI-<PLUGIN>-<version>-Windows.zip`** — VST3, 64-bit, Windows 10+.
-
-Before extracting: right-click the ZIP → **Properties** → tick **Unblock** → Apply. Then
-extract and copy the `.vst3` folder(s) into `C:\Program Files\Common Files\VST3`. The
-plugins are unsigned, so SmartScreen may warn the first time — **More info → Run anyway**.
-Full steps (English + Español) are in `LEEME PRIMERO.txt` inside each ZIP. Windows is VST3
-only (AU is macOS-only).
-
-**Verify your download:** every release ships a `SHA256SUMS.txt` with the SHA-256 of every
-asset — `shasum -a 256 <file>` (macOS) or `certutil -hashfile <file> SHA256` (Windows).
-
-## Build from source
-
-The whole catalog is one CMake/JUCE build (SUPERNOVA's Metal renderer and standalone app build on macOS only). JUCE is pinned (8.0.13) and reused from
-a local checkout via `-DOVNI_JUCE_DIR`, or fetched automatically if you don't pass one;
-`libmysofa` and `Catch2` are fetched automatically.
+Build the universal binary from source:
 
 ```bash
-git clone https://github.com/ovniaudio/ovni
-cd ovni
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-  -DOVNI_JUCE_DIR=/path/to/JUCE   # optional — omit to auto-fetch JUCE
-cmake --build build
-ctest --test-dir build            # the full test battery
+cmake --preset release-universal && cmake --build build
 ```
 
-**ORBIT builds from its own repo** ([ovniaudio/orbita](https://github.com/ovniaudio/orbita),
-which uses git submodules — clone it with `--recursive`).
+`release-universal` is the distribution preset (real `arm64 + x86_64`, Release, deployment target 11.0). For faster local iteration on Apple Silicon, `cmake --preset dev && cmake --build build` builds `arm64`-only.
 
-## Layout
+**Where the plug-ins land.** `COPY_PLUGIN_AFTER_BUILD` copies them to your user plug-in folders after each build:
 
+- VST3 → `~/Library/Audio/Plug-Ins/VST3/SUPERNOVA.vst3`
+- AU → `~/Library/Audio/Plug-Ins/Components/SUPERNOVA.component`
+
+(The build-tree copies also live under `build/plugins/supernova/supernova_artefacts/Release/`.)
+
+**The desktop app.** The standalone app captures **system audio** via ScreenCaptureKit, so on first launch macOS asks **once** for the **Screen Recording** permission — that TCC permission is how macOS gates system-audio capture (it is **not** the microphone). Inside a DAW, the plug-in reads the DAW's audio directly and needs no permission.
+
+For a stable permission grant across rebuilds, deploy the app with the label's free self-signed cert:
+
+```bash
+./packaging/make-signing-cert.sh   # once per machine: creates "SUPERNOVA Local" in the keychain
+./packaging/deploy-app.sh          # each deploy: copies to /Applications + stable signature
+open /Applications/SUPERNOVA.app
 ```
-plugins/      the six catalog plugins (aurora, dust, halo, horizon, nebula, pulsar)
-              plus _probe, the internal build-harness test plugin
-shared/       shared DSP engines, UI kit, presets and the plugin chassis
-cmake/        build helpers
-packaging/    installer scripts (.pkg per plugin + full catalog, DMG, Windows ZIPs)
-tests/        catalog-wide test harness
-tools/        offline utilities (e.g. HRIR baking)
-```
+
+Full story, rules, and troubleshooting: [`docs/AUDIO-TCC.md`](docs/AUDIO-TCC.md). Packaging and distribution: [`packaging/README.md`](packaging/README.md).
+
+## Catalog status
+
+| Module | Type | Platforms | Status |
+|---|---|---|---|
+| ORBIT | Audio | macOS + Windows | Released v0.2.1 |
+| PULSAR | Audio | macOS + Windows | Released v0.1.1 |
+| NEBULA | Audio | macOS + Windows | Released v0.1.1 |
+| DUST | Audio | macOS + Windows | Released v0.1.1 |
+| HALO | Audio | macOS + Windows | Released v0.1.1 |
+| HORIZON | Audio | macOS + Windows | Released v0.1.1 |
+| AURORA | Audio | macOS + Windows | Released v0.1.1 |
+| **SUPERNOVA** | Audiovisual | macOS | **0.3.0** |
+
+The 7 audio plugins are cross-platform (Windows VST3 already ships). SUPERNOVA shipped as **v0.2.0** on 2026-08-25 and is macOS-only; **v0.3.0** adds the media session, four new worlds and the reworked LFOs. Its source lives on branch `feat/supernova`, tagged per release (`v0.3.0`).
 
 ## License
 
-**GNU AGPLv3** — see [`LICENSE`](LICENSE). Third-party attributions (JUCE, libmysofa,
-Catch2, the HRIR datasets and the embedded UI fonts) are in [`NOTICE.md`](NOTICE.md).
-As of v0.1.1 the whole catalog — ORBIT included — links **no proprietary libraries**.
+**AGPLv3.** Free and open source, compatible with JUCE's open-source terms. Distributing your own binaries requires no paid Apple account; the $99/yr Apple Developer Program is only for signed + notarized distribution convenience, not a legal requirement (see [`packaging/README.md`](packaging/README.md)).
 
-The whole catalog is free and open-source. The brand rests on **verifiable honesty**: if a
-claim in here can't be checked, that's a bug — open an issue.
+## Development
 
-🛸 **[ovniaudio.com](https://ovniaudio.com)**
+OVNI is built by an orchestrated set of "factory" sessions. Read **[`CONTRACT.md`](CONTRACT.md)** first — it's the set of rules that make the pieces fit together. The build was split across five parallel sessions, each with a plan under [`docs/plans/`](docs/plans/):
+
+| Session | Builds | Plan |
+|---|---|---|
+| **S1** | DSP engines (`shared/engines`, `shared/dsp`) | [`docs/plans/S1-engines.md`](docs/plans/S1-engines.md) |
+| **S2** | UI-kit (`shared/ui-kit`) | [`docs/plans/S2-uikit.md`](docs/plans/S2-uikit.md) |
+| **S3** | Chassis: presets + template (`shared/presets`, `shared/template`) | [`docs/plans/S3-chasis.md`](docs/plans/S3-chasis.md) |
+| **S4** | Orchestrator + tools + skill | [`docs/plans/S4-orquestador.md`](docs/plans/S4-orquestador.md) |
+| **S5** | Integration (root + `_probe` plugin + `LAUNCH.md`) — after S1–S4 | [`docs/plans/S5-integracion.md`](docs/plans/S5-integracion.md) |
+
+Each plan opens with a copy-paste prompt to launch its session. S5 leaves a `LAUNCH.md` describing how the **main** session drives the orchestrator (Phase 1 PULSAR → Phase 2 parallel → Phase 3).
+
+Doctrine: **verifiable honesty** — every claim is backed by a reproducible command or in-tree evidence. Nothing is asserted "on faith."

@@ -49,6 +49,13 @@ void SupernovaView::setOnFullscreenClosed (std::function<void()> cb) noexcept
 {
     if (metal != nullptr) metal->onFullscreenClosed = std::move (cb);
 }
+void SupernovaView::setOnRenderFrame (std::function<void()> cb) noexcept
+{
+    if (metal != nullptr) metal->onFrameTick = std::move (cb);
+}
+void SupernovaView::setCanvasAspect (float aspect) noexcept { if (metal != nullptr) metal->setCanvasAspect (aspect); }
+void SupernovaView::setFitMode (int mode) noexcept          { if (metal != nullptr) metal->setFitMode (mode); }
+void SupernovaView::triggerBurst() noexcept                 { if (metal != nullptr) metal->triggerBurst(); }
 
 void SupernovaView::resized()
 {

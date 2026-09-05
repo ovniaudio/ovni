@@ -1,4 +1,4 @@
-// FactoryPresets.cpp — tabla de presets de fábrica de SUPERNOVA (36 MUNDOS: M3+vocabulario+3D/color).
+// FactoryPresets.cpp — tabla de presets de fábrica de SUPERNOVA (50 MUNDOS: M3+vocabulario+3D/color).
 // Cada preset es un MUNDO completo (pedido "nivel TouchDesigner"): MOVIMIENTO (motion) + FÍSICA (7 coefs) +
 // GEOMETRÍA (shape/trails/links/size) + COLOR (sat/hue/glow) + CUTOUT donde aplica. Valores en UNIDADES de
 // parámetro (0-100; gravity −100..100; hue −180..180; choices como índice). applyFactory resetea TODO a
@@ -174,18 +174,23 @@ const std::vector<FactoryPreset>& factoryPresets()
             { "radialGain", 100.0f }, { "jitterGain", 45.0f }, { "breatheGain", 50.0f },
             { "motion", 4.0f }, { "shape", 6.0f }, { "trails", 45.0f }, { "links", 15.0f } , { "pump", 80.0f } } },  // el show-stopper: TODO explota y se re-teje
 
-        // --- Tier PRO (idx 30-31): mundos caleidoscópicos — el multiplicador de look nuevo ---
-        { "Kaleidoscope", C::SoundDesign, {
-            { "intensity", 48.0f }, { "chaos", 30.0f }, { "particleSize", 45.0f }, { "glow", 62.0f },
-            { "curlScale", 45.0f }, { "homeStrength", 50.0f }, { "momentum", 65.0f },
-            { "radialGain", 50.0f }, { "jitterGain", 30.0f }, { "breatheGain", 45.0f },
-            { "kaleido", 3.0f }, { "trails", 30.0f }, { "rotate", 8.0f }, { "sat", 62.0f } } },  // 6 espejos girando: mandala vivo de TU imagen
-        { "Hypnosis", C::SoundDesign, {
-            { "intensity", 42.0f }, { "chaos", 24.0f }, { "particleSize", 52.0f }, { "glow", 68.0f },
-            { "curlScale", 30.0f }, { "homeStrength", 40.0f }, { "momentum", 78.0f },
-            { "radialGain", 35.0f }, { "jitterGain", 45.0f }, { "breatheGain", 60.0f },
-            { "motion", 2.0f }, { "shape", 1.0f }, { "kaleido", 4.0f }, { "rotate", -14.0f },
-            { "hueCycle", 18.0f }, { "trails", 40.0f }, { "speed", 44.0f }, { "sat", 60.0f } } },  // 8 espejos en contra-giro + tono en deriva: el túnel
+        // --- Tier PRO (idx 30-31): FAMILIA FOTOGRÁFICA (ronda 4). Estos dos slots eran los mundos
+        // caleidoscópicos (Kaleidoscope, Hypnosis): el espejo partía la foto en un mandala y el material
+        // del usuario dejaba de leerse. El PARÁMETRO kaleido sigue estando — se prende en cualquier mundo;
+        // lo que se fue son los presets construidos sobre él. En su lugar entra la familia de SATELLITE:
+        // la imagen se PRESERVA y se reinterpreta (3D, parallax, órbita, profundidad, recorte, luz).
+        { "Parallax", C::Production, {
+            { "intensity", 42.0f }, { "chaos", 14.0f }, { "particleSize", 38.0f }, { "glow", 56.0f },
+            { "curlScale", 30.0f }, { "homeStrength", 70.0f }, { "momentum", 42.0f },
+            { "radialGain", 45.0f }, { "jitterGain", 18.0f }, { "breatheGain", 45.0f },
+            { "depth", 88.0f }, { "rotY", -16.0f }, { "rotX", -6.0f }, { "orbit", 12.0f },
+            { "density", 72.0f }, { "sat", 55.0f } } },                                   // la foto ENTERA en relieve: frente y fondo se corren uno contra otro
+        { "Lantern", C::Production, {
+            { "intensity", 40.0f }, { "chaos", 12.0f }, { "particleSize", 58.0f }, { "glow", 84.0f },
+            { "curlScale", 26.0f }, { "homeStrength", 66.0f }, { "momentum", 45.0f },
+            { "radialGain", 40.0f }, { "jitterGain", 16.0f }, { "breatheGain", 72.0f },
+            { "shape", 1.0f }, { "depth", 40.0f }, { "rotX", -8.0f }, { "orbit", 14.0f },
+            { "pump", 45.0f }, { "sat", 60.0f }, { "density", 55.0f } } },                   // farol: discos blandos que encienden la foto por dentro y respiran con el RMS
 
         // --- 3D + COLOR LAB (idx 32-35): la escultura se da vuelta, la figura y la paleta como identidad ---
         { "Satellite", C::Production, {
@@ -258,12 +263,13 @@ const std::vector<FactoryPreset>& factoryPresets()
             { "radialGain", 40.0f }, { "jitterGain", 28.0f }, { "breatheGain", 42.0f },
             { "gravity", 55.0f }, { "shape", 6.0f }, { "trails", 50.0f },
             { "palette", 8.0f }, { "speed", 40.0f } } },                                  // brasas MAGMA cayendo con estela: fogata invertida, hipnótico
-        { "Cathedral", C::Production, {
-            { "intensity", 44.0f }, { "chaos", 14.0f }, { "particleSize", 40.0f }, { "glow", 66.0f },
-            { "curlScale", 35.0f }, { "homeStrength", 60.0f }, { "momentum", 45.0f },
-            { "radialGain", 45.0f }, { "jitterGain", 18.0f }, { "breatheGain", 50.0f },
-            { "kaleido", 2.0f }, { "rotate", 5.0f }, { "shape", 2.0f },
-            { "trails", 20.0f }, { "palette", 15.0f }, { "sat", 60.0f } } },              // rosetón BLACK GOLD: mandala solemne de 4 espejos girando lento
+        { "Meridian", C::Production, {   // (era Cathedral, 4 espejos — ronda 4: fuera el mandala)
+            { "intensity", 40.0f }, { "chaos", 8.0f }, { "particleSize", 40.0f }, { "glow", 48.0f },
+            { "curlScale", 28.0f }, { "homeStrength", 86.0f }, { "momentum", 26.0f },
+            { "radialGain", 38.0f }, { "jitterGain", 12.0f }, { "breatheGain", 32.0f },
+            { "depth", 34.0f }, { "rotX", -6.0f }, { "orbit", 8.0f },
+            { "palette", 14.0f }, { "colorAmt", 55.0f }, { "density", 68.0f },
+            { "trails", 10.0f }, { "sat", 55.0f } } },                                    // copia de galería: la foto nítida con un GRADE peltre apenas puesto encima
 
         // --- EXPANSION 2 (idx 44-49): las figuras y paletas que faltaban estrenar ---
         { "Wormhole", C::SoundDesign, {
@@ -279,12 +285,12 @@ const std::vector<FactoryPreset>& factoryPresets()
             { "radialGain", 30.0f }, { "jitterGain", 20.0f }, { "breatheGain", 60.0f },
             { "palette", 5.0f }, { "motion", 2.0f }, { "shape", 1.0f },
             { "trails", 20.0f }, { "speed", 38.0f } } },                                  // metal líquido CHROME: gotas de mercurio que ondulan lentas
-        { "Hologram", C::SoundDesign, {
-            { "intensity", 55.0f }, { "chaos", 25.0f }, { "particleSize", 42.0f }, { "glow", 80.0f },
-            { "curlScale", 40.0f }, { "homeStrength", 55.0f }, { "momentum", 55.0f },
-            { "radialGain", 50.0f }, { "jitterGain", 35.0f }, { "breatheGain", 50.0f },
-            { "palette", 6.0f }, { "kaleido", 1.0f }, { "shape", 2.0f }, { "links", 25.0f },
-            { "trails", 30.0f }, { "hueCycle", 6.0f }, { "pump", 45.0f } } },             // VAPORWAVE espejado: proyección rosa/cian que parpadea simétrica
+        { "Vantage", C::Production, {    // (era Hologram, 2 espejos — ronda 4: fuera el mandala)
+            { "intensity", 50.0f }, { "chaos", 16.0f }, { "particleSize", 36.0f }, { "glow", 60.0f },
+            { "curlScale", 34.0f }, { "homeStrength", 58.0f }, { "momentum", 58.0f },
+            { "radialGain", 78.0f }, { "jitterGain", 22.0f }, { "breatheGain", 45.0f },
+            { "cutout", 100.0f }, { "depth", 65.0f }, { "rotX", -12.0f }, { "rotY", -26.0f },
+            { "orbit", 8.0f }, { "pump", 62.0f }, { "density", 78.0f }, { "sat", 58.0f } } },   // tres cuartos: el sujeto recortado se DESPEGA del fondo con el kick (el de tocar en vivo)
         { "Helix", C::Production, {
             { "intensity", 45.0f }, { "chaos", 12.0f }, { "particleSize", 34.0f }, { "glow", 58.0f },
             { "curlScale", 35.0f }, { "homeStrength", 75.0f }, { "momentum", 35.0f },

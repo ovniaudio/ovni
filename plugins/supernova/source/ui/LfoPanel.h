@@ -1,6 +1,7 @@
 #pragma once
-// LfoPanel (Phase B UI) — configures the 4 tempo-synced LFOs, one card per slot:
-//   ON · TARGET · RATE (beat division) · SHAPE (clickable waveform icons) · DEPTH.
+// LfoPanel (Phase B UI) — configures the 4 tempo-synced LFOs, one card per slot, on two lines:
+//   line 1 · ON · TARGET · RATE (beat division) · SHAPE (clickable waveform icons) · DEPTH
+//   line 2 · BI/UNI (polarity) · PHASE · RETRIG (restart the cycle now)
 // Writes the processor's LfoBank (persisted). Shown as an OVERLAY with the Metal view hidden (like the
 // WorldBrowser) → no occlusion. The modulation is already wired to the visual (PluginEditor::lfoModulation):
 // the instant you enable a slot, the chosen param breathes to the beat.
@@ -56,6 +57,7 @@ public:
     std::function<void()> onChange;            // the editor persists (syncLfosToState)
     std::function<void()> onClose;
     std::function<double()> beatPos;           // live beat position (editor: proc.phaseInBeats) → OUTPUT meter
+    std::function<double()> timeSec;           // live seconds clock — the free-running (Hz) LFOs use it
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -67,6 +69,10 @@ private:
         juce::ComboBox   target, rate;
         ShapeStrip       shape;
         juce::Slider     depth;
+        juce::TextButton polarity { "BI" };     // BI (±, around the knob) / UNI (+, from the knob up)
+        juce::Slider     phase;                 // 0..360° → LfoSlot::phaseOffset
+        juce::TextButton retrig { "RETRIG" };   // restart the cycle at the current beat
+        juce::Slider     hz;                    // free rate in Hz — only visible when RATE is "Hz"
     };
     void pushRow (int i);                        // controls of row i → slot i of the bank
     void applyEnabledLook (int i);              // dim the row when the slot is off
@@ -80,6 +86,8 @@ private:
     // Geometry captured in resized() for paint() (card backgrounds + column headers + output meters).
     std::array<juce::Rectangle<int>, LfoBank::kNum> cardRects {};
     std::array<juce::Rectangle<int>, LfoBank::kNum> meterRects {};   // live OUTPUT bar per card
+    std::array<juce::Rectangle<int>, LfoBank::kNum> titleRects {};   // "LFO n" (line 1 of the left cell)
+    std::array<juce::Rectangle<int>, LfoBank::kNum> phaseCapRects {};// "PHASE" caption (line 2)
     juce::Rectangle<int> contentArea, targetHead, rateHead, shapeHead, depthHead;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LfoPanel)

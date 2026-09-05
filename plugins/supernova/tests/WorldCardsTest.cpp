@@ -37,7 +37,7 @@ double cardDiff (const juce::Image& a, const juce::Image& b)
 TEST_CASE ("cards: firmas procedurales no-negras, deterministas y distintas entre mundos", "[supernova][cards]")
 {
     const auto& presets = ovni::presets::factoryPresets();
-    REQUIRE (presets.size() >= 44);   // 36 + EXPANSION (Deep Field..Cathedral)
+    REQUIRE (presets.size() >= 44);   // 50 mundos hoy (la ronda 4 sacó los 4 KALEIDO y sumó SATELLITE)
 
     constexpr int W = 256, H = 132;
     std::vector<juce::Image> cards;

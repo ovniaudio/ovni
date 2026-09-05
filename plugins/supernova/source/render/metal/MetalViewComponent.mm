@@ -56,7 +56,7 @@ void MetalViewComponent::setFullscreen (bool on)
 
     // onClose (Esc / cerrar) no puede destruir la ventana desde su propio callback → diferir al msg thread.
     juce::Component::SafePointer<MetalViewComponent> safe (this);
-    fsWindow = std::make_unique<FullscreenOutputWindow> (*renderer, area, [safe]
+    fsWindow = std::make_unique<FullscreenOutputWindow> (*renderer, area, canvasAspectV, [safe]
     {
         juce::MessageManager::callAsync ([safe]
         {
@@ -67,6 +67,12 @@ void MetalViewComponent::setFullscreen (bool on)
     });
 }
 
+void MetalViewComponent::setCanvasAspect (float aspect)
+{
+    canvasAspectV = aspect > 0.0f ? aspect : 0.0f;
+    if (fsWindow != nullptr) fsWindow->setCanvasAspect (canvasAspectV);   // en vivo, si la salida está abierta
+}
+
 void MetalViewComponent::tick (double timestampSec)
 {
     if (renderer == nullptr || ! renderer->isAvailable())
@@ -74,6 +80,10 @@ void MetalViewComponent::tick (double timestampSec)
 
     const double dt = (lastTs > 0.0) ? juce::jlimit (0.0, 0.1, timestampSec - lastTs) : (1.0 / 60.0);
     lastTs = timestampSec;
+
+    // Params del cuadro: el editor re-evalúa acá los LFO con la fase del momento (ver onFrameTick). Va ANTES
+    // de leer `params` para que este cuadro dibuje la modulación de ESTE cuadro, no la del tick anterior.
+    if (onFrameTick) onFrameTick();
 
     // Imagen pendiente (drag&drop): subir en el borde de frame, serializado con render(). La máscara del
     // sujeto SIEMPRE viaja (si existe); el knob CUTOUT decide en vivo cuánto fondo borrar (uniform).
@@ -92,6 +102,7 @@ void MetalViewComponent::tick (double timestampSec)
         if (ev.type == MidiTriggerType::Explosion)           eff.explode = 1.0f;
         else if (ev.type == MidiTriggerType::DirectionalRay) { eff.rayTrigger = true; eff.rayAngle = ev.angle; }
     }
+    if (burstPending) { eff.explode = 1.0f; burstPending = false; }   // BURST: la foto vieja estalla y se re-arma
 
     // Último frame de análisis publicado por el AnalysisThread (o cero si no hay fuente/audio).
     lastAnalysis = (analysisSrc != nullptr) ? analysisSrc->read() : AnalysisFrame {};

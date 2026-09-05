@@ -1,6 +1,7 @@
 #include "ui/TopBar.h"
 #include "params/ParameterIDs.h"
 #include "video/ExportPreset.h"
+#include "image/CanvasFormat.h"
 #include "ui/theme.h"          // look::hue (fuego SUPERNOVA)
 #include "ui-kit/Theme.h"      // ovni::ui::theme (paleta del sello)
 #include "ui-kit/Fonts.h"      // ovni::ui::fonts (ClashGrotesk/GeneralSans/JetBrainsMono)
@@ -147,6 +148,14 @@ TopBar::TopBar (SupernovaEditor& ed, SupernovaProcessor& p)
     rotateBtn.onClick = [this] { editor.rotateMedia(); };
     rotateBtn.setEnabled (false);
 
+    // MEDIA SESSION PRO: ▦ = la tira de miniaturas (toggle) · FORMAT = formato del lienzo (chip → menú).
+    styleToggle (mediaBtn, "Show / hide the MEDIA strip: your photos and videos, in order. Click a tile to cue it, "
+                           "drag to reorder, right-click for more.");
+    mediaBtn.onClick = [this] { editor.setMediaStripVisible (mediaBtn.getToggleState()); };
+    styleAction (formatBtn, "Canvas format. AUTO follows your first photo (vertical = 9:16 for Reels), or pick "
+                            "16:9 / 9:16 / 1:1 / 4:5 / 4:3. Also FIT (letterbox) or FILL (crop).");
+    formatBtn.onClick = [this] { showFormatMenu(); };
+
     // EXPORT (Phase C): a video MP4 — menú de formatos (1080p / 4K / 1:1 / 9:16 vertical). Renderiza el look
     // actual con el audio reciente a un archivo en ~/Movies/SUPERNOVA.
     styleAction (exportBtn, "Export the current look to a video (MP4): 1080p, 4K, square 1:1, or vertical 9:16");
@@ -174,16 +183,14 @@ TopBar::TopBar (SupernovaEditor& ed, SupernovaProcessor& p)
     presetLabel.setTooltip ("Active world (preset)");
     addAndMakeVisible (presetLabel);
 
-    seqLabel.setJustificationType (juce::Justification::centredRight);
-    seqLabel.setColour (juce::Label::textColourId, theme::mut);
-    seqLabel.setFont (fonts::mono (11.0f));
-    seqLabel.setTooltip ("PHOTO SEQUENCE - seconds per photo (use - / +; load 2+ photos to build it)");
-    addAndMakeVisible (seqLabel);
-    styleAction (seqMinusBtn, "Fewer seconds per photo");
-    styleAction (seqPlusBtn,  "More seconds per photo");
+    styleAction (seqBtn, "SEQUENCE: click for the clock (seconds / beats / kick), the order (loop / shuffle) "
+                         "and the transition (cut / burst). Load 2+ photos to build a sequence.");
+    seqBtn.onClick = [this] { showSeqMenu(); };
+    styleAction (seqMinusBtn, "Faster: fewer seconds / beats / less gap per photo");
+    styleAction (seqPlusBtn,  "Slower: more seconds / beats / more gap per photo");
     styleAction (seqPlayBtn,  "Play / pause the sequence (Space)");
-    seqMinusBtn.onClick = [this] { stepSeqSeconds (-1.0); };
-    seqPlusBtn.onClick  = [this] { stepSeqSeconds (+1.0); };
+    seqMinusBtn.onClick = [this] { editor.stepSequenceRate (-1); refreshSeqAndPreset(); };
+    seqPlusBtn.onClick  = [this] { editor.stepSequenceRate (+1); refreshSeqAndPreset(); };
     seqPlayBtn.onClick  = [this] { editor.toggleSequencePlayback(); };
 
     refreshSeqAndPreset();
@@ -237,10 +244,14 @@ void TopBar::showExportMenu()
     if (editor.isExporting()) return;
 
     // Duración seleccionable. Si hay una secuencia de fotos activa, ofrecemos "Full photo loop" = todas las
-    // fotos × segundos c/u (el export las CICLA). id = formato*10000 + segundos.
+    // fotos × lo que dura cada una CON EL RELOJ ACTIVO (el export las cicla con ese mismo reloj): en BEATS,
+    // un compás a BPM del host; en KICK no hay período previsible (depende de la música), así que se ofrece
+    // la estimación por segundos, que es la que el export usa cuando no hay onsets grabados.
     auto& seq = proc.photoSequence();
-    const bool haveSeq  = seq.active();
-    const int  loopSecs = haveSeq ? juce::jlimit (2, 600, (int) std::ceil (seq.size() * seq.intervalSeconds())) : 0;
+    const bool   haveSeq   = seq.active();
+    const double perPhotoS = seq.clock() == SeqClock::Beats ? secondsPerPhotoBeats (seq.intervalBeats(), proc.tempoBpm())
+                                                            : seq.intervalSeconds();
+    const int    loopSecs  = haveSeq ? juce::jlimit (2, 600, (int) std::ceil (seq.size() * perPhotoS)) : 0;
 
     const char* const fmtNames[] = { "1080p (16:9)", "4K (16:9)", "Square (1:1)", "Vertical 9:16 (Reels/TikTok)" };
     const int durs[] = { 8, 15, 30, 60, 120 };
@@ -250,20 +261,30 @@ void TopBar::showExportMenu()
     // Sonido: muxea los últimos ~12s de audio VIVO (el mismo que ves reaccionar), loopeados en sync.
     m.addItem (90001, "With sound (loops the last 12s you heard)", true, exportWithSound);
     m.addSeparator();
-    for (int fi = 0; fi < 4; ++fi)
+    // MEDIA SESSION PRO: el formato que COINCIDE con el lienzo va primero, marcado "canvas" (9:16 para una
+    // sesión vertical, 1:1 cuadrada, 1080p el resto). Los 4 siguen disponibles.
+    const int pref = (int) defaultExportFormat (editor.canvasAspect());
+    int order[4] = { pref, -1, -1, -1 };
+    for (int fi = 0, k = 1; fi < 4; ++fi) if (fi != pref) order[k++] = fi;
+    for (int k = 0; k < 4; ++k)
     {
+        const int fi = order[k];
         juce::PopupMenu sub;
         for (int d : durs) sub.addItem (fi * 10000 + d, juce::String (d) + "s");
         if (haveSeq) sub.addItem (fi * 10000 + loopSecs, "Full photo loop (" + juce::String (loopSecs) + "s)");
         sub.addItem (fi * 10000 + 9999, juce::String::fromUTF8 ("Custom\xE2\x80\xA6"));   // duración libre
-        m.addSubMenu (fmtNames[fi], sub);
+        m.addSubMenu (juce::String (fmtNames[fi]) + (fi == pref ? juce::String::fromUTF8 ("  \xC2\xB7 canvas") : juce::String()), sub);
     }
 
+    // SafePointer (review): el menú es asíncrono de verdad — el host puede destruir el editor (y la barra)
+    // con el menú abierto; el callback no debe tocar un `this` muerto.
+    juce::Component::SafePointer<TopBar> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (exportBtn),
-                     [this] (int r)
+                     [safe] (int r)
     {
-        if (r == 0) return;
-        if (r == 90001) { exportWithSound = ! exportWithSound; showExportMenu(); return; }   // toggle + re-abrir
+        if (safe == nullptr || r == 0) return;
+        auto* self = safe.getComponent();
+        if (r == 90001) { self->exportWithSound = ! self->exportWithSound; self->showExportMenu(); return; }   // toggle + re-abrir
         const int fi   = r / 10000;
         const int code = r % 10000;
         const ExportFormat fmt = (ExportFormat) juce::jlimit (0, 3, fi);
@@ -274,22 +295,24 @@ void TopBar::showExportMenu()
             aw->addTextEditor ("secs", "45");
             aw->addButton ("Export", 1, juce::KeyPress (juce::KeyPress::returnKey));
             aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-            aw->enterModalState (true, juce::ModalCallbackFunction::create ([this, fmt, aw] (int res)
+            aw->enterModalState (true, juce::ModalCallbackFunction::create ([safe, fmt, aw] (int res)
             {
+                if (safe == nullptr) return;
+                auto* me = safe.getComponent();
                 const int s = juce::jlimit (1, 600, aw->getTextEditorContents ("secs").getIntValue());
-                if (res == 1 && ! editor.isExporting())
+                if (res == 1 && ! me->editor.isExporting())
                 {
-                    exportBtn.setButtonText ("...");
-                    exportBtn.setEnabled (false);
-                    editor.exportVideo (fmt, s, 60, exportWithSound);
+                    me->exportBtn.setButtonText ("...");
+                    me->exportBtn.setEnabled (false);
+                    me->editor.exportVideo (fmt, s, 60, me->exportWithSound);
                 }
             }), true);   // deleteWhenDismissed
             return;
         }
         const int secs = juce::jlimit (1, 600, code);
-        exportBtn.setButtonText ("...");
-        exportBtn.setEnabled (false);
-        editor.exportVideo (fmt, secs, 60, exportWithSound);
+        self->exportBtn.setButtonText ("...");
+        self->exportBtn.setEnabled (false);
+        self->editor.exportVideo (fmt, secs, 60, self->exportWithSound);
     });
 }
 
@@ -324,12 +347,14 @@ void TopBar::showPresetsMenu()
         m.addItem (-1, "No saved presets yet", false, false);   // ítem informativo deshabilitado
     }
 
+    juce::Component::SafePointer<TopBar> safe (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetsBtn),
-                     [this] (int r)
+                     [safe] (int r)
     {
-        if (r <= 0) return;
-        auto& pmm = proc.presets();
-        if (r == 1) { savePresetDialog(); return; }
+        if (safe == nullptr || r <= 0) return;
+        auto* self = safe.getComponent();
+        auto& pmm = self->proc.presets();
+        if (r == 1) { self->savePresetDialog(); return; }
 
         const auto us = pmm.userPresets();
         if (r >= 2000)
@@ -342,7 +367,7 @@ void TopBar::showPresetsMenu()
             const int idx = r - 1000;
             if (idx >= 0 && idx < us.size())
             {
-                editor.captureUndoState();          // aplicar un preset es reversible (Cmd/Ctrl+Z)
+                self->editor.captureUndoState();    // aplicar un preset es reversible (Cmd/Ctrl+Z)
                 pmm.applyUserFile (us[idx]);
             }
         }
@@ -358,23 +383,99 @@ void TopBar::savePresetDialog()
     w->addTextEditor ("name", "My Preset");
     w->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
     w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<TopBar> safe (this);
     w->enterModalState (true, juce::ModalCallbackFunction::create (
-        [this, w] (int res)
+        [safe, w] (int res)
         {
+            if (safe == nullptr) return;
             if (res == 1)
             {
                 const auto nm = w->getTextEditorContents ("name").trim();
-                if (nm.isNotEmpty()) proc.presets().saveUser (nm);
+                if (nm.isNotEmpty()) safe->proc.presets().saveUser (nm);
             }
         }), true);   // deleteWhenDismissed
 }
 
-void TopBar::stepSeqSeconds (double delta)
+// FORMAT (MEDIA SESSION PRO): formato del lienzo + cómo entra la imagen (FIT / FILL).
+void TopBar::showFormatMenu()
+{
+    const auto cur = editor.canvasFormat();
+    const char* const labels[] = {
+        "AUTO - follows your first photo (vertical = 9:16)",
+        "FREE - fill the window",
+        "16:9 - landscape / YouTube",
+        "9:16 - vertical / Reels, TikTok, Shorts",
+        "1:1 - square / feed",
+        "4:5 - portrait / Instagram",
+        "4:3 - classic",
+    };
+    juce::PopupMenu m;
+    m.addSectionHeader ("Canvas format");
+    for (int i = 0; i < (int) CanvasFormat::Count; ++i)
+        m.addItem (100 + i, labels[i], true, (int) cur == i);
+    if (cur == CanvasFormat::Auto)
+        m.addItem (-1, juce::String ("   now: ") + aspectLabel (editor.canvasAspect()), false, false);
+    m.addSeparator();
+    m.addSectionHeader ("Image in the canvas");
+    m.addItem (201, "FIT - whole image, letterboxed", true, editor.fitMode() == FitMode::Fit);
+    m.addItem (202, "FILL - crop to fill the canvas", true, editor.fitMode() == FitMode::Fill);
+
+    juce::Component::SafePointer<TopBar> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (formatBtn), [safe] (int r)
+    {
+        if (safe == nullptr) return;
+        auto& ed = safe->editor;
+        if (r >= 100 && r < 100 + (int) CanvasFormat::Count) ed.setCanvasFormat (canvasFormatFromInt (r - 100));
+        else if (r == 201) ed.setFitMode (FitMode::Fit);
+        else if (r == 202) ed.setFitMode (FitMode::Fill);
+    });
+}
+
+// SEQ (MEDIA SESSION PRO): reloj / orden / transición de la secuencia.
+void TopBar::showSeqMenu()
 {
     auto& seq = proc.photoSequence();
-    seq.setIntervalSeconds (seq.intervalSeconds() + delta);
-    proc.syncSequenceToState();
-    refreshSeqAndPreset();
+    juce::PopupMenu m;
+    m.addSectionHeader ("Sequence clock");
+    m.addItem (301, "Seconds - every N seconds (- / +)",                     true, seq.clock() == SeqClock::Seconds);
+    m.addItem (302, "Beats - every N beats of the tempo (host BPM / TAP)",   true, seq.clock() == SeqClock::Beats);
+    m.addItem (303, "Kick - on every kick, with a minimum gap (- / +)",     true, seq.clock() == SeqClock::Kick);
+    m.addSeparator();
+    m.addSectionHeader ("Order");
+    m.addItem (311, "Loop - in order",                                       true, seq.orderMode() == SeqOrder::Loop);
+    m.addItem (312, "Shuffle - random, never the same twice",                true, seq.orderMode() == SeqOrder::Shuffle);
+    m.addSeparator();
+    m.addSectionHeader ("Transition");
+    m.addItem (321, "Cut - the particles travel to the new photo",           true, ! seq.burst());
+    m.addItem (322, "Burst - explode, then re-form as the new photo",        true, seq.burst());
+    m.addSeparator();
+    m.addSectionHeader ("MIDI cue (notes 72-87 = tiles, 88/89/90 = next/prev/random)");
+    m.addItem (341, "MIDI cue: on the bar - same as the strip",  true, ! editor.midiCueImmediate());
+    m.addItem (342, "MIDI cue: now - cut on the note",           true, editor.midiCueImmediate());
+    m.addSeparator();
+    m.addItem (331, "Show media strip", true, editor.isMediaStripVisible());
+
+    juce::Component::SafePointer<TopBar> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (seqBtn), [safe] (int r)
+    {
+        if (safe == nullptr) return;
+        auto& ed = safe->editor;
+        switch (r)
+        {
+            case 301: ed.setSequenceClock (SeqClock::Seconds); break;
+            case 302: ed.setSequenceClock (SeqClock::Beats);   break;
+            case 303: ed.setSequenceClock (SeqClock::Kick);    break;
+            case 311: ed.setSequenceOrder (SeqOrder::Loop);    break;
+            case 312: ed.setSequenceOrder (SeqOrder::Shuffle); break;
+            case 321: ed.setSequenceBurst (false);             break;
+            case 322: ed.setSequenceBurst (true);              break;
+            case 331: ed.setMediaStripVisible (! ed.isMediaStripVisible()); break;
+            case 341: ed.setMidiCueNow (false);                break;
+            case 342: ed.setMidiCueNow (true);                 break;
+            default: return;
+        }
+        safe->refreshSeqAndPreset();
+    });
 }
 
 void TopBar::refreshSeqAndPreset()
@@ -384,17 +485,29 @@ void TopBar::refreshSeqAndPreset()
 
     auto& seq = proc.photoSequence();
     const bool on = seq.active();
-    seqLabel.setAlpha    (on ? 1.0f : 0.55f);
+    seqBtn.setAlpha      (on ? 1.0f : 0.55f);
     seqMinusBtn.setAlpha (on ? 1.0f : 0.55f);
     seqPlusBtn.setAlpha  (on ? 1.0f : 0.55f);
     seqPlayBtn.setEnabled (on);
+
+    auto num = [] (double v, int decimals)   // "8" · "0.25" · "1.5" (sin ceros muertos)
+    {
+        juce::String s (v, decimals);
+        if (s.containsChar ('.')) s = s.trimCharactersAtEnd ("0").trimCharactersAtEnd (".");
+        return s;
+    };
+    juce::String rate;
+    switch (seq.clock())
+    {
+        case SeqClock::Seconds: rate = num (seq.intervalSeconds(), 0) + "s"; break;
+        case SeqClock::Beats:   rate = num (seq.intervalBeats(), 0) + (seq.intervalBeats() == 1.0 ? " beat" : " beats"); break;
+        case SeqClock::Kick:    rate = "KICK " + juce::String::fromUTF8 ("\xE2\x89\xA5") + num (seq.kickGapSeconds(), 2) + "s"; break;
+    }
+    const juce::String dot = juce::String::fromUTF8 (" \xC2\xB7 ");
     if (on)
-        seqLabel.setText ("SEQ " + juce::String (seq.currentIndex() + 1) + "/" + juce::String (seq.size())
-                              + juce::String::fromUTF8 (" \xC2\xB7 ") + juce::String (seq.intervalSeconds(), 0) + "s",
-                          juce::dontSendNotification);
+        seqBtn.setButtonText ("SEQ " + juce::String (seq.currentIndex() + 1) + "/" + juce::String (seq.size()) + dot + rate);
     else
-        seqLabel.setText ("SEQ " + juce::String::fromUTF8 ("\xC2\xB7 ") + juce::String (seq.intervalSeconds(), 0)
-                              + "s/img", juce::dontSendNotification);
+        seqBtn.setButtonText ("SEQ" + dot + rate + (seq.clock() == SeqClock::Seconds ? "/img" : ""));
     seqPlayBtn.setButtonText (juce::String::fromUTF8 (seq.playing() ? "\xE2\x8F\xB8" : "\xE2\x96\xB8"));
 }
 
@@ -411,6 +524,9 @@ void TopBar::timerCallback()
     fullscreenBtn.setToggleState (editor.isFullscreen(), juce::dontSendNotification);
     syphonBtn.setToggleState (editor.isSyphonActive(),   juce::dontSendNotification);
     rotateBtn.setEnabled (editor.mediaRotatable());
+    mediaBtn.setToggleState (editor.isMediaStripVisible(), juce::dontSendNotification);
+    const auto chip = editor.canvasChipText();
+    if (formatBtn.getButtonText() != chip) formatBtn.setButtonText (chip);
 
     refreshSeqAndPreset();
 }
@@ -452,7 +568,7 @@ void TopBar::layoutRow1 (juce::Rectangle<int> row1)
     gain.setBounds (row1);
 }
 
-// Fila 2 (idéntica app/plugin): [CLEAR LOAD ⟳ EXPORT LFO PRESETS] … [◂ mundo ▸ ⊞ centrado] … [SEQ − + ▸]
+// Fila 2 (idéntica app/plugin): [CLEAR LOAD ⟳ ▦ EXPORT FORMAT LFO PRESETS] … [◂ mundo ▸ ⊞ centrado] … [SEQ − + ▸]
 void TopBar::layoutRow2 (juce::Rectangle<int> row2)
 {
     clearBtn.setBounds  (row2.removeFromLeft (58));
@@ -461,7 +577,11 @@ void TopBar::layoutRow2 (juce::Rectangle<int> row2)
     row2.removeFromLeft (6);
     rotateBtn.setBounds (row2.removeFromLeft (30));
     row2.removeFromLeft (6);
+    mediaBtn.setBounds  (row2.removeFromLeft (30));    // ▦ tira de media
+    row2.removeFromLeft (6);
     exportBtn.setBounds (row2.removeFromLeft (64));
+    row2.removeFromLeft (6);
+    formatBtn.setBounds (row2.removeFromLeft (76));    // chip del lienzo: "AUTO 9:16"
     row2.removeFromLeft (6);
     lfoBtn.setBounds    (row2.removeFromLeft (42));
     row2.removeFromLeft (6);
@@ -473,7 +593,7 @@ void TopBar::layoutRow2 (juce::Rectangle<int> row2)
     row2.removeFromRight (2);
     seqMinusBtn.setBounds (row2.removeFromRight (26));
     row2.removeFromRight (6);
-    seqLabel.setBounds    (row2.removeFromRight (100));
+    seqBtn.setBounds      (row2.removeFromRight (118));
 
     // Cluster de mundo CENTRADO como unidad fija: ◂ [nombre] ▸ ⊞.
     auto centre = row2.withSizeKeepingCentre (juce::jmin (276, row2.getWidth()), row2.getHeight());

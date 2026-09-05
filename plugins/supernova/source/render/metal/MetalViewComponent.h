@@ -51,10 +51,24 @@ public:
     void updateColors (const uint8_t* rgba, int w, int h) noexcept
     { if (renderer != nullptr) renderer->updateColors (rgba, w, h); }
 
+    // MEDIA SESSION PRO — aspecto del LIENZO (0 = libre): la ventana de salida fullscreen lo letterboxea igual que
+    // el editor; FIT/FILL del renderer; BURST = una explosión disparada por la secuencia al cambiar de foto (flag
+    // del message thread consumido en tick(), sin tocar la cola SPSC del MIDI).
+    void  setCanvasAspect (float aspect);
+    float canvasAspect() const noexcept { return canvasAspectV; }
+    void  setFitMode (int mode) noexcept { fitModeV = mode; if (renderer != nullptr) renderer->setFitMode (mode); }
+    int   fitMode() const noexcept      { return fitModeV; }
+    void  triggerBurst() noexcept       { burstPending = true; }
+
     // Fullscreen a monitor (RF7): SOLO el visual en una pantalla dedicada (Esc vuelve). Auto-elige la secundaria.
     void setFullscreen (bool on);
     bool isFullscreen() const noexcept { return fsWindow != nullptr; }
     std::function<void()> onFullscreenClosed;   // el editor lo engancha para sincronizar el botón
+
+    // Hook de CUADRO (VBlank, message thread): se dispara al principio de cada tick, ANTES de render(). El
+    // editor lo usa para re-evaluar los LFO con la fase del momento — a 60/120 Hz en vez de a los 30 Hz del
+    // timer, que escalonaba la modulación (informe 24 · M3/M4). No toca los shaders.
+    std::function<void()> onFrameTick;
 
     MetalRenderer* getRenderer() noexcept { return renderer.get(); }   // para prepare()/uploadImage()
 
@@ -70,6 +84,10 @@ private:
     AnalysisFrame lastAnalysis {};
     std::shared_ptr<const LoadedImage> pendingImage;   // set en msg thread, aplicado en tick() (msg thread)
     std::unique_ptr<FullscreenOutputWindow> fsWindow;   // ventana de salida fullscreen (2º present target)
+
+    float  canvasAspectV = 0.0f;   // 0 = libre (llena el target)
+    int    fitModeV      = 0;      // 0 = FIT · 1 = FILL
+    bool   burstPending  = false;  // BURST de la secuencia: explota en el próximo tick
 
     double lastTs = 0.0;
     std::atomic<float> fps { 0.0f };

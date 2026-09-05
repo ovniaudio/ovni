@@ -40,7 +40,14 @@ public:
 
     void setFullscreen (bool on) noexcept;
     bool isFullscreen() const noexcept;
+
+    // MEDIA SESSION PRO: aspecto del lienzo (→ salida fullscreen), FIT/FILL y BURST (ver MetalViewComponent).
+    void  setCanvasAspect (float aspect) noexcept;
+    void  setFitMode (int mode) noexcept;
+    void  triggerBurst() noexcept;
     void setOnFullscreenClosed (std::function<void()> cb) noexcept;   // sincroniza el botón cuando Esc cierra
+    // Hook de CUADRO del render (VBlank): el editor recalcula la modulación de los LFO por cuadro.
+    void setOnRenderFrame (std::function<void()> cb) noexcept;
 
 
     void resized() override;

@@ -40,6 +40,12 @@ public:
     // acumulado del mundo (giro/deriva/órbita/pulsos) → el lienzo aparece en el PRIMER frame, sin viaje.
     void snapToHome();
 
+    // FIT / FILL (MEDIA SESSION PRO): cómo entra la imagen en cada target. 0 = FIT/contain (letterbox, el de
+    // siempre) · 1 = FILL/cover (la imagen LLENA el target, recortada). Sólo cambia el cálculo CPU de fitX/fitY
+    // por target; con imagen y target del mismo aspecto (los goldens) ambos dan 1,1 → byte-exacto.
+    void setFitMode (int mode);
+    int  fitMode() const;
+
     // VIDEO (spec §C): camino RÁPIDO — reescribe SOLO el buffer de colores (muestreo por celda + sRGB→lineal)
     // sin re-analizar geometría. La primera imagen del video se sube con uploadImage (fija flow/máscara);
     // los frames siguientes solo recolorean el lattice → la pantalla LED reproduce el video.

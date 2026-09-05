@@ -2,6 +2,7 @@
 #include "PluginProcessor.h"
 #include "ui/TopBar.h"
 #include "params/ParamMapping.h"
+#include "tempo/LfoModulation.h"
 #include "params/ParameterIDs.h"
 #include "presets/CanvasState.h"
 #include "presets/PresetTarget.h"
@@ -43,36 +44,42 @@ constexpr int kStripH = ControlStrip::kHeight;   // franja de controles (2 filas
 constexpr int kDefaultW = 1100, kDefaultH = 760;
 constexpr int kMinW = 720, kMinH = 480;          // los mismos mínimos que la ventana de la app
 
-// Decode + saliencia + máscara del sujeto en hilo de fondo (RNF4: Vision JAMÁS en el message thread);
-// onDone llega en el MESSAGE THREAD (callAsync). Compartido por la carga simple (RF1) y el prefetch
-// de la PHOTO SEQUENCE (spec §D).
-void decodeImageAsync (const juce::File& chosen, int quarterTurns,
-                       std::function<void (std::shared_ptr<const LoadedImage>)> onDone)
-{
-    juce::Thread::launch ([chosen, quarterTurns, onDone = std::move (onDone)]
-    {
-        auto img = ImageLoader::fromFile (chosen);          // ya endereza por EXIF
-        if (img.valid() && quarterTurns != 0)
-            ImageLoader::rotate90 (img, quarterTurns);       // rotación manual del usuario (antes de saliencia)
-        if (img.valid())
-        {
-            img.saliency = visionSaliency (img.rgba.data(), img.width, img.height,
-                                           kParticleGrid, kParticleGrid);
-            // Máscara del sujeto para el CUTOUT — cascada: (1) FONDO PLANO por color (logos/gráficos:
-            // la IA fotográfica los confunde; el chroma-key los recorta perfecto) → (2) Vision
-            // (Quitar-fondo 14+ / personas 12+) → (3) saliencia (universal).
-            img.subjectMask = ImageField::maskFromFlatBackground (img.rgba.data(), img.width, img.height,
-                                                                  kParticleGrid, kParticleGrid);
-            if (img.subjectMask.empty())
-                img.subjectMask = visionSubjectMask (img.rgba.data(), img.width, img.height,
-                                                     kParticleGrid, kParticleGrid);
-            if (img.subjectMask.empty() && ! img.saliency.empty())
-                img.subjectMask = ImageField::maskFromSaliency (img.saliency, kParticleGrid, kParticleGrid);
-        }
-        auto loaded = std::make_shared<const LoadedImage> (std::move (img));
-        juce::MessageManager::callAsync ([onDone, loaded] { onDone (loaded); });
-    });
 }
+
+// Decode + saliencia + máscara del sujeto en hilo de fondo (RNF4: Vision JAMÁS en el message thread);
+// onDone llega SIEMPRE en el MESSAGE THREAD (callAsync), venga del disco o del caché. Compartido por la
+// carga simple (RF1) y el prefetch de la PHOTO SEQUENCE (spec §D).
+//
+// RONDA 4 · R1 — girar es INSTANTÁNEO. Antes, cada cuarto de vuelta del ⟳ volvía a leer el archivo, a
+// decodificarlo entero y a correr las DOS pasadas de Vision, aunque girar 90° no cambia ni un byte del
+// archivo ni el contenido de la foto: con 12 MP eran cientos de ms por toque (el "tarda en ponerse en el
+// preview"). Ahora se decodifica SIEMPRE la BASE (rotación 0), se cachea por path (DecodedImageCache,
+// acotado por MB con LRU) y cualquier rotación se deriva de ella permutando píxeles y las dos grillas.
+// Eso además hace coherentes los dos caminos a la misma foto girada — reabrir un proyecto guardado así, o
+// girarla a mano — porque los dos son ahora la misma operación sobre la misma base.
+//
+// El giro NO va en el message thread: son ~24 ms de min con 12 MP, pero cientos con la máquina ocupada.
+// Va en el mismo hilo de fondo que el decode, con el mismo SafePointer.
+void SupernovaEditor::decodeImageAsync (const juce::File& chosen, int quarterTurns,
+                                        std::function<void (std::shared_ptr<const LoadedImage>)> onDone)
+{
+    auto cached = imageCache.get (chosen);   // el caché es del editor: sólo el message thread lo toca
+    juce::Component::SafePointer<SupernovaEditor> safe (this);
+    juce::Thread::launch ([chosen, quarterTurns, safe, cached, onDone = std::move (onDone)]
+    {
+        auto base = cached;
+        const bool fresh = (base == nullptr);
+        if (fresh) base = std::make_shared<const LoadedImage> (decodeBaseImage (chosen));
+        // Sin rotación no hay nada que permutar: se entrega la MISMA base (sin copiar 48 MB).
+        auto shown = (! base->valid() || (quarterTurns % 4 + 4) % 4 == 0)
+                       ? base
+                       : std::make_shared<const LoadedImage> (rotatedCopy (*base, quarterTurns));
+        juce::MessageManager::callAsync ([safe, chosen, fresh, base, shown, onDone]
+        {
+            if (fresh && safe != nullptr && base->valid()) safe->imageCache.put (chosen, base);
+            onDone (shown);
+        });
+    });
 }
 
 SupernovaEditor::SupernovaEditor (SupernovaProcessor& p)
@@ -112,14 +119,41 @@ SupernovaEditor::SupernovaEditor (SupernovaProcessor& p)
     lfoPanel.onChange = [this] { proc.syncLfosToState(); };
     lfoPanel.onClose  = [this] { toggleLfoPanel(); };
     lfoPanel.beatPos  = [this] { return proc.phaseInBeats(); };   // medidor de salida EN VIVO del panel
+    lfoPanel.timeSec  = [this] { return proc.timeInSeconds(); };  // …y el reloj de los LFO en modo libre
+
+    // MEDIA STRIP (MEDIA SESSION PRO): la tira de miniaturas de la sesión, entre el visual y los knobs.
+    addToCanvas (mediaStrip);
+    mediaStrip.setVisible (false);
+    mediaStrip.thumbSource = [this] (const MediaStrip::Item& it) -> juce::Image
+    {
+        auto t = thumbs.get (it.path, it.rot, it.isVideo);
+        return t != nullptr ? t->image : juce::Image();
+    };
+    thumbs.onThumbReady    = [this] { mediaStrip.repaint(); resolveCanvas(); };
+    mediaStrip.onPick        = [this] (int i, bool now) { cueMedia (i, now); };
+    mediaStrip.onRemove      = [this] (int i) { removeMediaAt (i); };
+    mediaStrip.onRotate      = [this] (int i) { rotateMediaAt (i); };
+    mediaStrip.onMoveToStart = [this] (int i) { moveMedia (i, 0); };
+    mediaStrip.onMove        = [this] (int f, int t) { moveMedia (f, t); };
+    mediaStrip.onAdd         = [this] { chooseImage(); };
+    mediaStrip.onClearAll    = [this] { clearMedia(); };
+    mediaStrip.onReveal      = [this] (int i)
+    {
+        if (auto* it = mediaStrip.itemAt (i)) juce::File (it->path).revealToUser();
+    };
+    mediaStrip.onInsertFiles  = [this] (const juce::StringArray& f, int at) { insertMedia (f, at); };
+    mediaStrip.onRelink       = [this] (int i) { chooseRelink (i); };         // media faltante (ronda 3)
+    mediaStrip.onRelinkFolder = [this] (int i) { chooseRelinkFolder (i); };
 
     // LA BARRA — la misma TopBar pro de la app (EXPORT/LFO/PRESETS/mundos/SEQ/medidor/gain). En app-mode
     // la app la esconde (setChromeVisible(false)) y monta su AppTopBar (derivada) fuera del editor.
     topBar = std::make_unique<TopBar> (*this, p);
     addToCanvas (*topBar);
 
+    hydrateMediaSettings();      // formato de lienzo / FIT-FILL / ▦ / aspecto conocido (antes del primer layout)
     hydrateSequence();
     hydratePerformanceState();   // Phase B: mapeos MIDI/LFOs/escenas desde el state (message thread)
+    refreshMediaStrip();
 
     setWantsKeyboardFocus (true);   // Tab (inmersivo) / F (fullscreen) / Space (secuencia)
 
@@ -145,15 +179,22 @@ SupernovaEditor::SupernovaEditor (SupernovaProcessor& p)
 
     // Estado inicial del morph: sin animación espuria en el primer tick (arranca en los valores en vivo).
     lastTickMs    = juce::Time::getMillisecondCounterHiRes();
-    lastPresetIdx = (int) proc.apvts.getRawParameterValue (pid::PRESET)->load();
-    morph.syncTo (snapshotFromApvts (proc.apvts));
+    lastPresetIdx  = (int) proc.apvts.getRawParameterValue (pid::PRESET)->load();
+    morphPresetIdx = lastPresetIdx;
+    morphState     = snapshotFromApvts (proc.apvts);
+    morph.syncTo (morphState);
 
-    startTimerHz (30);
+    // Los LFO se re-evalúan en el CUADRO del render (VBlank, 60/120 Hz), no en el timer de 30 Hz: a 30 Hz un
+    // seno a 2 Hz salta 21 % del rango entre muestras y el render dibuja ese escalón 2-4 veces (informe 24).
+    view.setOnRenderFrame ([this] { renderFrameTick(); });
+
+    startTimerHz (kAnalysisRingHz);   // = la tasa del anillo de análisis que consume el export
 }
 
 SupernovaEditor::~SupernovaEditor()
 {
     stopTimer();
+    view.setOnRenderFrame (nullptr);                    // higiene: soltar el callback del VBlank
     thumbCancel.store (true);
     exportCancel.store (true);                          // corta el loop de export → el join no congela la UI
     if (thumbThread.joinable()) thumbThread.join();     // no dejar el hilo de thumbnails colgando (Phase C)
@@ -163,7 +204,8 @@ SupernovaEditor::~SupernovaEditor()
 bool SupernovaEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (const auto& f : files)
-        if (ImageLoader::looksLikeImage (juce::File (f)) || VideoSource::looksLikeVideo (juce::File (f)))
+        if (ImageLoader::looksLikeImage (juce::File (f)) || VideoSource::looksLikeVideo (juce::File (f))
+            || juce::File (f).isDirectory())   // una CARPETA = todas sus fotos/videos (MEDIA SESSION PRO)
             return true;
     return false;
 }
@@ -173,10 +215,57 @@ bool SupernovaEditor::isInterestedInFileDrag (const juce::StringArray& files)
 void SupernovaEditor::fileDragEnter (const juce::StringArray&, int, int) { if (topBar) topBar->setDragHover (true); }
 void SupernovaEditor::fileDragExit  (const juce::StringArray&)           { if (topBar) topBar->setDragHover (false); }
 
+// MEDIA SESSION PRO: una CARPETA soltada se expande a sus fotos/videos, ordenados por nombre natural (como
+// Photos/VLC/Resolume). No recursiva: la carpeta que soltaste, no todo el disco.
+juce::StringArray SupernovaEditor::expandFolders (const juce::StringArray& files)
+{
+    juce::StringArray expanded;
+    for (const auto& f : files)
+    {
+        const juce::File file (f);
+        if (! file.isDirectory()) { expanded.add (f); continue; }
+        juce::Array<juce::File> kids = file.findChildFiles (juce::File::findFiles, false);
+        juce::File::NaturalFileComparator cmp (false);
+        kids.sort (cmp);
+        for (const auto& k : kids)
+            if (ImageLoader::looksLikeImage (k) || VideoSource::looksLikeVideo (k))
+                expanded.add (k.getFullPathName());
+    }
+    return expanded;
+}
+
 void SupernovaEditor::filesDropped (const juce::StringArray& files, int, int)
 {
     if (topBar) topBar->setDragHover (false);
+    ingestMedia (expandFolders (files));
+    refreshMediaStrip();
+}
 
+// Soltar ENTRE dos tiles (ronda 3): con una secuencia armada, las fotos entran EN esa posición — el orden
+// es parte del pase y reordenar de a una era trabajo que la tira ya no debería pedir. Es una EDICIÓN
+// (Cmd+Z la deshace). Sin secuencia todavía, no hay "posición": va por el camino normal de ingesta.
+void SupernovaEditor::insertMedia (const juce::StringArray& files, int at)
+{
+    const juce::StringArray expanded = expandFolders (files);
+    juce::StringArray media;
+    for (const auto& f : expanded)
+        if (ImageLoader::looksLikeImage (juce::File (f)) || VideoSource::looksLikeVideo (juce::File (f)))
+            media.add (f);
+    if (media.isEmpty()) return;
+
+    auto& seq = proc.photoSequence();
+    if (! seq.active()) { ingestMedia (media); refreshMediaStrip(); return; }
+
+    captureUndoState();
+    seq.insertFiles (at, media);
+    seqPrefetchPath.clear();      // el "siguiente" pudo cambiar
+    seqNextReady.reset();
+    syncSequenceIfCurrent();
+    refreshMediaStrip();          // AUTO canvas sigue al primero → resolveCanvas() adentro
+}
+
+void SupernovaEditor::ingestMedia (const juce::StringArray& files)
+{
     juce::StringArray media;   // imágenes Y videos (los items de la secuencia pueden ser cualquiera)
     for (const auto& f : files)
         if (ImageLoader::looksLikeImage (juce::File (f)) || VideoSource::looksLikeVideo (juce::File (f)))
@@ -191,7 +280,7 @@ void SupernovaEditor::filesDropped (const juce::StringArray& files, int, int)
         if (seq.active())   // "meter más": un item sobre una secuencia activa se AGREGA al final
         {
             seq.appendFiles (media);
-            proc.syncSequenceToState();
+            syncSequenceIfCurrent();
         }
         else if (currentSingleFile.existsAsFile() && currentSingleFile != f)
         {
@@ -204,57 +293,99 @@ void SupernovaEditor::filesDropped (const juce::StringArray& files, int, int)
             seqPrefetchPath.clear();
             seqNextReady.reset();
             currentSingleFile = juce::File();                 // el ⟳ pasa a operar sobre la secuencia
-            proc.syncSequenceToState();
+            singleRot = 0;
+            syncSingleToState();                              // ya no hay foto única que persistir
+            syncSequenceIfCurrent();
         }
         else                // nada cargado (o mismo archivo): carga simple (imagen o video)
         {
-            if (VideoSource::looksLikeVideo (f)) { currentSingleFile = juce::File(); openVideo (f); }
-            else                                   loadImageFile (f);
+            if (VideoSource::looksLikeVideo (f))
+            {
+                // Reemplaza cualquier resto de secuencia. El caché se vacía con ella (mismo patrón que
+                // unloadMedia y que el alta de secuencia): si no, sus decodes base quedan de zombis
+                // compitiendo en el LRU con la foto actual, el prefetch y el cue. Hallazgo del review de R4.
+                if (seq.size() > 0) { seq.setFiles ({}); imageCache.clear(); syncSequenceIfCurrent(); }
+                currentSingleFile = juce::File();
+                singleRot = 0;
+                if (openVideo (f))          // sesión de 1 item SOLO si el video abrió de verdad (review: sin GPU no)
+                {
+                    currentSingleFile = f;  // la tira lo muestra; el ⟳ va por videoSource
+                    markShown (f, 0);
+                }
+                syncSingleToState();
+            }
+            else loadImageFile (f);
         }
         return;
     }
 
     // 2+ items = SEQUENCE (spec §D): reemplaza la lista, muestra el primero y arranca a rotar.
+    imageCache.clear();   // sesión NUEVA: los decodes base de la anterior no vuelven a hacer falta
     seq.setFiles (media);
     seq.setPlaying (true);
     seq.start (juce::Time::getMillisecondCounterHiRes());
     seqPrefetchPath.clear();
     seqNextReady.reset();
     currentSingleFile = juce::File();   // ya no es "uno solo": el ⟳ opera sobre el item actual
+    singleRot = 0;
+    syncSingleToState();
     showItem (juce::File (seq.currentPath()), seq.currentRotation());
-    proc.syncSequenceToState();
+    syncSequenceIfCurrent();
     mediaCanRotate = view.gpuAvailable();   // la TopBar pollea y enciende el ⟳ + el cluster SEQ
 }
 
 // Muestra un item de la secuencia: video (abre la fuente viva) o imagen (decode async). Cierra el video
 // previo al pasar a una imagen.
-void SupernovaEditor::showItem (const juce::File& file, int turns)
+void SupernovaEditor::showItem (const juce::File& file, int turns, std::function<void()> onFail)
 {
+    markShown (file, turns);
     if (VideoSource::looksLikeVideo (file))
     {
-        openVideo (file);
+        if (! openVideo (file) && onFail) onFail();   // sin GPU, o el archivo no abre
         return;
     }
     videoSource.close();
     videoGeomReady = false;
     juce::Component::SafePointer<SupernovaEditor> safe (this);
-    decodeImageAsync (file, turns, [safe] (std::shared_ptr<const LoadedImage> loaded)
+    decodeImageAsync (file, turns, [safe, onFail = std::move (onFail)] (std::shared_ptr<const LoadedImage> loaded)
     {
-        if (safe != nullptr && loaded->valid()) { safe->currentImage = loaded; safe->view.loadImage (loaded); safe->userImageLoaded = true; }
+        if (safe == nullptr) return;
+        if (loaded->valid()) { safe->currentImage = loaded; safe->view.loadImage (loaded); safe->userImageLoaded = true; }
+        else if (onFail)     onFail();
+    });
+}
+
+// El item ACTUAL de la secuencia. Si no decodifica (archivo corrupto, o borrado entre el listado y el
+// decode) NO se poda: se marca FALTANTE, como cualquier otro que no está — el tile se queda y se relinkea.
+void SupernovaEditor::showSequenceItem (int idx)
+{
+    auto& seq = proc.photoSequence();
+    if (! juce::isPositiveAndBelow (idx, seq.size())) return;
+    const juce::String path = seq.pathAt (idx);
+    juce::Component::SafePointer<SupernovaEditor> safe (this);
+    showItem (juce::File (path), seq.rotationAt (idx), [safe, path]
+    {
+        if (safe == nullptr) return;
+        safe->decodeFailed.addIfNotAlreadyThere (path);
+        auto& sq = safe->proc.photoSequence();
+        for (int i = 0; i < sq.size(); ++i) if (sq.pathAt (i) == path) sq.setMissing (i, true);
+        safe->refreshMediaStrip();
     });
 }
 
 // Abre un video como fuente de color. La geometría se fija con el PRIMER frame (videoTick), los siguientes
 // solo recolorean. Cierra cualquier video previo.
-void SupernovaEditor::openVideo (const juce::File& file)
+bool SupernovaEditor::openVideo (const juce::File& file)
 {
     videoGeomReady = false;
-    if (! view.gpuAvailable()) return;   // sin GPU no hay lattice que colorear
+    if (! view.gpuAvailable()) return false;   // sin GPU no hay lattice que colorear
     if (videoSource.open (file))
     {
         userImageLoaded = true;
         mediaCanRotate  = true;
+        return true;
     }
+    return false;
 }
 
 // Una secuencia que quedó en EXACTAMENTE 1 item (por poda de un decode fallido o por un restore donde
@@ -269,8 +400,9 @@ void SupernovaEditor::demoteToSingleIfNeeded()
     if (VideoSource::looksLikeVideo (f)) return;     // video único: se maneja por videoSource
     currentSingleFile = f;
     singleRot = seq.currentRotation();
+    syncSingleToState();                             // pasa a persistirse como foto única
     seq.setFiles ({});                               // deja de ser secuencia
-    proc.syncSequenceToState();                      // la TopBar refleja el cluster SEQ apagado en su poll
+    syncSequenceIfCurrent();                      // la TopBar refleja el cluster SEQ apagado en su poll
 }
 
 // Bombea el último frame del video al lattice (message thread, desde el timer). El PRIMER frame fija la
@@ -296,10 +428,14 @@ void SupernovaEditor::chooseImage()
 {
     // FileChooser ASYNC (nada de modal loops: pluginval-safe, host-safe). El unique_ptr lo mantiene vivo.
     // Multi-select: 1 archivo = carga simple (RF1); 2+ = PHOTO SEQUENCE (mismo camino que el drop).
+    // Patrón del diálogo = las MISMAS extensiones que acepta el drop (HEIC/WebP/TIFF en mac) + videos.
+    juce::String pattern;
+    for (const auto& ext : juce::StringArray::fromTokens (ImageLoader::imageExtensions(), ";", {}))
+        pattern += "*." + ext + ";";
+    pattern += "*.mp4;*.mov;*.m4v";
     imageChooser = std::make_unique<juce::FileChooser> (
         "Choose images or videos (multi-select = sequence)",
-        juce::File::getSpecialLocation (juce::File::userPicturesDirectory),
-        "*.png;*.jpg;*.jpeg;*.gif;*.mp4;*.mov;*.m4v");
+        juce::File::getSpecialLocation (juce::File::userPicturesDirectory), pattern);
     juce::Component::SafePointer<SupernovaEditor> safe (this);
     imageChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
                                    | juce::FileBrowserComponent::canSelectMultipleItems,
@@ -324,10 +460,13 @@ void SupernovaEditor::loadImageFile (const juce::File& chosen)
     if (proc.photoSequence().size() > 0)
     {
         proc.photoSequence().setFiles ({});
-        proc.syncSequenceToState();
+        imageCache.clear();       // la secuencia se va: sus decodes base también (ver ingestMedia)
+        syncSequenceIfCurrent();
     }
     currentSingleFile = chosen;
     singleRot = 0;
+    markShown (chosen, 0);
+    syncSingleToState();          // la foto viaja con el proyecto / el preset (y con el undo)
     juce::Component::SafePointer<SupernovaEditor> safe (this);
     decodeImageAsync (chosen, 0, [safe] (std::shared_ptr<const LoadedImage> loaded)
     {
@@ -340,6 +479,25 @@ void SupernovaEditor::loadImageFile (const juce::File& chosen)
     mediaCanRotate = view.gpuAvailable();
 }
 
+// CUE ARMADO (ronda 2b): al armar el cue se lanza YA el decode del item, para que al cruzar el compás la
+// imagen esté en la mano y el corte caiga EN el beat. El callback usa SafePointer (el editor puede morir con
+// el decode en vuelo) y verifica cuePath: si el cue se canceló o se armó otro, el resultado se descarta.
+void SupernovaEditor::prefetchCue (int idx)
+{
+    cancelCuePrefetch();
+    const auto& seq = proc.photoSequence();
+    const juce::String p = seq.pathAt (idx);
+    if (p.isEmpty() || VideoSource::looksLikeVideo (juce::File (p))) return;   // el video se abre en el disparo
+    cuePath = p;
+    juce::Component::SafePointer<SupernovaEditor> safe (this);
+    decodeImageAsync (juce::File (p), seq.rotationAt (idx), [safe, p] (std::shared_ptr<const LoadedImage> loaded)
+    {
+        if (safe == nullptr || safe->cuePath != p) return;      // llegó tarde: el cue se canceló o cambió
+        if (loaded->valid()) safe->cueReady = loaded;
+        else                 safe->cuePath.clear();             // no decodifica: el disparo cae al camino de siempre
+    });
+}
+
 // Botón ⟳: rota 90° CW la foto ACTUAL. En secuencia, la rotación es POR FOTO y persiste; suelta, re-decodifica
 // con la rotación acumulada y re-sube. Sin secuencia, rota la foto única cargada.
 void SupernovaEditor::rotateCurrentImage()
@@ -348,6 +506,14 @@ void SupernovaEditor::rotateCurrentImage()
     {
         videoSource.rotate();
         videoGeomReady = false;   // el próximo frame re-fija la geometría con el nuevo aspecto
+        // Video ÚNICO: la rotación se persiste como la de una foto, así vuelve al reabrir el proyecto y
+        // Cmd+Z la revierte. (Un video DENTRO de una secuencia lleva su rotación en la secuencia.)
+        if (! proc.photoSequence().active() && currentSingleFile.existsAsFile())
+        {
+            singleRot = (singleRot + 1) % 4;
+            markShown (currentSingleFile, singleRot);
+            syncSingleToState();
+        }
         return;
     }
     juce::Component::SafePointer<SupernovaEditor> safe (this);
@@ -355,9 +521,10 @@ void SupernovaEditor::rotateCurrentImage()
     if (seq.active())
     {
         seq.rotateCurrent();
-        proc.syncSequenceToState();
+        syncSequenceIfCurrent();
         const auto file = juce::File (seq.currentPath());
         const int turns = seq.currentRotation();
+        markShown (file, turns);
         decodeImageAsync (file, turns, [safe] (std::shared_ptr<const LoadedImage> loaded)
         {
             if (safe != nullptr && loaded->valid()) { safe->currentImage = loaded; safe->view.loadImage (loaded); }
@@ -368,6 +535,8 @@ void SupernovaEditor::rotateCurrentImage()
         singleRot = (singleRot + 1) % 4;
         const auto file = currentSingleFile;
         const int turns = singleRot;
+        markShown (file, turns);
+        syncSingleToState();
         decodeImageAsync (file, turns, [safe] (std::shared_ptr<const LoadedImage> loaded)
         {
             if (safe != nullptr && loaded->valid()) { safe->currentImage = loaded; safe->view.loadImage (loaded); }
@@ -389,7 +558,26 @@ void SupernovaEditor::layoutBody (juce::Rectangle<int> body)
     // Franja de knobs abajo — se ESCONDE en modo inmersivo (las partículas llenan la ventana).
     if (! immersive)
         controls.setBounds (body.removeFromBottom (kStripH));
-    view.setBounds (body);
+    // La TIRA de media (MEDIA SESSION PRO) entre el visual y los knobs — sólo con media cargado y fuera del inmersivo.
+    if (mediaStrip.isVisible())
+        mediaStrip.setBounds (body.removeFromBottom (MediaStrip::kHeight));
+    // El LIENZO: centrado con el aspecto resuelto (AUTO/preset) dentro del área; 0 = llena todo (como siempre).
+    visualArea = body;
+    const auto r = fitRect (body.getX(), body.getY(), body.getWidth(), body.getHeight(), resolvedAspect);
+    view.setBounds (r.x, r.y, r.w, r.h);
+}
+
+// Letterbox del lienzo: negro puro alrededor + hairline (program monitor). La vista Metal se compone ENCIMA
+// de esto en su rect; sin GPU la vista fallback pinta lo suyo.
+void SupernovaEditor::paintBody (juce::Graphics& g)
+{
+    if (browserOpen || lfoPanelOpen || ! (resolvedAspect > 0.0f) || visualArea.isEmpty()) return;
+    const auto vb = view.getBounds();
+    if (vb == visualArea) return;
+    g.setColour (ovni::ui::theme::bg0);
+    g.fillRect (visualArea);
+    g.setColour (ovni::ui::theme::line);
+    g.drawRect (vb.expanded (1), 1);
 }
 
 // Persistencia del tamaño del editor (por instancia, en el estado del DAW): reabrir el proyecto reabre el
@@ -398,6 +586,7 @@ void SupernovaEditor::layoutBody (juce::Rectangle<int> body)
 // decenas de veces por segundo y spamearía apvts.state (review 2026-07-16).
 void SupernovaEditor::persistEditorSizeIfSettled()
 {
+    if (proc.stateStamp() != lastStateStamp) return;   // compuerta del restore (F7): el state es del host
     const juce::Point<int> cur (getWidth(), getHeight());
     if (cur == lastSeenEditorSize && cur != lastSavedEditorSize
         && isFlexibleCanvas() && cur.x >= kMinW && cur.y >= kMinH)
@@ -414,6 +603,7 @@ void SupernovaEditor::setImmersive (bool on)
     if (immersive == on) return;
     immersive = on;
     controls.setVisible (! on);            // oculta los knobs (fuera del área de la vista Metal)
+    updateMediaStripVisibility();          // la tira también se va en inmersivo
     // OJO: resized() del chasis NO re-corre layoutBody (solo fija el canvas base, mismo tamaño = no-op) —
     // el bug de campo 'quedan los knobs escondidos pero el hueco sigue'. layoutCanvas() es el layout real.
     layoutCanvas();                        // re-layout: la vista crece/encoge DE VERDAD
@@ -434,14 +624,19 @@ void SupernovaEditor::captureUndoState()
 {
     history.push (proc.apvts.copyState());
 }
+// El estado restaurado trae las persistencias planas (lfoBank / midiCcMap / sceneBank) como propiedades del
+// árbol, pero los OBJETOS vivos no las releían: sin hydratePerformanceState el undo dejaba el banco de LFO
+// como estaba y el próximo syncLfosToState pisaba la propiedad restaurada.
 bool SupernovaEditor::doUndo()
 {
-    if (auto s = history.undo (proc.apvts.copyState())) { proc.apvts.replaceState (*s); return true; }
+    if (auto s = history.undo (proc.apvts.copyState()))
+    { proc.apvts.replaceState (*s); hydrateSequence(); hydratePerformanceState(); return true; }
     return false;
 }
 bool SupernovaEditor::doRedo()
 {
-    if (auto s = history.redo (proc.apvts.copyState())) { proc.apvts.replaceState (*s); return true; }
+    if (auto s = history.redo (proc.apvts.copyState()))
+    { proc.apvts.replaceState (*s); hydrateSequence(); hydratePerformanceState(); return true; }
     return false;
 }
 
@@ -451,29 +646,68 @@ bool SupernovaEditor::doRedo()
 void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool withSound)
 {
     if (exporting.load()) return;
+    fps = juce::jmax (1, fps);   // el período de audio divide por fps: clampear ACÁ, no sólo en totalFrames
     if (! view.gpuAvailable()) { if (onExportDone) onExportDone (false, "No GPU available for export"); return; }
 
     // Snapshots (copias → sin estado compartido con el message thread).
     auto img = currentImage;
     ParticleParams pp = lastPp;
-    std::vector<AnalysisFrame> frames = recentFrames;
 
     // AUDIO (export con sonido): snapshot del anillo del processor — el MISMO audio cuyo análisis está en
     // recentFrames. Video y audio loopean con el MISMO período → quedan clavados en sync.
     double asr = 48000.0;
     std::vector<float> audio;
     if (withSound) audio = proc.audioRingSnapshot (asr);
-    const ExportDims dims = exportDims (fmt);
-    const int totalFrames = juce::jmax (1, seconds) * juce::jmax (1, fps);
-    const bool cutout = pp.cutoutAmt > 0.0f;
+    const bool wantAudio = audio.size() >= (size_t) asr;   // ≥ ~0.5 s grabado (audio = L/R interleaved)
 
-    // Snapshot de la SECUENCIA de fotos (si hay ≥2) → el export CICLA las fotos como en vivo (antes exportaba
-    // una sola imagen: por eso "un loop de varias fotos" quedaba mal). Cada foto se muestra su intervalo.
+    // VENTANA del análisis (ronda 2b): el anillo corre a kAnalysisRingHz, no a los fps del clip. Con sonido,
+    // análisis y audio tienen que cubrir el MISMO tramo — el ring de audio guarda kAudioRingSeconds — o el
+    // MP4 muestra 20 s de reactividad sobre 12 s de sonido. Sin sonido, el anillo entero.
+    const int ringHz = kAnalysisRingHz;
+    const ExportWindow win = exportLoopWindow ((int) recentFrames.size(), ringHz,
+                                               (double) SupernovaProcessor::kAudioRingSeconds, wantAudio);
+    std::vector<AnalysisFrame> frames (recentFrames.begin() + win.first,
+                                       recentFrames.begin() + win.first + win.count);
+    const ExportDims dims = exportDims (fmt);
+    const int totalFrames = juce::jmax (1, seconds) * fps;
+    const bool cutout = pp.cutoutAmt > 0.0f;
+    const int  fitM   = (int) fitModeV;   // FIT/FILL del lienzo → el mismo encuadre en el MP4
+
+    // Snapshot de la SECUENCIA de fotos (si hay ≥2) → el export CICLA las fotos COMO SE VEN: el reloj
+    // (SECONDS / BEATS / KICK), el orden (LOOP / SHUFFLE) y la transición (BURST) son los de la secuencia
+    // viva. Antes se ciclaba SIEMPRE por segundos, lineal y sin explosión: un loop armado al compás o al
+    // kick, o en shuffle, se exportaba distinto de como sonaba/veía. Todo se resuelve ACÁ (message thread) y
+    // viaja al hilo como un PLAN de slots por valor (el hilo sólo lo lee).
+    const auto& seq = proc.photoSequence();
     juce::StringArray seqPaths; juce::Array<int> seqRots;
-    const double seqInterval = proc.photoSequence().intervalSeconds();
-    if (proc.photoSequence().active())
-        for (int i = 0; i < proc.photoSequence().size(); ++i)
-            { seqPaths.add (proc.photoSequence().pathAt (i)); seqRots.add (proc.photoSequence().rotationAt (i)); }
+    if (seq.active())
+        for (int i = 0; i < seq.size(); ++i)
+            { seqPaths.add (seq.pathAt (i)); seqRots.add (seq.rotationAt (i)); }
+
+    std::vector<ExportSlot> plan;
+    const bool burst = seq.burst();
+    if (seqPaths.size() >= 2)
+    {
+        // KICK: los cambios salen de los onsets del MISMO anillo de análisis que reproduce el clip, con el
+        // gap mínimo aplicado. Si el anillo no trae onsets (silencio, o recién abierto) no habría un solo
+        // cambio en todo el clip: se cae a SECONDS, que es lo que el usuario esperaría ver.
+        std::vector<int> switches;
+        if (seq.clock() == SeqClock::Kick)
+        {
+            std::vector<unsigned> counts;
+            counts.reserve (frames.size());
+            for (const auto& af : frames) counts.push_back (af.onsetCount);
+            switches = kickSwitchFrames (onsetFramesFromCounts (counts, totalFrames, fps, ringHz),
+                                         seq.kickGapSeconds(), fps);
+        }
+        const int perPhoto = seq.clock() == SeqClock::Beats
+                                 ? framesPerPhotoBeats (seq.intervalBeats(), proc.tempoBpm(), fps)
+                                 : framesPerPhoto (seq.intervalSeconds(), fps);
+        // Cuántos slots hay que caminar: uno por cambio (+ el actual). Acotado: un clip largo con kick denso
+        // no debe pedir un orden gigante.
+        const int slots = 2 + (switches.empty() ? totalFrames / juce::jmax (1, perPhoto) : (int) switches.size());
+        plan = exportSlotPlan (totalFrames, perPhoto, playOrderFrom (seq, juce::jmin (4096, slots)), switches);
+    }
 
     const char* tag = fmt == ExportFormat::UHD4K ? "4K" : fmt == ExportFormat::Square1080 ? "1x1"
                     : fmt == ExportFormat::Vertical1080 ? "9x16" : "1080p";
@@ -487,14 +721,16 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
     exportCancel.store (false);
     if (exportThread.joinable()) exportThread.join();
     juce::Component::SafePointer<SupernovaEditor> safe (this);
-    exportThread = std::thread ([this, safe, img, pp, frames, dims, totalFrames, fps, path, seqPaths, seqRots, seqInterval, cutout,
-                                 audio = std::move (audio), asr]() mutable
+    // El hilo NO captura `this`: lo único que comparte con el editor es la bandera de cancelación, y el
+    // destructor la prende ANTES del join() → el puntero sigue vivo mientras el hilo corre.
+    std::atomic<bool>* cancel = &exportCancel;
+    exportThread = std::thread ([safe, cancel, img, pp, frames, dims, totalFrames, fps, ringHz, path, seqPaths, seqRots,
+                                 plan, burst, cutout, fitM, wantAudio, audio = std::move (audio), asr]() mutable
     {
-        // Audio en sync con el LOOP del análisis: el video repite recentFrames cada loopV cuadros; el audio
-        // repite el TRAMO FINAL del ring (lo más reciente) con ese mismo período, sr/fps muestras por cuadro.
-        const bool   wantAudio = audio.size() >= (size_t) asr;      // ≥ ~0.5s grabado (audio = L/R interleaved)
-        const size_t ringF     = audio.size() / 2;
-        const int    loopV     = frames.empty() ? totalFrames : (int) frames.size();
+        // Audio en sync con el LOOP del análisis: el video repite la ventana de análisis cada loopV CUADROS
+        // (frames·fps/ringHz, no frames), y el audio repite el TRAMO FINAL del ring con ese mismo período.
+        const size_t ringF = audio.size() / 2;
+        const int    loopV = frames.empty() ? totalFrames : exportLoopFrames ((int) frames.size(), fps, ringHz);
         const size_t periodA   = wantAudio ? juce::jmin (ringF, (size_t) std::llround ((double) loopV * asr / (double) fps)) : 0;
         const size_t baseA     = ringF - periodA;
         const double samplesPerFrame = asr / (double) fps;
@@ -516,10 +752,10 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
             {
                 MetalRenderer r;                               // renderer FRESCO (patrón de los golden tests)
                 r.prepare (kParticleGrid, kParticleGrid);
+                r.setFitMode (fitM);
 
-                const bool  cycle    = seqPaths.size() >= 2;   // secuencia → ciclar las fotos
-                const int   perPhoto = framesPerPhoto (seqInterval, fps);   // ExportPreset.h (puro, testeado)
-                int         curSlot  = -1;
+                const bool  cycle   = seqPaths.size() >= 2 && ! plan.empty();   // secuencia → ciclar las fotos
+                int         curSlot = -1;
                 auto uploadSlot = [&] (int slot)
                 {
                     auto li = ImageLoader::fromFile (juce::File (seqPaths[slot]));   // decodifica + endereza EXIF
@@ -538,15 +774,21 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
                 std::vector<uint8_t> rgba ((size_t) dims.width * dims.height * 4);
                 std::vector<float> aChunk;                     // scratch del push de audio por cuadro
                 double aAcc = 0.0; size_t aPos = 0;            // acumulador fraccional + cursor modular
-                for (int i = 0; i < totalFrames && ok && ! exportCancel.load(); ++i)   // cancelable (close)
+                for (int i = 0; i < totalFrames && ok && ! cancel->load(); ++i)   // cancelable (close)
                 {
-                    if (cycle)
+                    const bool switched = cycle && i < (int) plan.size() && plan[(size_t) i].changed;
+                    if (cycle && i < (int) plan.size())
                     {
-                        const int slot = photoSlotForFrame (i, perPhoto, seqPaths.size());   // cada foto su ventana, loop
+                        const int slot = plan[(size_t) i].slot;   // reloj + orden ya resueltos (ExportPreset.h)
                         if (slot != curSlot) { curSlot = slot; uploadSlot (slot); }
                     }
-                    AnalysisFrame af = frames.empty() ? AnalysisFrame {} : frames[(size_t) (i % (int) frames.size())];
-                    pp.explode = 0.0f;                         // no exportar el clip entero en plena explosión
+                    // El anillo se reproduce a SU tasa: a 60 fps / 30 Hz, cada frame de análisis dura dos cuadros.
+                    AnalysisFrame af = frames.empty()
+                                           ? AnalysisFrame {}
+                                           : frames[(size_t) analysisIndexForFrame (i, fps, ringHz, (int) frames.size())];
+                    // BURST: la explosión dura UN cuadro, el del cambio (igual que en vivo, MetalViewComponent);
+                    // el resto del clip va sin explosión (no exportar el loop entero explotado).
+                    pp.explode = (burst && switched) ? 1.0f : 0.0f;
                     r.renderOffscreen (af, pp, dims.width, dims.height, rgba.data());
 
                     // AUDIO PRIMERO (sr/fps muestras, loop modular): el muxer intercala exigiendo que el
@@ -584,20 +826,66 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
     });
 }
 
-// LFO sync (Phase B): suma la modulación (visual) de los LFOs habilitados que apuntan a `paramId`, escalada
-// al rango del param. valueFor devuelve [-depth,depth] (bipolar) o [0,depth]; ·rango = unidades del param.
-float SupernovaEditor::lfoModulation (const char* paramId, double beatPos) const
+// LFO sync (Phase B): devuelve el valor del param con la modulación (visual) de los LFOs que lo apuntan,
+// escalada al rango del param y CLAMPEADA al rango legal. La regla vive en LfoModulation.h (pura, testeada):
+// depth 100 % recorre el rango entero, no el doble, y ninguna suma de slots saca el param de su dominio.
+float SupernovaEditor::lfoModulation (const char* paramId, float base, double beatPos, double timeSec) const
 {
-    float mod = 0.0f;
-    auto& lfos = proc.lfoBank();
-    for (int i = 0; i < LfoBank::kNum; ++i)
+    if (! proc.lfoBank().targets (paramId)) return base;   // sin LFO: ni buscamos el rango (camino de cuadro)
+    const auto range = proc.apvts.getParameterRange (juce::String (paramId));
+    return lfoModulated (proc.lfoBank(), paramId, base, range.start, range.end, beatPos, timeSec);
+}
+
+// CUADRO DEL RENDER (VBlank): la base (morph/APVTS/preset) es la que dejó el timer a 30 Hz; lo que se
+// recalcula acá, por cuadro, es la MODULACIÓN — los LFO se leen con proc.phaseInBeats() del momento.
+void SupernovaEditor::renderFrameTick()
+{
+    const double beatPos = proc.phaseInBeats();     // LFOs sync al tempo (Phase B)
+    const double timeSec = proc.timeInSeconds();   // …y reloj para los que corren libres en Hz (ronda 5)
+    const MorphSnapshot& s = morphState;
+
+    // Continuos ease-ados; explode/choices (motion/shape) en vivo. Mapeo compartido (ParamMapping.h). El
+    // renderer late en explode>0.5.
+    ParticleParams pp = mapParticleParams ([this, &s, beatPos, timeSec] (const char* id) -> float
     {
-        const auto& sl = lfos.slot (i);
-        if (! sl.enabled || sl.target.empty() || sl.target != paramId) continue;
-        const auto range = proc.apvts.getParameterRange (juce::String (paramId));
-        mod += lfos.valueFor (i, beatPos) * (range.end - range.start);
-    }
-    return mod;
+        float base = 0.0f;
+        bool found = false;
+        for (int i = 0; i < MorphSnapshot::N; ++i)
+            if (std::strcmp (id, kMorphIds[i]) == 0) { base = s.v[i]; found = true; break; }
+        if (! found)
+        {
+            auto* raw = proc.apvts.getRawParameterValue (id);   // explode / motion / shape (no-morph)
+            base = raw != nullptr ? raw->load() : 0.0f;
+        }
+        // LFO sync (Phase B): aplica la modulación de los LFOs que apuntan a este param, escalada al RANGO
+        // del param y clampeada → tempo-synced VISUAL (no escribe APVTS: no pelea con el usuario ni spamea
+        // automatización).
+        return lfoModulation (id, base, beatPos, timeSec);
+    });
+
+    // VARIATION (morphable, también ease-ada): randomización CURADA determinista alrededor del preset activo.
+    // La semilla es el VALOR del param 'preset' → el mismo estado guardado siempre reproduce el mismo mundo.
+    // Los HOTKNOBS por dominio NO pasan por acá: escriben los params reales de su fila desde el ControlStrip
+    // (los knobs se MUEVEN). Nota (review): si el preset entró por el browser del header (applyFactory) el
+    // param puede no reflejar esa fila → la semilla difiere del índice de tabla del render tool. Cosmético.
+    for (int i = 0; i < MorphSnapshot::N; ++i)
+        if (std::strcmp (kMorphIds[i], pid::VARIATION) == 0)
+        {
+            applyVariation (pp, morphPresetIdx, s.v[i] / 100.0f);
+            break;
+        }
+    // ÓPTICA DE CINE (Phase A) — baseline del PRODUCTO EN VIVO. NO va en mapParticleParams (compartido con el
+    // render tool) → el tool y los goldens quedan en 0 = byte-exacto; solo el plugin/app ven la óptica. Grano
+    // sutil + dither anti-banding + aberración cromática que pulsa con el kick. Son el tuneo fino de Joaquín.
+    pp.grainAmt      = kFilmGrain;         // grano de película modulado por luma
+    pp.ditherAmt     = kFilmDither;        // dither (mata el banding de 8 bits — prácticamente gratis)
+    pp.aberrationAmt = kFilmAberration;    // RGB-split radial, escalado por el kick en el renderer
+    pp.bloomWideAmt  = kFilmBloomWide;     // halo envolvente ancho (glow multi-escala)
+    pp.gradeLift     = kGradeLift;         // grade de colorista: lift + contraste + split-tone teal-orange
+    pp.gradeContrast = kGradeContrast;
+    pp.splitAmt      = kSplitAmt;
+    view.setParams (pp);
+    lastPp = pp;   // el export arranca de acá (copia ANTES de levantar la bandera `exporting`)
 }
 
 // WORLD BROWSER (Phase C · #2 mover): oculta la vista Metal (sin guerra de oclusión) y muestra la grilla; los
@@ -616,6 +904,7 @@ void SupernovaEditor::openWorldBrowser()
     if (auto* raw = proc.apvts.getRawParameterValue (pid::PRESET)) worldBrowser.setActive ((int) raw->load());
     view.setVisible (false);
     controls.setVisible (false);
+    updateMediaStripVisibility();   // la tira se va con el overlay
     worldBrowser.setVisible (true);
     worldBrowser.toFront (false);
     layoutCanvas();
@@ -636,6 +925,7 @@ void SupernovaEditor::closeWorldBrowser()
     worldBrowser.setVisible (false);
     view.setVisible (true);
     controls.setVisible (! immersive);   // respeta el modo inmersivo
+    updateMediaStripVisibility();
     layoutCanvas();
 }
 
@@ -664,6 +954,7 @@ void SupernovaEditor::toggleLfoPanel()
     if (lfoPanelOpen) lfoPanel.toFront (false);
     view.setVisible (! lfoPanelOpen);
     controls.setVisible (! lfoPanelOpen && ! immersive);
+    updateMediaStripVisibility();
     layoutCanvas();
 }
 
@@ -680,7 +971,7 @@ void SupernovaEditor::toggleSequencePlayback()
     auto& seq = proc.photoSequence();
     seq.setPlaying (! seq.playing());
     if (seq.playing()) seq.start (juce::Time::getMillisecondCounterHiRes());
-    proc.syncSequenceToState();   // la TopBar refleja ▸/⏸ en su poll
+    syncSequenceIfCurrent();   // la TopBar refleja ▸/⏸ en su poll
 }
 
 bool SupernovaEditor::keyPressed (const juce::KeyPress& k)
@@ -718,6 +1009,29 @@ bool SupernovaEditor::keyPressed (const juce::KeyPress& k)
         toggleSequencePlayback();
         return true;
     }
+    // MEDIA SESSION PRO: ← / → = foto anterior / siguiente (cue). Sólo con secuencia; si no, el host se queda
+    // la tecla — y tampoco se consume cuando el paso no tiene a dónde ir (todos los vecinos faltan): fingir
+    // que la tomamos le robaba al host una tecla que no hizo nada.
+    if ((k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey) && proc.photoSequence().active())
+        return stepMedia (k == juce::KeyPress::rightKey ? +1 : -1, k.getModifiers().isShiftDown());   // Shift = ya
+    // MEDIA SESSION PRO: 1..9 y 0 cuean el tile N (0 = el décimo), como los decks de cualquier software de
+    // VJ. Se usa el KEY CODE (no el carácter): con Shift, un '2' del teclado escribe '@' pero sigue siendo
+    // la tecla 2. Con Cmd la tecla es del host (presets del DAW) y no se roba; si ese tile no existe, la
+    // tecla tampoco se consume. Shift = cortar YA aunque el reloj sea BEATS (si no, se arma al compás).
+    if (k.getKeyCode() >= '0' && k.getKeyCode() <= '9' && ! k.getModifiers().isCommandDown())
+    {
+        const int digit = k.getKeyCode() - '0';
+        const int idx   = digit == 0 ? 9 : digit - 1;
+        // Un tile FALTANTE no se puede mostrar: la tecla NO se consume (sigue al host) en vez de fingir
+        // un corte que no pasa.
+        if (proc.photoSequence().active() && idx < proc.photoSequence().size()
+            && ! proc.photoSequence().isMissing (idx))
+        {
+            cueMedia (idx, k.getModifiers().isShiftDown());
+            return true;
+        }
+        return false;
+    }
     // UNDO/REDO (Phase C): Cmd/Ctrl+Z deshace, +Shift rehace. RANDOM/CLEAR dejaron de ser puertas de una vía.
     if ((k.getTextCharacter() == 'z' || k.getTextCharacter() == 'Z') && k.getModifiers().isCommandDown())
     {
@@ -733,9 +1047,31 @@ void SupernovaEditor::timerCallback()
     const double dt  = juce::jlimit (0.0, 0.1, (now - lastTickMs) * 0.001);   // clamp anti-stall
     lastTickMs = now;
 
+    // CUE DE FOTOS POR MIDI (ronda 3): drenar la cola del audio thread y aplicar los cues acá, en el message
+    // thread — la PhotoSequence no se toca en ningún otro lado. Va ANTES de sequenceTick: un "MIDI cue: now"
+    // corta en ESTE tick (no en el siguiente) y un armado queda visible y evaluable en el mismo tick.
+    // …salvo que haya un restore del host pendiente (el sello no coincide): entonces los cues esperan UN
+    // tick — `sequenceTick` hidrata primero y el próximo tick los aplica sobre la sesión FRESCA. Si no,
+    // cuearían sobre la sesión vieja y su escritura pisaría el proyecto recién cargado.
+    if (proc.stateStamp() == lastStateStamp)
+    {
+        MidiCueMsg cue;
+        while (proc.midiCueQueue().pop (cue)) applyMidiCue (cue);
+    }
+
     sequenceTick (now);   // PHOTO SEQUENCE: prefetch + switch (no-op sin secuencia)
     videoTick();          // VIDEO: bombea el último frame al lattice (no-op sin video abierto)
     persistEditorSizeIfSettled();   // tamaño del editor → estado del DAW (coalescido: al asentarse)
+
+    // MEDIA SESSION PRO: la tira sigue al item actual (+ progreso hacia el próximo cambio) y el lienzo AUTO se
+    // resuelve en cuanto se conoce el aspecto del primer item (miniatura / imagen decodificada / video).
+    if (mediaStrip.isVisible())
+    {
+        auto& sq = proc.photoSequence();
+        mediaStrip.setCurrent (currentMediaIndex());
+        mediaStrip.setProgress (sq.active() && sq.playing() ? sq.progress (seqTickNow (now)) : 0.0f);
+    }
+    resolveCanvas();
 
     // MIDI-LEARN (Phase B): drenar los CC crudos (audio→cola) y rutearlos a params vía el mapa. Si un CC está
     // en learn, feed() lo bindea al param armado; si ya está asignado, mueve el param (valor normalizado 0..1).
@@ -767,59 +1103,21 @@ void SupernovaEditor::timerCallback()
     }
 
     // Snapshot ease-ado (en morph) o valores en vivo (idle: el arrastre directo de knobs pasa de largo).
+    // Se CACHEA: ésta es la BASE, y avanza a la tasa del timer. La MODULACIÓN de los LFO se le suma por
+    // CUADRO del render (renderFrameTick, VBlank) — a 30 Hz un seno a 2 Hz escalonaba 21 % del rango.
     const MorphSnapshot live = snapshotFromApvts (proc.apvts);
-    const MorphSnapshot s = morph.active() ? morph.tick (dt) : (morph.syncTo (live), live);
+    morphState     = morph.active() ? morph.tick (dt) : (morph.syncTo (live), live);
+    morphPresetIdx = presetIdx;
 
-    // Continuos ease-ados; explode/choices (motion/shape) en vivo. Mapeo compartido (ParamMapping.h). El
-    // renderer late en explode>0.5.
-    const double beatPos = proc.phaseInBeats();   // LFOs sync al tempo (Phase B)
-    ParticleParams pp = mapParticleParams ([this, &s, beatPos] (const char* id) -> float
-    {
-        float base = 0.0f;
-        bool found = false;
-        for (int i = 0; i < MorphSnapshot::N; ++i)
-            if (std::strcmp (id, kMorphIds[i]) == 0) { base = s.v[i]; found = true; break; }
-        if (! found)
-        {
-            auto* raw = proc.apvts.getRawParameterValue (id);   // explode / motion / shape (no-morph)
-            base = raw != nullptr ? raw->load() : 0.0f;
-        }
-        // LFO sync (Phase B): suma la modulación de los LFOs que apuntan a este param, escalada al RANGO del
-        // param → tempo-synced VISUAL (no escribe APVTS: no pelea con el usuario ni spamea automatización).
-        base += lfoModulation (id, beatPos);
-        return base;
-    });
+    // Sin GPU no hay VBlank que dispare el cuadro: el timer sigue siendo el que empuja los params.
+    renderFrameTick();
 
-    // VARIATION (morphable, también ease-ado): randomización CURADA determinista alrededor del preset activo.
-    // La semilla es el VALOR del param 'preset' → el mismo estado guardado siempre reproduce el mismo mundo.
-    // Los HOTKNOBS por dominio NO pasan por acá: escriben los params reales de su fila desde el ControlStrip
-    // (los knobs se MUEVEN). Nota (review): si el preset entró por el browser del header (applyFactory) el
-    // param puede no reflejar esa fila → la semilla difiere del índice de tabla del render tool. Cosmético.
-    for (int i = 0; i < MorphSnapshot::N; ++i)
-        if (std::strcmp (kMorphIds[i], pid::VARIATION) == 0)
-        {
-            applyVariation (pp, presetIdx, s.v[i] / 100.0f);
-            break;
-        }
-    // ÓPTICA DE CINE (Phase A) — baseline del PRODUCTO EN VIVO. NO va en mapParticleParams (compartido con el
-    // render tool) → el tool y los goldens quedan en 0 = byte-exacto; solo el plugin/app ven la óptica. Grano
-    // sutil + dither anti-banding + aberración cromática que pulsa con el kick. Son el tuneo fino de Joaquín.
-    pp.grainAmt      = kFilmGrain;         // grano de película modulado por luma
-    pp.ditherAmt     = kFilmDither;        // dither (mata el banding de 8 bits — prácticamente gratis)
-    pp.aberrationAmt = kFilmAberration;    // RGB-split radial, escalado por el kick en el renderer
-    pp.bloomWideAmt  = kFilmBloomWide;     // halo envolvente ancho (glow multi-escala)
-    pp.gradeLift     = kGradeLift;         // grade de colorista: lift + contraste + split-tone teal-orange
-    pp.gradeContrast = kGradeContrast;
-    pp.splitAmt      = kSplitAmt;
-    view.setParams (pp);
-
-    // EXPORT (Phase C): retené los params + un anillo de ~10s de análisis reciente para que el export
-    // reproduzca el LOOK reactivo (el hilo de export toma copias). No graba mientras se está exportando.
+    // EXPORT (Phase C): retené los params + el anillo de análisis reciente (kAnalysisRingSeconds a la tasa
+    // del timer) para que el export reproduzca el LOOK reactivo (el hilo toma copias). No graba exportando.
     if (! exporting.load())
     {
-        lastPp = pp;
         recentFrames.push_back (view.lastFrame());
-        if (recentFrames.size() > 600) recentFrames.erase (recentFrames.begin());
+        if ((int) recentFrames.size() > kAnalysisRingHz * kAnalysisRingSeconds) recentFrames.erase (recentFrames.begin());
     }
 
     // (El HUD fino de fps se retiró con la TopBar — la app tampoco lo muestra. El estado de Syphon/fullscreen/
@@ -842,20 +1140,95 @@ void SupernovaEditor::hydratePerformanceState()
 void SupernovaEditor::hydrateSequence()
 {
     lastStateStamp = proc.stateStamp();
+    hydrateMediaSettings();   // el host restauró: formato/FIT/▦/aspecto vienen con el mismo state
     const auto vt = proc.apvts.state.getChildWithName ("sequence");
-    if (vt.isValid())
-        proc.photoSequence() = PhotoSequence::fromValueTree (vt);
+    // La sesión del state son DOS cosas excluyentes: el child "sequence" (2+ items) o la foto/video ÚNICO
+    // (props "singlePath"/"singleRot"). Las dos viajan con el proyecto, el preset y el snapshot del undo.
+    const juce::File single (proc.apvts.state.getProperty ("singlePath", juce::String()).toString());
+    const int        singleTurns = (((int) proc.apvts.state.getProperty ("singleRot", 0)) % 4 + 4) % 4;
+    // Un undo de knob / un restore del MISMO proyecto no tiene por qué reconstruir nada: si lo restaurado es
+    // idéntico a lo que hay en pantalla, la sesión se deja como está (sin re-armar el reloj ni re-decodificar).
     auto& seq = proc.photoSequence();
+    const bool sameSeq    = vt.isValid() ? vt.isEquivalentTo (seq.toValueTree()) : seq.size() == 0;
+    const bool sameSingle = seq.size() > 0
+                            || (single == currentSingleFile && (! single.existsAsFile() || singleTurns == singleRot));
+    if (sameSeq && sameSingle)
+    {
+        refreshMediaStrip();
+        return;
+    }
+    // Sin child "sequence" (un undo/restore hacia un estado SIN secuencia) la secuencia viva también se
+    // vacía: si no, quedaría una sesión fantasma que el state ya no tiene.
+    seq = vt.isValid() ? PhotoSequence::fromValueTree (vt) : PhotoSequence {};
     if (seq.size() > 0)
     {
         seq.start (juce::Time::getMillisecondCounterHiRes());
         currentSingleFile = juce::File();
-        showItem (juce::File (seq.currentPath()), seq.currentRotation());   // imagen o video
+        singleRot = 0;
+        syncSingleToState();                 // manda la secuencia: no hay foto única que persistir
+        refreshMissingFlags();               // el disco pudo cambiar desde que se guardó el proyecto
+        // Si la foto que el proyecto dejó en pantalla ya no está, se abre en la primera que SÍ esté; el
+        // tile faltante se queda en la tira, marcado, para relinkearlo. Si faltan TODAS, no se muestra
+        // nada (la fábrica) pero la sesión sobrevive entera.
+        const int alive = seq.firstAliveIndex();
+        if (alive >= 0 && seq.isMissing (seq.currentIndex()))
+        {
+            seq.jumpTo (alive);
+            syncSequenceIfCurrent();      // el índice nuevo VUELVE al state: si no, el proyecto seguía
+                                             // apuntando al muerto y cada reapertura repetía el salto
+        }
+        // Sólo se re-muestra si CAMBIÓ lo que está en pantalla (deshacer un reordenamiento deja la misma
+        // foto a la vista: re-decodificarla sería un hipo gratis).
+        if (alive >= 0 && (shownPath != seq.currentPath() || shownRot != seq.currentRotation()))
+            showSequenceItem (seq.currentIndex());   // imagen o video
         mediaCanRotate = view.gpuAvailable();
+    }
+    else if (single.existsAsFile())
+    {
+        // FOTO / VIDEO ÚNICO persistido: vuelve con su rotación. Si el archivo ya no está se vuelve a fábrica
+        // (no hay tira donde marcarlo faltante: la sesión de un solo item es la foto misma).
+        const bool samePath = (shownPath == single.getFullPathName());
+        currentSingleFile = single;
+        singleRot = singleTurns;
+        if (VideoSource::looksLikeVideo (single))
+        {
+            if (samePath && videoSource.isOpen())
+            {
+                // Deshacer la rotación de un video NO tiene por qué reabrirlo (perdía el punto de
+                // reproducción y el primer frame): se gira la salida viva por el delta.
+                const int delta = ((singleTurns - shownRot) % 4 + 4) % 4;
+                for (int k = 0; k < delta; ++k) videoSource.rotate();
+                if (delta != 0) videoGeomReady = false;   // el próximo frame re-fija la geometría
+                markShown (single, singleTurns);
+            }
+            // Si el video no abre (sin GPU, archivo ilegible), la sesión NO puede quedar "cargada" con la
+            // fábrica en pantalla: mismo guard que ingestMedia.
+            else if (! openVideo (single)) { unloadMedia(); return; }
+            else
+            {
+                // openVideo no lleva la rotación adentro (el ⟳ del video gira la salida viva): se re-aplica.
+                for (int k = 0; k < singleTurns; ++k) videoSource.rotate();
+                markShown (single, singleTurns);
+            }
+        }
+        else if (! samePath || shownRot != singleTurns)
+        {
+            // Un decode que falla tampoco puede dejar una foto fantasma en la sesión.
+            juce::Component::SafePointer<SupernovaEditor> safe (this);
+            showItem (single, singleTurns, [safe] { if (safe != nullptr) safe->unloadMedia(); });
+        }
+        mediaCanRotate = view.gpuAvailable();
+        userImageLoaded = true;
+    }
+    else
+    {
+        unloadMedia();   // el estado restaurado no tiene media (o el archivo ya no existe): imagen de fábrica
+        return;
     }
     seqPrefetchPath.clear();
     seqNextReady.reset();
     demoteToSingleIfNeeded();   // un restore que dejó 1 sola foto viva → foto única (no secuencia muerta)
+    refreshMediaStrip();
 }
 
 void SupernovaEditor::sequenceTick (double nowMs)
@@ -867,15 +1240,36 @@ void SupernovaEditor::sequenceTick (double nowMs)
         return;
     }
     auto& seq = proc.photoSequence();
-    if (! seq.active() || ! seq.playing()) return;
+    if (! seq.active()) return;
+
+    // CUE ARMADO (BEATS): esperó al próximo límite de ventana → recién ahora corta. Va ANTES del reloj (el
+    // corte pedido a mano manda) y vale también con la secuencia en pausa: es una acción del usuario.
+    if (seq.pendingCue() >= 0)
+    {
+        if (seq.shouldFireCue (seqTickNow (nowMs))) { cueMedia (seq.pendingCue(), true); return; }
+    }
+    if (! seq.playing()) return;
 
     const auto next        = seq.nextPath();
     const bool nextIsVideo = VideoSource::looksLikeVideo (juce::File (next));
+    // Si el "siguiente" es el ACTUAL, es que no queda ningún otro item vivo (todos faltan): no hay nada que
+    // pre-decodificar ni a dónde avanzar. La sesión se congela donde está hasta que se relinkee algo.
+    // (Alcanza con esta comparación: `nextIndex()` nunca devuelve un faltante salvo por ese mismo fallback
+    // al actual, así que preguntar además por `isMissing (nextIndex())` era un disyunto muerto.)
+    if (seq.nextIndex() == seq.currentIndex()) return;
 
+    // El cue ARMADO apunta al MISMO item que sigue naturalmente: su decode ya está en vuelo (o listo) →
+    // se reusa. Si no, la misma foto se decodificaría DOS veces (JUCE + Vision + máscara, 100-400 ms cada
+    // una) por el sólo hecho de cuear el próximo tile.
+    if (! cuePath.isEmpty() && cuePath == next && seqNextReady == nullptr)
+    {
+        seqPrefetchPath = next;                 // el prefetch normal ya no arranca
+        if (cueReady != nullptr) seqNextReady = cueReady;   // todavía en vuelo: lo recoge el próximo tick
+    }
     // PREFETCH sólo de items IMAGEN: la siguiente foto se decodifica en fondo ANTES del switch (cero hipo).
     // Un item de VIDEO no se prefetchea (se abre en el switch); marcamos el path como "listo" para no
-    // intentar decodificarlo como imagen (lo podaría por "no decodifica").
-    if (seqPrefetchPath != next)
+    // intentar decodificarlo como imagen (lo marcaría faltante por "no decodifica").
+    else if (seqPrefetchPath != next)
     {
         seqPrefetchPath = next;
         seqNextReady.reset();
@@ -889,20 +1283,26 @@ void SupernovaEditor::sequenceTick (double nowMs)
                     safe->seqNextReady = loaded;
                 else
                 {
-                    // La foto no decodifica (borrada/corrupta): se poda y se sigue.
-                    safe->proc.photoSequence().removePath (next);
-                    safe->proc.syncSequenceToState();
+                    // La foto no decodifica (borrada/corrupta). Antes se PODABA y desaparecía de la sesión
+                    // sin explicación; ahora queda marcada como faltante: el reloj la saltea y el tile
+                    // sigue ahí para relinkearla.
+                    safe->decodeFailed.addIfNotAlreadyThere (next);
+                    auto& sq = safe->proc.photoSequence();
+                    for (int i = 0; i < sq.size(); ++i) if (sq.pathAt (i) == next) sq.setMissing (i, true);
                     safe->seqPrefetchPath.clear();
-                    safe->demoteToSingleIfNeeded();     // si quedó 1 item → foto única (⟳ funciona)
+                    safe->refreshMediaStrip();
                 }
             });
         }
     }
 
     // El switch: para imagen, espera a que el decode esté listo (no se saltea). Para video, se abre directo.
-    if (seq.shouldAdvance (nowMs) && (nextIsVideo || seqNextReady != nullptr))
+    // El reloj puede ser SECONDS (pared), BEATS (BeatClock del host/tap) o KICK (onsets del análisis).
+    const SeqTick tick = seqTickNow (nowMs);
+    if (seq.shouldAdvance (tick) && (nextIsVideo || seqNextReady != nullptr))
     {
-        seq.advanced (nowMs);
+        seq.advanced (tick);
+        if (seq.burst()) view.triggerBurst();   // BURST: la foto vieja estalla y se re-arma como la nueva
         if (nextIsVideo)
         {
             openVideo (juce::File (seq.currentPath()));
@@ -916,7 +1316,8 @@ void SupernovaEditor::sequenceTick (double nowMs)
         }
         userImageLoaded = true;
         seqPrefetchPath.clear();           // el próximo tick pre-carga lo que sigue
-        proc.syncSequenceToState();        // la TopBar muestra "SEQ n/N" fresco en su poll
+        syncSequenceIfCurrent();        // la TopBar muestra "SEQ n/N" fresco en su poll
+        mediaStrip.setCurrent (seq.currentIndex());
     }
 }
 }

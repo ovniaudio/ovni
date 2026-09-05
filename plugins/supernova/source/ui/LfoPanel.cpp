@@ -22,31 +22,47 @@ const Dest kDests[] = {
     { pid::ROTATE, "Rotate" }, { pid::ORBIT, "Orbit" }, { pid::SCATTER, "Scatter" },
     { pid::TRAILS, "Trails" }, { pid::LINKS, "Links" }, { pid::DEPTH, "Depth" },
 };
-// Beat divisions → beatsPerCycle.
+// Beat divisions → beatsPerCycle. Cada división trae su TRESILLO (·T, x2/3) y su PUNTILLO (·D, x1.5): en
+// todo el relevamiento del nicho (Resolume, VDMX, Magic, Synesthesia, VS 2) no los tiene nadie.
 struct Rate { const char* label; float beats; };
+constexpr float kT = 2.0f / 3.0f, kD = 1.5f;
 const Rate kRates[] = {
-    { "1/16", 0.25f }, { "1/8", 0.5f }, { "1/4", 1.0f }, { "1/2", 2.0f },
-    { "1 bar", 4.0f }, { "2 bars", 8.0f }, { "4 bars", 16.0f },
+    { "1/16",   0.25f }, { "1/16·T",   0.25f * kT }, { "1/16·D",   0.25f * kD },
+    { "1/8",    0.5f  }, { "1/8·T",    0.5f  * kT }, { "1/8·D",    0.5f  * kD },
+    { "1/4",    1.0f  }, { "1/4·T",    1.0f  * kT }, { "1/4·D",    1.0f  * kD },
+    { "1/2",    2.0f  }, { "1/2·T",    2.0f  * kT }, { "1/2·D",    2.0f  * kD },
+    { "1 bar",  4.0f  }, { "1 bar·T",  4.0f  * kT }, { "1 bar·D",  4.0f  * kD },
+    { "2 bars", 8.0f  }, { "2 bars·T", 8.0f  * kT }, { "2 bars·D", 8.0f  * kD },
+    { "4 bars", 16.0f }, { "4 bars·T", 16.0f * kT }, { "4 bars·D", 16.0f * kD },
 };
 const char* kShapeNames[] = { "Sine", "Triangle", "Saw", "Square", "Ramp Down", "Sample & Hold" };
 constexpr int kNumDests = (int) (sizeof (kDests) / sizeof (kDests[0]));
 constexpr int kNumRates = (int) (sizeof (kRates) / sizeof (kRates[0]));
+constexpr int kHzItemId = kNumRates + 1;   // "Hz": el ciclo lo manda el RELOJ, no el tempo
+constexpr float kHzMin = 0.05f, kHzMax = 20.0f;
 constexpr int kNumShapes = 6;
 
 // --- layout ---------------------------------------------------------------------------------------
 constexpr int kMargin     = 10;
 constexpr int kMaxContentW = 1000;   // cap + centre so the cards never sprawl on a huge app window
-constexpr int kMaxContentH = 560;
+constexpr int kMaxContentH = 620;   // la card lleva DOS filas de controles (polaridad/fase/retrigger)
 constexpr int kHeaderH    = 72;
 constexpr int kColHeadH   = 22;
 constexpr int kCardGap    = 12;
 constexpr int kLeftCellW  = 96;
 constexpr int kGap        = 14;
 constexpr int kTargetW    = 156;
-constexpr int kRateW      = 96;
+constexpr int kRateW      = 112;   // entra "2 bars·D"
 constexpr int kShapeW     = 216;
 constexpr int kShapeH     = 46;
 constexpr int kCtrlH      = 30;
+// Fila 2 de la card.
+constexpr int kRow2H      = 26;
+constexpr int kPolarityW  = 56;
+constexpr int kPhaseCapW  = 50;
+constexpr int kPhaseW     = 230;
+constexpr int kRetrigW    = 88;
+constexpr int kHzW        = 170;
 
 // ============================================================================ pro look (mirrors BarLnf)
 struct PanelLnf final : juce::LookAndFeel_V4
@@ -229,20 +245,32 @@ LfoPanel::LfoPanel (LfoBank& b) : bank (b)
     {
         auto& r = rows[(size_t) i];
 
+        // IDs estables por control: la barra/automatización y los tests los encuentran sin depender del orden
+        // de los hijos (juce::Component::findChildWithID).
+        const juce::String rid = "lfo" + juce::String (i) + ".";
+
         r.enable.setClickingTogglesState (true);
         r.enable.setTooltip ("Enable this LFO");
+        r.enable.setComponentID (rid + "enable");
         addAndMakeVisible (r.enable);
 
         r.target.setTextWhenNothingSelected (juce::String::fromUTF8 ("\xE2\x80\x94 target \xE2\x80\x94"));
         r.target.setTooltip ("Which world parameter this LFO modulates");
         r.target.addItem (juce::String::fromUTF8 ("\xE2\x80\x94 target \xE2\x80\x94"), 1);
         for (int d = 0; d < kNumDests; ++d) r.target.addItem (kDests[d].label, d + 2);
+        r.target.setComponentID (rid + "target");
         addAndMakeVisible (r.target);
 
-        r.rate.setTooltip ("Beat division — how fast the LFO cycles against the tempo");
-        for (int k = 0; k < kNumRates; ++k) r.rate.addItem (kRates[k].label, k + 1);
+        r.rate.setTooltip ("How fast the LFO cycles: locked to the tempo, or free in Hz");
+        r.rate.addSectionHeading ("SYNC");
+        for (int k = 0; k < kNumRates; ++k) r.rate.addItem (juce::String::fromUTF8 (kRates[k].label), k + 1);
+        r.rate.addSeparator();
+        r.rate.addSectionHeading ("FREE");
+        r.rate.addItem ("Hz", kHzItemId);
+        r.rate.setComponentID (rid + "rate");
         addAndMakeVisible (r.rate);
 
+        r.shape.setComponentID (rid + "shape");
         addAndMakeVisible (r.shape);
         r.shape.onSelect = [this, i] (int) { pushRow (i); };
 
@@ -251,12 +279,52 @@ LfoPanel::LfoPanel (LfoBank& b) : bank (b)
         r.depth.setTextValueSuffix (" %");
         r.depth.setTextBoxStyle (juce::Slider::TextBoxRight, false, 46, 22);
         r.depth.setTooltip ("Modulation depth");
+        r.depth.setComponentID (rid + "depth");
         addAndMakeVisible (r.depth);
+
+        // --- fila 2: polaridad · fase · retrigger (los tres campos que el modelo tenía y la UI no exponía)
+        r.polarity.setClickingTogglesState (true);
+        r.polarity.setTooltip ("BI: swings both ways around the knob \xc2\xb7 UNI: only adds, from the knob up");
+        r.polarity.setComponentID (rid + "polarity");
+        addAndMakeVisible (r.polarity);
+
+        r.phase.setSliderStyle (juce::Slider::LinearHorizontal);
+        r.phase.setRange (0.0, 360.0, 1.0);
+        r.phase.setTextValueSuffix (juce::String::fromUTF8 (" \xc2\xb0"));
+        r.phase.setTextBoxStyle (juce::Slider::TextBoxRight, false, 46, 22);
+        r.phase.setTooltip ("Where in the cycle this LFO starts");
+        r.phase.setComponentID (rid + "phase");
+        addAndMakeVisible (r.phase);
+
+        r.retrig.setTooltip ("Restart the cycle NOW (phase 0 at this beat)");
+        r.retrig.setComponentID (rid + "retrig");
+        addAndMakeVisible (r.retrig);
+
+        // Frecuencia libre: sólo aparece con RATE = Hz. Escala logarítmica (1 Hz al medio) — abajo del todo
+        // son ondas de minutos, arriba del todo es parpadeo.
+        r.hz.setSliderStyle (juce::Slider::LinearHorizontal);
+        r.hz.setRange ((double) kHzMin, (double) kHzMax, 0.01);
+        r.hz.setSkewFactorFromMidPoint (1.0);
+        r.hz.setTextValueSuffix (" Hz");
+        r.hz.setTextBoxStyle (juce::Slider::TextBoxRight, false, 56, 22);
+        r.hz.setTooltip ("Free rate, independent of the tempo");
+        r.hz.setComponentID (rid + "hz");
+        addChildComponent (r.hz);          // visible sólo en modo Hz (lo decide refreshFromBank/pushRow)
 
         r.enable.onClick      = [this, i] { pushRow (i); };
         r.target.onChange     = [this, i] { pushRow (i); };
         r.rate.onChange       = [this, i] { pushRow (i); };
         r.depth.onValueChange = [this, i] { pushRow (i); };
+        r.polarity.onClick    = [this, i] { pushRow (i); };
+        r.phase.onValueChange = [this, i] { pushRow (i); };
+        r.hz.onValueChange    = [this, i] { pushRow (i); };
+        r.retrig.onClick      = [this, i]
+        {
+            pushRow (i);                                                   // lo que muestra la fila manda
+            bank.retrigger (i, beatPos != nullptr ? beatPos() : 0.0,       // …y el ciclo arranca acá
+                               timeSec != nullptr ? timeSec() : 0.0);
+            if (onChange) onChange();
+        };
     }
     refreshFromBank();
     startTimerHz (30);   // medidor de SALIDA en vivo (repinta SOLO los meters, y solo con el panel visible)
@@ -283,6 +351,10 @@ void LfoPanel::applyEnabledLook (int i)
     r.rate.setAlpha (a);
     r.shape.setAlpha (a);
     r.depth.setAlpha (a);
+    r.polarity.setAlpha (a);
+    r.phase.setAlpha (a);
+    r.retrig.setAlpha (a);
+    r.hz.setAlpha (a);
 }
 
 void LfoPanel::refreshFromBank()
@@ -295,11 +367,17 @@ void LfoPanel::refreshFromBank()
         int destId = 1;
         for (int d = 0; d < kNumDests; ++d) if (sl.target == kDests[d].id) { destId = d + 2; break; }
         r.target.setSelectedId (destId, juce::dontSendNotification);
-        int rateId = 3;   // 1/4 default
-        for (int k = 0; k < kNumRates; ++k) if (std::abs (kRates[k].beats - sl.beatsPerCycle) < 0.01f) { rateId = k + 1; break; }
-        r.rate.setSelectedId (rateId, juce::dontSendNotification);
+        int rateId = 7;   // "1/4" por defecto
+        for (int k = 0; k < kNumRates; ++k)
+            if (std::abs (kRates[k].beats - sl.beatsPerCycle) < 0.005f) { rateId = k + 1; break; }
+        r.rate.setSelectedId (sl.freeHz ? kHzItemId : rateId, juce::dontSendNotification);
+        r.hz.setValue (juce::jlimit ((double) kHzMin, (double) kHzMax, (double) sl.hz), juce::dontSendNotification);
+        r.hz.setVisible (sl.freeHz);
         r.shape.setSelected ((int) sl.shape);
         r.depth.setValue (juce::jlimit (0.0, 100.0, sl.depth * 100.0), juce::dontSendNotification);
+        r.polarity.setToggleState (sl.bipolar, juce::dontSendNotification);
+        r.polarity.setButtonText (sl.bipolar ? "BI" : "UNI");
+        r.phase.setValue (juce::jlimit (0.0, 360.0, sl.phaseOffset * 360.0), juce::dontSendNotification);
         applyEnabledLook (i);
     }
 }
@@ -312,10 +390,16 @@ void LfoPanel::pushRow (int i)
     const int destId = r.target.getSelectedId();
     sl.target = (destId >= 2 && destId - 2 < kNumDests) ? kDests[destId - 2].id : "";
     const int rateId = r.rate.getSelectedId();
-    sl.beatsPerCycle = (rateId >= 1 && rateId - 1 < kNumRates) ? kRates[rateId - 1].beats : 1.0f;
+    sl.freeHz = (rateId == kHzItemId);
+    if (! sl.freeHz)
+        sl.beatsPerCycle = (rateId >= 1 && rateId - 1 < kNumRates) ? kRates[rateId - 1].beats : 1.0f;
+    sl.hz = (float) juce::jlimit ((double) kHzMin, (double) kHzMax, r.hz.getValue());
+    r.hz.setVisible (sl.freeHz);
     sl.shape = (LfoShape) juce::jlimit (0, kNumShapes - 1, r.shape.selected());
     sl.depth = (float) juce::jlimit (0.0, 1.0, r.depth.getValue() / 100.0);
-    sl.bipolar = true;
+    sl.bipolar = r.polarity.getToggleState();
+    sl.phaseOffset = (float) juce::jlimit (0.0, 1.0, r.phase.getValue() / 360.0);
+    r.polarity.setButtonText (sl.bipolar ? "BI" : "UNI");
     applyEnabledLook (i);
     if (onChange) onChange();
 }
@@ -330,8 +414,8 @@ void LfoPanel::paint (juce::Graphics& g)
     g.drawText ("LFOs", contentArea.getX(), contentArea.getY() + 6, 300, 36, juce::Justification::topLeft);
     g.setColour (th::mut);
     g.setFont (fonts::body (12.5f));
-    g.drawText (juce::String::fromUTF8 ("Waves locked to the beat ADD motion to their target \xE2\x80\x94 "
-                                        "knobs stay still; the orange bar is the live output."),
+    g.drawText (juce::String::fromUTF8 ("Waves \xE2\x80\x94 synced to the beat or free-running in Hz \xE2\x80\x94 "
+                                        "ADD motion to their target; knobs stay still, the orange bar is the live output."),
                 contentArea.getX(), contentArea.getY() + 42, contentArea.getWidth() - 120, 18,
                 juce::Justification::topLeft);
 
@@ -367,12 +451,18 @@ void LfoPanel::paint (juce::Graphics& g)
             g.fillRoundedRectangle (card.getX() + 4.0f, card.getY() + 10.0f, 3.0f, card.getHeight() - 20.0f, 1.5f);
         }
 
-        // "LFO n" label, above the ON pill.
-        auto leftCell = cardRects[(size_t) i].reduced (16, 0).removeFromLeft (kLeftCellW);
+        // "LFO n" label, above the ON pill (fila 1 de la celda izquierda).
         g.setColour (on ? kHue : th::mut);
         g.setFont (fonts::display (17.0f));
-        g.drawText ("LFO " + juce::String (i + 1), leftCell.removeFromTop (leftCell.getHeight() - 34),
-                    juce::Justification::centredLeft);
+        g.drawText ("LFO " + juce::String (i + 1), titleRects[(size_t) i], juce::Justification::centredLeft);
+
+        // Rótulo de la fila 2, al estilo de los encabezados de columna.
+        if (! phaseCapRects[(size_t) i].isEmpty())
+        {
+            g.setColour (th::fnt);
+            g.setFont (fonts::mono (10.0f));
+            g.drawText ("PHASE", phaseCapRects[(size_t) i], juce::Justification::centredLeft);
+        }
     }
 
     // Medidor de SALIDA en vivo — la PRUEBA de que el LFO modula: barra bipolar desde el centro con
@@ -388,7 +478,8 @@ void LfoPanel::paint (juce::Graphics& g)
         g.fillRect (m.getCentreX() - 0.5f, m.getY(), 1.0f, m.getHeight());   // tick central (0)
         if (sl.enabled && ! sl.target.empty() && beatPos != nullptr)
         {
-            const float v    = bank.valueFor (i, beatPos());                 // [−depth, +depth]
+            const float v    = bank.valueFor (i, beatPos(),                  // [−depth, +depth]
+                                              timeSec != nullptr ? timeSec() : 0.0);
             const float norm = juce::jlimit (-1.0f, 1.0f, v);
             const float len  = std::abs (norm) * m.getWidth() * 0.5f;
             const float x0   = norm >= 0.0f ? m.getCentreX() : m.getCentreX() - len;
@@ -411,31 +502,57 @@ void LfoPanel::resized()
     area.removeFromTop (kHeaderH);
     auto colHead = area.removeFromTop (kColHeadH);
 
-    const int avail = area.getHeight() - (LfoBank::kNum - 1) * kCardGap;
-    const int cardH = juce::jlimit (64, 112, avail / LfoBank::kNum);
+    // Alto de card y separación: la card lleva DOS filas, así que se le da todo lo que entre (78..128) y el
+    // hueco entre cards cede primero. Con la ventana en su mínimo (720×480) sigue entrando sin recortarse.
+    const int cardH = juce::jlimit (78, 128,
+                                    (area.getHeight() - (LfoBank::kNum - 1) * kCardGap) / LfoBank::kNum);
+    const int gapV  = juce::jlimit (4, kCardGap,
+                                    (area.getHeight() - LfoBank::kNum * cardH) / (LfoBank::kNum - 1));
 
     for (int i = 0; i < LfoBank::kNum; ++i)
     {
-        if (i) area.removeFromTop (kCardGap);
+        if (i) area.removeFromTop (gapV);
         auto card = area.removeFromTop (cardH);
         cardRects[(size_t) i] = card;
 
-        auto row = card.reduced (16, 0);
-        row.removeFromLeft (kLeftCellW);                 // "LFO n" + ON pill live here
+        auto inner = card.reduced (16, 8);
+        inner.removeFromBottom (8);                     // franja del medidor de salida, al pie de la card
+        const int rowH1 = juce::jlimit (28, kShapeH, inner.getHeight() - kRow2H - 6);
+        auto r1 = inner.removeFromTop (rowH1);
+        auto r2 = inner.removeFromBottom (kRow2H);
+
         auto& r = rows[(size_t) i];
 
-        // ON pill: bottom of the left cell, under the "LFO n" label.
-        auto leftCell = card.reduced (16, 0).removeFromLeft (kLeftCellW);
-        r.enable.setBounds (leftCell.removeFromBottom (30).withSizeKeepingCentre (58, 26));
+        // Celda izquierda (ambas filas): "LFO n" arriba (lo dibuja paint), pastilla ON abajo.
+        titleRects[(size_t) i] = r1.removeFromLeft (kLeftCellW);
+        auto onCell = r2.removeFromLeft (kLeftCellW);
+        r.enable.setBounds (onCell.withSizeKeepingCentre (58, juce::jmin (26, onCell.getHeight())));
+        r1.removeFromLeft (kGap);
+        r2.removeFromLeft (kGap);
 
-        row.removeFromLeft (kGap);
-        r.target.setBounds (row.removeFromLeft (kTargetW).withSizeKeepingCentre (kTargetW, kCtrlH));
-        row.removeFromLeft (kGap);
-        r.rate.setBounds   (row.removeFromLeft (kRateW).withSizeKeepingCentre (kRateW, kCtrlH));
-        row.removeFromLeft (kGap);
-        r.shape.setBounds  (row.removeFromLeft (kShapeW).withSizeKeepingCentre (kShapeW, kShapeH));
-        row.removeFromLeft (kGap);
-        r.depth.setBounds  (row.withSizeKeepingCentre (row.getWidth(), kCtrlH));
+        // Fila 1 — TARGET · RATE · SHAPE · DEPTH.
+        const int ctrlH = juce::jmin (kCtrlH, r1.getHeight());
+        r.target.setBounds (r1.removeFromLeft (kTargetW).withSizeKeepingCentre (kTargetW, ctrlH));
+        r1.removeFromLeft (kGap);
+        r.rate.setBounds   (r1.removeFromLeft (kRateW).withSizeKeepingCentre (kRateW, ctrlH));
+        r1.removeFromLeft (kGap);
+        r.shape.setBounds  (r1.removeFromLeft (kShapeW));
+        r1.removeFromLeft (kGap);
+        r.depth.setBounds  (r1.withSizeKeepingCentre (r1.getWidth(), ctrlH));
+
+        // Fila 2 — BI/UNI · PHASE · RETRIG.
+        const int h2 = juce::jmin (kRow2H, r2.getHeight());
+        r.polarity.setBounds (r2.removeFromLeft (kPolarityW).withSizeKeepingCentre (kPolarityW, h2));
+        r2.removeFromLeft (kGap);
+        phaseCapRects[(size_t) i] = r2.removeFromLeft (kPhaseCapW);
+        const int phW = juce::jlimit (90, kPhaseW, r2.getWidth() - 2 * kGap - kRetrigW - kHzW);
+        r.phase.setBounds (r2.removeFromLeft (phW).withSizeKeepingCentre (phW, h2));
+        r2.removeFromLeft (kGap);
+        r.retrig.setBounds (r2.removeFromLeft (juce::jmin (kRetrigW, juce::jmax (0, r2.getWidth())))
+                              .withSizeKeepingCentre (kRetrigW, h2));
+        r2.removeFromLeft (kGap);
+        const int hzW = juce::jmin (kHzW, juce::jmax (0, r2.getWidth()));
+        r.hz.setBounds (r2.removeFromLeft (hzW).withSizeKeepingCentre (hzW, h2));
 
         // Medidor de salida: franja fina al pie de la card, del inicio de TARGET al final de DEPTH.
         meterRects[(size_t) i] = { r.target.getX(), card.getBottom() - 10,

@@ -3,6 +3,7 @@
 // mapea NOTAS a triggers y DESCARTA los CC; esto los captura y los rutea a CUALQUIER knob/macro. Vive en el
 // MESSAGE THREAD (el editor drena una cola lock-free de CC crudos y consulta este mapa) → puede usar std/heap.
 // Puro (sin JUCE), testeable. La persistencia serializa a un string plano que va al ValueTree del plugin.
+#include "util/LocaleSafeNumber.h"   // to_chars/from_chars: la persistencia no depende del locale
 #include <string>
 #include <vector>
 #include <optional>
@@ -77,9 +78,11 @@ public:
     // Persistencia: "cc,param,lo,hi;cc,param,lo,hi;..." (el param no lleva comas ni ; por contrato APVTS id).
     std::string serialize() const
     {
-        std::ostringstream os;
-        for (const auto& a : assigns_) os << a.cc << ',' << a.paramId << ',' << a.lo << ',' << a.hi << ';';
-        return os.str();
+        std::string out;
+        for (const auto& a : assigns_)
+            out += num::toString (a.cc) + ',' + a.paramId + ','
+                 + num::toString (a.lo) + ',' + num::toString (a.hi) + ';';
+        return out;
     }
     void deserialize (const std::string& s)
     {
@@ -95,12 +98,10 @@ public:
             if (! std::getline (rs, param, ',')) continue;
             std::getline (rs, loStr, ',');
             std::getline (rs, hiStr, ',');
-            try {
-                const int cc = std::stoi (ccStr);
-                const float lo = loStr.empty() ? 0.0f : std::stof (loStr);
-                const float hi = hiStr.empty() ? 1.0f : std::stof (hiStr);
-                if (! param.empty()) assigns_.push_back ({ cc, param, lo, hi });
-            } catch (...) { /* registro corrupto → se omite */ }
+            const int cc = num::toInt (ccStr, -1);
+            const float lo = loStr.empty() ? 0.0f : num::toFloat (loStr, 0.0f);
+            const float hi = hiStr.empty() ? 1.0f : num::toFloat (hiStr, 1.0f);
+            if (cc >= 0 && ! param.empty()) assigns_.push_back ({ cc, param, lo, hi });   // corrupto → se omite
         }
     }
 
