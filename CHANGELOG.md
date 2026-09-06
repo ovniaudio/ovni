@@ -5,6 +5,54 @@ All notable changes to the [OVNI](https://github.com/ovniaudio/ovni) catalog are
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.3.1] - 2026-09-06
+
+**A SUPERNOVA-only maintenance release, all of it about the app's audio.** The system-audio
+permission is now the small one — audio, not screen — and it is asked when you pick the source;
+plus a round of fixes for the things that broke around it: plugging in headphones, closing the
+window while macOS was still asking, and a REOPEN that built a shell command out of the folder
+name. The seven OVNI audio plugins and ORBIT are unchanged and are not part of this release.
+
+### Changed
+
+- **System audio capture uses Core Audio taps on macOS 14.2+: the permission is now
+  "System Audio Recording Only" — no more "screen" prompt — and it is asked when you
+  pick the source, not at launch.** SUPERNOVA never looked at your screen; until now it
+  had to ask for screen recording because that was the only way macOS exposed system
+  audio. On macOS 14.2 and later the app uses Core Audio process taps instead, so the
+  prompt names exactly what it does. macOS 13 – 14.1 keep the ScreenCaptureKit path (and
+  its screen permission) — that API does not exist there yet. Opening the app no longer
+  pops a dialog: it starts, runs, and the top bar offers **ALLOW**; if you decline, the
+  app stays usable on an input device or MIDI and the notice tells you which System
+  Settings pane to open. macOS asks once — later launches re-check in silence.
+
+### Fixed
+
+- **REOPEN relaunches the copy you are running.** It used to hand the job to
+  LaunchServices, which could resolve the bundle identifier to a *different* installed
+  copy of SUPERNOVA and reopen that one instead. It now relaunches the exact bundle on
+  disk, as a new instance.
+- **REOPEN no longer builds a shell command out of the folder name.** The path of the app was
+  pasted into a shell command, so the *name of the folder you keep SUPERNOVA in* was executed:
+  a copy sitting in a directory with `$(…)` or backticks in its name — a perfectly legal folder
+  name — ran that when you pressed REOPEN. The path now travels as a plain argument and is never
+  parsed as code. If the relauncher itself fails to start, the app no longer quits on you.
+- **Plugging in headphones no longer leaves the visual deaf.** Changing the output device — or
+  its sample rate — used to silence System Audio until you reopened the app, because the capture
+  stayed bound to whichever output was default when it started. It now notices the change and
+  rebuilds itself, in under a second, without asking for permission again. The same self-repair
+  covers any other way the capture dies; and if you switch the permission **off** in System
+  Settings while the app is open, the notice comes back instead of the app pretending to listen.
+- **Closing the app — or switching source — while macOS is asking no longer freezes it.** The
+  system's permission dialog blocks until you answer it, and the app used to wait for that on its
+  main thread: a spinning beachball for as long as the dialog stayed open. It no longer waits.
+- **The top bar says when it is waiting for macOS.** If the permission was already asked for once
+  but macOS has not answered yet (say you reset your permissions), the app used to show nothing
+  while a system dialog appeared out of nowhere. After two seconds it now says
+  *Waiting for macOS permission…*. And if the capture fails for a reason that is **not** the
+  permission — no output device, a broken audio chain — the notice offers **ALLOW** to retry
+  instead of leaving the app silently stuck, which is what happened before.
+
 ## [0.3.0] - 2026-09-05
 
 **SUPERNOVA becomes a playable instrument.** A SUPERNOVA-only release: the MEDIA

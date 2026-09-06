@@ -68,9 +68,9 @@ Full story, rules, and troubleshooting: [`docs/AUDIO-TCC.md`](docs/AUDIO-TCC.md)
 | HALO | Audio | macOS + Windows | Released v0.1.1 |
 | HORIZON | Audio | macOS + Windows | Released v0.1.1 |
 | AURORA | Audio | macOS + Windows | Released v0.1.1 |
-| **SUPERNOVA** | Audiovisual | macOS | **0.3.0** |
+| **SUPERNOVA** | Audiovisual | macOS | **0.3.1** |
 
-The 7 audio plugins are cross-platform (Windows VST3 already ships). SUPERNOVA shipped as **v0.2.0** on 2026-08-25 and is macOS-only; **v0.3.0** adds the media session, four new worlds and the reworked LFOs. Its source lives on branch `feat/supernova`, tagged per release (`v0.3.0`).
+The 7 audio plugins are cross-platform (Windows VST3 already ships). SUPERNOVA shipped as **v0.2.0** on 2026-08-25 and is macOS-only; **v0.3.0** added the media session, four new worlds and the reworked LFOs, and **v0.3.1** moves the app's system-audio capture to the small "System Audio Recording" permission (no screen prompt) and repairs itself when the output device changes. Its source lives on branch `feat/supernova`, tagged per release (`v0.3.1`).
 
 ## License
 

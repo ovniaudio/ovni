@@ -1,8 +1,8 @@
 #include "AppTopBar.h"
-#include "ui/theme.h"          // look::hue (fuego SUPERNOVA)
+#include "ui/theme.h"          // trae ui-kit/Theme.h (el hue de SUPERNOVA lo usa el aviso)
 #include "ui-kit/Theme.h"      // ovni::ui::theme (paleta del sello)
 #include "ui-kit/Fonts.h"      // ovni::ui::fonts
-#include <unistd.h>            // getpid() — REOPEN relanza esperando la muerte de este proceso
+#include "AppRelaunch.h"       // REOPEN: relanza ESTA copia (bundleURL), nunca por bundle id
 
 namespace supernova {
 
@@ -29,22 +29,17 @@ AppTopBar::AppTopBar (AppAudioEngine& e, SupernovaEditor& ed, SupernovaProcessor
     sourceBox.onChange = [this] { sourceChanged(); };
     addAndMakeVisible (sourceBox);
 
-    // Banner de permiso (oculto hasta que haga falta).
-    permLabel.setText (juce::String::fromUTF8 ("\xE2\x9A\xA0 1) Enable SUPERNOVA in Screen Recording"
-                       "   2) REOPEN"), juce::dontSendNotification);
-    permLabel.setFont (fonts::body (12.0f));
-    permLabel.setColour (juce::Label::textColourId, theme::amber);
-    permLabel.setVisible (false);
-    addAndMakeVisible (permLabel);
-    permBtn.setTooltip ("Opens Settings > Privacy > Screen & System Audio Recording. Enable SUPERNOVA there.");
-    permBtn.onClick = [this] { openScreenRecordingSettings(); };
-    permBtn.setVisible (false);
-    addAndMakeVisible (permBtn);
-    reopenBtn.setTooltip ("Relaunches SUPERNOVA so it picks up the permission (macOS only applies it on reopen).");
-    reopenBtn.setColour (juce::TextButton::buttonColourId, look::hue.withAlpha (0.30f));
-    reopenBtn.onClick = [this] { relaunchApp(); };
-    reopenBtn.setVisible (false);
-    addAndMakeVisible (reopenBtn);
+    // Aviso de permiso (oculto hasta que haga falta). ALLOW pide el permiso — es lo ÚNICO que deja salir
+    // el cartel de macOS; OPEN lleva al panel exacto de Ajustes; REOPEN relanza ESTA copia.
+    notice.onAction = [this]
+    {
+        if (notice.mode() == NoticeMode::denied) openPrivacySettings();
+        else                                     engine.requestSystemAudioPermission();
+        refreshPermissionUi();
+    };
+    notice.onReopen = [this] { relaunchApp(); };
+    notice.setVisible (false);
+    addChildComponent (notice);
 
     topBtn.setClickingTogglesState (true);
     topBtn.setTooltip ("Always on top");
@@ -119,45 +114,29 @@ void AppTopBar::openAudioSetup()
     setupDialog = o.launchAsync();
 }
 
-void AppTopBar::openScreenRecordingSettings()
+// El panel correcto depende del backend: 14.2+ pide "System Audio Recording", 13 … 14.1 el de pantalla.
+void AppTopBar::openPrivacySettings()
 {
-    juce::URL ("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
-        .launchInDefaultBrowser();
+    juce::URL (settingsPaneUrl (engine.captureBackend())).launchInDefaultBrowser();
 }
 
-void AppTopBar::relaunchApp()
-{
-    // macOS aplica el permiso de Screen Recording recién en un proceso NUEVO → relanzamos el bundle.
-    // BUG viejo: "open -n" + quit inmediato → la instancia nueva arrancaba mientras la vieja seguía viva y,
-    // con moreThanOneInstanceAllowed=false, se cerraba sola → "aprieto REOPEN y no se vuelve a abrir".
-    // FIX: un shell DESADJUNTADO espera a que ESTE proceso muera (kill -0 sobre nuestro PID) y RECIÉN
-    // AHÍ abre una instancia fresca. Instancia única preservada (no más "2 SUPERNOVA") + reapertura
-    // confiable. El hijo sobrevive a nuestra salida (JUCE no mata al ChildProcess en su dtor; queda
-    // huérfano reasignado a launchd, sin terminal de control → sin SIGHUP).
-    const auto path = juce::File::getSpecialLocation (juce::File::currentApplicationFile).getFullPathName();
-    const auto pid  = juce::String ((int) getpid());
-
-    juce::StringArray argv;
-    argv.add ("/bin/sh");
-    argv.add ("-c");
-    argv.add ("while /bin/kill -0 " + pid + " 2>/dev/null; do sleep 0.15; done; "
-              "/usr/bin/open \"" + path + "\"");
-
-    juce::ChildProcess relauncher;
-    relauncher.start (argv);   // desadjuntado: sobrevive a systemRequestedQuit()
-    juce::Timer::callAfterDelay (200, [] { juce::JUCEApplication::getInstance()->systemRequestedQuit(); });
-}
+void AppTopBar::relaunchApp() { relaunchThisBundle(); }   // ver app/AppRelaunch.h
 
 // ---------------------------------------------------------------------------- permiso
-void AppTopBar::setPermissionUi (bool denied)
+void AppTopBar::refreshPermissionUi()
 {
-    if (permissionUi == denied) return;
-    permissionUi = denied;
-    permLabel.setVisible (denied);
-    permBtn.setVisible (denied);
-    reopenBtn.setVisible (denied);
-    gainLabel.setVisible (! denied);
-    gain.setVisible (! denied);
+    const auto mode = noticeModel.update (engine.permissionState(),
+                                          juce::Time::getMillisecondCounterHiRes());
+    const bool show = engine.model().kind() == AudioSourceModel::Kind::systemAudio
+                    && mode != NoticeMode::hidden;
+
+    notice.setState (mode, engine.captureBackend());   // barato: sólo re-textea si algo cambió
+    if (permissionUi == show) return;
+
+    permissionUi = show;
+    notice.setVisible (show);
+    gainLabel.setVisible (! show);
+    gain.setVisible (! show);
     resized();
     repaint();
 }
@@ -167,14 +146,8 @@ void AppTopBar::timerCallback()
 {
     TopBar::timerCallback();   // medidor (engine.meterLevel via virtual) + BPM + toggles + rotate + SEQ
 
-    const bool denied = engine.model().kind() == AudioSourceModel::Kind::systemAudio
-                      && engine.systemStatus() == SystemAudioSource::Status::permissionDenied;
-    setPermissionUi (denied);
-
-    // Auto-reconexión: si quedó sin permiso, reintentá cada ~2.5s. Al activarlo en Ajustes el permiso
-    // se toma EN VIVO (CGPreflight) → el banner se va solo, sin relanzar la app.
-    if (denied && (++retryTicks % 75) == 0)
-        engine.retrySystemAudio();
+    engine.pollSystemAudio();  // gate ↔ backend (incluye el reintento lento si quedó denegado)
+    refreshPermissionUi();
 }
 
 // ---------------------------------------------------------------------------- layout (fila 1 de la APP)
@@ -203,11 +176,7 @@ void AppTopBar::layoutRow1 (juce::Rectangle<int> row1)
 
     if (permissionUi)
     {
-        reopenBtn.setBounds (row1.removeFromRight (78));
-        row1.removeFromRight (6);
-        permBtn.setBounds (row1.removeFromRight (72));
-        row1.removeFromRight (8);
-        permLabel.setBounds (row1);
+        notice.setBounds (row1);   // la fila ya viene con su margen (26px): no la achiques más
         meterRect = {};
     }
     else

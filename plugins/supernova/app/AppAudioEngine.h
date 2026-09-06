@@ -1,7 +1,8 @@
 #pragma once
 // AppAudioEngine — hostea el SupernovaProcessor y le entrega audio por processBlock (mismo camino que el
 // DAW), desde UNA de dos fuentes por vez:
-//   · System Audio  : SystemAudioSource (ScreenCaptureKit) empuja samples desde su cola → processBlock.
+//   · System Audio  : SystemCapture (Core Audio process taps en macOS 14.2+, ScreenCaptureKit antes)
+//                     empuja samples desde su cola → processBlock.
 //   · Input Device  : AudioDeviceManager abre mic/interfaz; ESTE objeto es el AudioIODeviceCallback.
 // Ambos caminos pasan por pushAudio(): mide el pico (medidor de la barra), tira el MIDI del collector
 // (nota→explosión/rayo ya existen) y llama processBlock. La SENSIBILIDAD VISUAL (fader IN de la barra)
@@ -13,7 +14,8 @@
 
 #include "PluginProcessor.h"
 #include "AudioSourceModel.h"
-#include "audio/SystemAudioSource.h"
+#include "audio/SystemCapture.h"
+#include "SystemAudioPermission.h"
 
 namespace supernova {
 
@@ -21,19 +23,25 @@ class AppAudioEngine final : private juce::AudioIODeviceCallback,
                              private juce::Timer   // heartbeat de silencio: mantiene vivo el reloj sin audio
 {
 public:
-    AppAudioEngine (SupernovaProcessor& processor, juce::PropertiesFile& settings);
+    // capture = el backend a usar. nullptr (el default de producción) ⇒ makeSystemCapture() elige por la
+    // versión de macOS. Se inyecta para poder testear la reconciliación del gate sin Cocoa, TCC ni HAL.
+    AppAudioEngine (SupernovaProcessor& processor, juce::PropertiesFile& settings,
+                    std::unique_ptr<SystemCapture> capture = nullptr);
     ~AppAudioEngine() override;
 
     // Arranca con lo persistido (o el default = System Audio). Llamar en el message thread.
     void begin();
 
     void useSystemAudio();
-    void retrySystemAudio();                                // re-arma la captura si quedó sin permiso (lo llama la barra)
+    void requestSystemAudioPermission();   // el click de ALLOW: ÚNICO camino al cartel del sistema (D-33)
+    void pollSystemAudio();                // la barra lo llama a 30Hz: reconcilia el gate con el backend
     void useInputDevice (const juce::String& deviceName);   // "" = device actual del manager
     void setMidiInput (const juce::String& identifierOrName);
 
     float meterLevel() const noexcept                    { return meter.load(); }
-    SystemAudioSource::Status systemStatus() const noexcept { return sysAudio.status(); }
+    SystemCaptureStatus systemStatus() const noexcept    { return sysAudio->status(); }
+    SystemAudioBackend  captureBackend() const noexcept  { return sysAudio->backend(); }
+    SystemAudioPermissionGate::State permissionState() const noexcept { return gate.state(); }
     const AudioSourceModel& model() const noexcept       { return model_; }
     juce::AudioDeviceManager& deviceManager() noexcept   { return devMgr; }   // para el diálogo de settings
 
@@ -62,6 +70,10 @@ private:
     // gate lo suprime en cuanto una fuente entrega bloques). ----
     void timerCallback() override;
 
+    void startSystemCapture();                 // arranca el backend con el sink de siempre
+    static constexpr int    kPollRetryTicks = 75;    // ~2.5s a 30Hz: reintento lento mientras esté denegado
+    static constexpr int    kRestartTicks   = 15;    // ~0.5s a 30Hz: rearme de una captura que se cayó sola
+
     static constexpr int    kPrepBlock    = 4096;
     static constexpr int    kHeartbeatHz  = 90;      // cadencia del tick (buena precisión de tap, barato)
     static constexpr double kAudioGapMs   = 120.0;   // audio real dentro de esta ventana → heartbeat suprimido
@@ -70,7 +82,8 @@ private:
     SupernovaProcessor&   proc;
     juce::PropertiesFile& settings;
     juce::AudioDeviceManager devMgr;
-    SystemAudioSource        sysAudio;
+    std::unique_ptr<SystemCapture> sysAudio;   // backend elegido por la versión de macOS (D-33)
+    SystemAudioPermissionGate      gate;       // cuándo se intenta capturar (y por lo tanto cuándo sale el cartel)
     juce::MidiMessageCollector midiCollector;
     std::unique_ptr<juce::MidiInput> midiIn;
     AudioSourceModel model_;
@@ -83,7 +96,10 @@ private:
     std::atomic<double> lastRealAudioMs { 0.0 };   // marca de tiempo del último bloque de audio REAL
     double lastHeartbeatMs = 0.0;                   // (message thread) para el dt del heartbeat
     int  preparedBlock = 0;
+    int  retryTicks = 0;
+    int  restartTicks = 0;
     bool deviceCallbackAdded = false;
+    bool loggedLive = false;                   // el "[supernova] live: …" sale una vez por captura
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AppAudioEngine)
 };

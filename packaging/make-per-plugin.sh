@@ -35,6 +35,9 @@
 #      la misma versión (o una "mayor" por error).
 #   3. POST-CHECK (después de productbuild): se expande cada .pkg emitido y se verifica que el
 #      PackageInfo de cada componente y el Distribution declaren la versión pedida.
+# Y desde 0.3.1, en el mismo post-check, una GUARDIA DE ARQUITECTURA: cada ejecutable del payload tiene
+# que ser universal (arm64 + x86_64). 0.3.0 estuvo a un pelo de salir thin porque el build/ había quedado
+# en el preset `dev`, y eso sólo se nota en una Mac Intel, después de publicar. Test: packaging/tests/.
 #
 # Cumplimiento AGPLv3 (§4/§6): cada instalador incluye y muestra la licencia, e instala
 # LICENSE.txt + NOTICE.txt + SOURCE.txt en /Library/Audio/Plug-Ins/OVNI Audio/.
@@ -165,7 +168,7 @@ complete corresponding source of this version:
     · ORBIT (el flagship):
         https://github.com/ovniaudio/orbita
     · SUPERNOVA (visual synth, macOS):
-        https://github.com/ovniaudio/ovni/tree/v0.3.0   (branch feat/supernova · tag v0.3.0)
+        https://github.com/ovniaudio/ovni/tree/v$VERSION   (branch feat/supernova · tag v$VERSION)
 
 (source available per AGPLv3 §6)
 
@@ -302,11 +305,13 @@ HTML
 # productbuild todavía sintetizó alguno— los <bundle CFBundle…> del Distribution, que son
 # exactamente los que decían 0.1.1 en el .pkg roto de ORBIT v0.2.0.
 verify_pkg() { # $1 = .pkg emitido
-  local pkg="$1" n x pi comp v seen=0
+  local pkg="$1" n x pi comp v seen=0 bin archs bins=0
   n="$(basename "$pkg")"
   x="$WORK/verify-${n%.pkg}"
   rm -rf "$x"
-  pkgutil --expand "$pkg" "$x" >/dev/null 2>&1 || fail "post-check: pkgutil --expand falló en $n"
+  # --expand-full (no --expand): además del Distribution/PackageInfo hace falta el PAYLOAD desempacado
+  # para poder mirar los binarios con lipo. Ver la guardia de arquitectura, más abajo.
+  pkgutil --expand-full "$pkg" "$x" >/dev/null 2>&1 || fail "post-check: pkgutil --expand-full falló en $n"
   [ -f "$x/Distribution" ] || fail "post-check: $n no tiene Distribution"
 
   for pi in "$x"/*.pkg/PackageInfo; do
@@ -328,8 +333,21 @@ verify_pkg() { # $1 = .pkg emitido
     done < <(xml_attr bundle "$attr" < "$x/Distribution")
   done
 
+  # --- GUARDIA DE ARQUITECTURA ---
+  # 0.3.0 estuvo a un pelo de salir arm64-only: el build/ había quedado en el preset `dev` y nadie lo
+  # hubiera atrapado. El .pkg se arma igual de contento con un payload thin, y el problema recién
+  # aparece en una Mac Intel, después de publicar. Se mira el binario que REALMENTE va adentro del
+  # paquete —no el que había en disco cuando se lanzó el script—, que es lo único que se distribuye.
+  while IFS= read -r bin; do
+    archs="$(lipo -archs "$bin" 2>/dev/null)"
+    case " $archs " in *" x86_64 "*) ;; *) fail "no universal: ${bin#"$x/"} = ${archs:-<no es Mach-O>}" ;; esac
+    case " $archs " in *" arm64 "*)  ;; *) fail "no universal: ${bin#"$x/"} = ${archs:-<no es Mach-O>}" ;; esac
+    bins=$((bins+1))
+  done < <(find "$x" -type f -path "*/Contents/MacOS/*" -perm -u+x)
+  [ "$bins" -gt 0 ] || fail "post-check: $n no trae ningún ejecutable en el payload (¿bundles vacíos?)"
+
   rm -rf "$x"
-  log "  post-check OK: $n declara $VERSION en $seen componentes + Distribution"
+  log "  post-check OK: $n declara $VERSION en $seen componentes + Distribution · $bins binarios universales"
 }
 
 # --- productbuild común (firma opcional). ---

@@ -550,6 +550,11 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/FitAspectTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/VideoSourceTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/AppAudioTests.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/AppAudioEngineTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/TapLifecycleTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/SystemCaptureBackendTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/SystemAudioPermissionTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/AppRelaunchTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/BeatClockTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiCcMapTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/LfoBankTest.cpp
@@ -565,9 +570,16 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/WorldCardsTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ProcessorIntegrationTest.cpp
         ${_snv_src}
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/app/AppAudioEngine.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemCapture.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemAudioSource.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemAudioTapSource.mm
         ${CMAKE_SOURCE_DIR}/shared/template/PluginProcessorBase.cpp
         ${CMAKE_SOURCE_DIR}/shared/template/PluginEditorBase.cpp)
     set_source_files_properties(
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemCapture.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemAudioSource.mm
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemAudioTapSource.mm
         ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalRenderer.mm
         ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/SupernovaMTKView.mm
         ${CMAKE_SOURCE_DIR}/plugins/supernova/source/render/metal/MetalViewComponent.mm
@@ -589,7 +601,8 @@ if(APPLE)
         juce::juce_audio_utils juce::juce_gui_basics juce::juce_gui_extra juce::juce_dsp
         juce::juce_recommended_config_flags
         "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework CoreVideo" "-framework IOSurface" "-framework Vision"
-        "-framework AVFoundation" "-framework CoreMedia" "-framework ImageIO")
+        "-framework AVFoundation" "-framework CoreMedia" "-framework ImageIO"
+        "-framework ScreenCaptureKit" "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreGraphics")
     set_target_properties(OvniSupernovaTests PROPERTIES OSX_ARCHITECTURES "arm64")
     catch_discover_tests(OvniSupernovaTests TEST_PREFIX "[supernova] " DISCOVERY_MODE PRE_TEST)
 endif()

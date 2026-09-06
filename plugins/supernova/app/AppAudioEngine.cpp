@@ -1,15 +1,19 @@
 #include "AppAudioEngine.h"
 #include "AudioConvert.h"
+#include <cstdio>
 
 namespace supernova {
 
 namespace {
 constexpr const char* kSettingSource = "audioSource";      // XML del AudioSourceModel
 constexpr const char* kSettingDevice = "audioDeviceState"; // XML del AudioDeviceManager
+constexpr const char* kSettingAsked  = "sysAudioAsked";    // ¿ya salió el cartel de permiso alguna vez? (D-33)
 }
 
-AppAudioEngine::AppAudioEngine (SupernovaProcessor& processor, juce::PropertiesFile& s)
-    : proc (processor), settings (s)
+AppAudioEngine::AppAudioEngine (SupernovaProcessor& processor, juce::PropertiesFile& s,
+                                std::unique_ptr<SystemCapture> capture)
+    : proc (processor), settings (s),
+      sysAudio (capture != nullptr ? std::move (capture) : makeSystemCapture())
 {
     scratch.setSize (2, kPrepBlock, false, true, false);   // preasignado; jamás realoca en callback
 }
@@ -47,24 +51,84 @@ void AppAudioEngine::useSystemAudio()
     prepareProcessor (48000.0, kPrepBlock);
     midiCollector.reset (48000.0);
 
-    sysAudio.start (48000, 2, [this] (const float* const* ch, int nc, int nf, double sr)
+    // D-33: acá NO se arranca a ciegas. El gate decide — sin permiso todavía, la app queda viva (heartbeat,
+    // MIC/MIDI) y la barra muestra el aviso; el cartel del sistema espera al click de ALLOW.
+    gate.begin (settings.getBoolValue (kSettingAsked, false), sysAudio->isAuthorized());
+    if (gate.shouldStartCapture())
+        startSystemCapture();
+}
+
+void AppAudioEngine::startSystemCapture()
+{
+    loggedLive = false;
+    sysAudio->start (48000, 2, [this] (const float* const* ch, int nc, int nf, double sr)
     {
         pushAudio (ch, nc, nf, sr);
     });
 }
 
-void AppAudioEngine::retrySystemAudio()
+// El click de ALLOW de la barra: el ÚNICO camino por el que la app deja salir el cartel de macOS.
+void AppAudioEngine::requestSystemAudioPermission()
 {
-    // Solo si estamos en System Audio y NO capturando (típicamente permiso recién concedido en Ajustes).
     if (model_.kind() != AudioSourceModel::Kind::systemAudio) return;
-    const auto st = sysAudio.status();
-    if (st == SystemAudioSource::Status::capturing) return;
+    if (! gate.allowClicked()) return;
 
-    prepareProcessor (48000.0, kPrepBlock);   // idempotente
-    sysAudio.start (48000, 2, [this] (const float* const* ch, int nc, int nf, double sr)
+    settings.setValue (kSettingAsked, true);   // se pide UNA vez: los próximos arranques reintentan callados
+    settings.saveIfNeeded();
+    prepareProcessor (48000.0, kPrepBlock);    // idempotente
+    startSystemCapture();
+}
+
+// Reconcilia el gate con lo que de verdad hizo el backend. La barra lo llama a 30Hz.
+void AppAudioEngine::pollSystemAudio()
+{
+    if (model_.kind() != AudioSourceModel::Kind::systemAudio) return;
+
+    const auto st = sysAudio->status();
+
+    if (gate.state() == SystemAudioPermissionGate::State::requesting)
     {
-        pushAudio (ch, nc, nf, sr);
-    });
+        if (st == SystemCaptureStatus::capturing)             gate.captureStarted();
+        else if (st == SystemCaptureStatus::permissionDenied) { gate.captureDenied(); sysAudio->stop(); }
+        else if (st == SystemCaptureStatus::error || st == SystemCaptureStatus::unsupported)
+        {
+            // NO es un permiso faltante (HAL sin salida default, aggregate caído, API que no existe en
+            // esta versión de macOS): sería mentira mandar al usuario a Ajustes. Pero hasta 0.3.0 esto
+            // no hacía NADA y el gate quedaba clavado en `requesting` PARA SIEMPRE — sin aviso, sin
+            // botón, sin audio, y con lo que el intento hubiera creado colgando del HAL. Soltamos la
+            // captura y volvemos al aviso con ALLOW, que es lo honesto: "no pude, probá de nuevo".
+            gate.captureFailed();
+            sysAudio->stop();
+        }
+        return;
+    }
+
+    // Capturando (o eso creíamos): el backend puede haberse caído SOLO. El caso de todos los días son los
+    // auriculares — el aggregate queda atado al UID de la salida de ese momento y el formato del tap se lee
+    // una sola vez —, pero vale para cualquier muerte del HAL.
+    if (gate.state() == SystemAudioPermissionGate::State::granted)
+    {
+        if (st == SystemCaptureStatus::capturing) { restartTicks = 0; return; }
+
+        // El usuario apagó el permiso en Ajustes con la app abierta.
+        if (st == SystemCaptureStatus::permissionDenied) { gate.captureDenied(); sysAudio->stop(); return; }
+
+        // Rearme CALLADO: TCC ya contestó, así que reintentar no levanta ningún cartel. Con throttle, para
+        // no martillar el HAL si la salida se fue del todo. El start() relee el formato del tap nuevo.
+        if ((++restartTicks % kRestartTicks) != 0) return;
+        prepareProcessor (48000.0, kPrepBlock);
+        startSystemCapture();
+        return;
+    }
+
+    if (gate.state() != SystemAudioPermissionGate::State::denied) return;
+
+    // Denegado: reintento LENTO (~2.5s). No levanta cartel — TCC ya tiene respuesta guardada —, así que si
+    // el usuario prende el permiso en Ajustes el aviso se va solo, sin tener que tocar REOPEN.
+    if ((++retryTicks % kPollRetryTicks) != 0) return;
+    gate.authorizationSeen();
+    prepareProcessor (48000.0, kPrepBlock);
+    startSystemCapture();
 }
 
 void AppAudioEngine::useInputDevice (const juce::String& deviceName)
@@ -92,7 +156,7 @@ void AppAudioEngine::useInputDevice (const juce::String& deviceName)
 
 void AppAudioEngine::stopEverything()
 {
-    sysAudio.stop();
+    sysAudio->stop();
     if (deviceCallbackAdded)
     {
         devMgr.removeAudioCallback (this);   // bloquea hasta que el callback del device termine
@@ -137,7 +201,6 @@ void AppAudioEngine::pushAudio (const float* const* chans, int numCh, int numSam
     const juce::ScopedTryLock sl (processLock);
     if (! sl.isLocked()) return;              // durante un switch: dropeá este bloque
 
-    juce::ignoreUnused (sr);
     const int ch = juce::jlimit (1, 2, numCh);
 
     // Procesar en tajadas de <= preparedBlock (monoScratch del processor está dimensionado a ese block).
@@ -151,7 +214,17 @@ void AppAudioEngine::pushAudio (const float* const* chans, int numCh, int numSam
 
         // Vista de n samples sobre el scratch preasignado (sin realocar).
         juce::AudioBuffer<float> block (scratch.getArrayOfWritePointers(), scratch.getNumChannels(), n);
-        meter.store (bufferPeak (block));
+        const float pk = bufferPeak (block);
+        meter.store (pk);
+
+        // Prueba de vida para el smoke: una línea, la primera vez que entra audio REAL con señal.
+        if (fromRealSource && ! loggedLive && pk > 0.0f)
+        {
+            loggedLive = true;
+            std::fprintf (stderr, "[supernova] live: system-audio %s %dch @%.0fHz rms>0 (peak %.4f)\n",
+                          sysAudio->backend() == SystemAudioBackend::processTap ? "process-tap" : "screencapturekit",
+                          numCh, sr, (double) pk);
+        }
 
         midiScratch.clear();
         midiCollector.removeNextBlockOfMessages (midiScratch, n);
