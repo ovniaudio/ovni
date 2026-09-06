@@ -40,6 +40,7 @@ target_sources(supernova_app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/AppTopBar.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/AppAudioEngine.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/AppRelaunch.mm
+    ${CMAKE_CURRENT_SOURCE_DIR}/audio/TapLifecycle.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/audio/SystemAudioSource.mm
     ${CMAKE_CURRENT_SOURCE_DIR}/audio/SystemAudioTapSource.mm
     ${CMAKE_CURRENT_SOURCE_DIR}/audio/SystemCapture.mm

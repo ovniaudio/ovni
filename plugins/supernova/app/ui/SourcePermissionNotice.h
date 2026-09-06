@@ -1,13 +1,15 @@
 #pragma once
 // SourcePermissionNotice — el aviso de la barra SOURCE cuando System Audio todavía no puede escuchar.
-// Un solo componente con los TRES modos (D-33), así el aviso se ve igual en la app y en el [.uisnap]:
+// Un solo componente con los CUATRO modos (D-33 · D-35), así el aviso se ve igual en la app y en el [.uisnap]:
 //
-//   ask       ⚠ System Audio needs permission                                    [ ALLOW ]
-//   waiting   ⚠ Waiting for macOS permission…                                    (sin botón)
-//   denied    ⚠ Enable in System Settings › Privacy › System Audio Recording     [ OPEN ] [ REOPEN ]
+//   ask          ⚠ System Audio needs permission                                    [ ALLOW ]
+//   waiting      ⚠ Waiting for macOS permission…                                    (sin botón)
+//   denied       ⚠ Enable in System Settings › Privacy › System Audio Recording     [ OPEN ] [ REOPEN ]
+//   unsupported  ⚠ System Audio needs macOS 13 or later on this Mac — …             (sin botón)
 //
-// `waiting` es el cartel del sistema abierto: no hay nada que el usuario pueda tocar acá, así que no hay
-// botón. Quién decide el modo es SourceNoticeModel (app/SystemAudioPermission.h), que tiene el reloj.
+// `waiting` es el cartel del sistema abierto y `unsupported` es una Mac en macOS 11/12: en los dos no hay
+// nada que el usuario pueda tocar acá, así que no hay botón. Quién decide el modo es SourceNoticeModel
+// (app/SystemAudioPermission.h), que tiene el reloj.
 //
 // No es texto suelto flotando en la barra: va sobre una placa ámbar tenue con hairline, para que se lea
 // como algo accionable (y no como un error). Header-only a propósito — el exe de tests no compila app/*.cpp

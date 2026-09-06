@@ -20,17 +20,22 @@ class FakeCapture final : public supernova::SystemCapture
 public:
     bool start (int, int, SampleCallback cb) noexcept override
     {
-        ++startCalls; sink = std::move (cb); status_ = next; return true;
+        ++startCalls;
+        if (rejectNextStarts > 0) { --rejectNextStarts; return false; }   // setup ya en vuelo: no se apila
+        sink = std::move (cb); status_ = next; return true;
     }
     void stop() noexcept override { ++stopCalls; sink = nullptr; status_ = SystemCaptureStatus::idle; }
     SystemCaptureStatus status() const noexcept override  { return status_; }
     bool isAuthorized() const noexcept override           { return authorized; }
+    bool isSupported() const noexcept override            { return supported; }
     SystemAudioBackend backend() const noexcept override  { return SystemAudioBackend::processTap; }
 
     void setStatus (SystemCaptureStatus s) noexcept { status_ = s; }
 
     SystemCaptureStatus next = SystemCaptureStatus::idle;   // lo que devuelve el próximo start()
     bool authorized = false;
+    bool supported  = true;    // false = macOS 11/12: ni taps ni ScreenCaptureKit
+    int  rejectNextStarts = 0; // cuántos start() rechazar (quedan en `idle`), como el setup en vuelo real
     int  startCalls = 0, stopCalls = 0;
     SampleCallback sink;
 
@@ -65,6 +70,42 @@ struct Harness
 };
 
 } // namespace
+
+TEST_CASE ("useSystemAudio: en una Mac sin ningún backend NI se intenta — el gate arranca en unsupported",
+           "[supernova][app]")
+{
+    // macOS 11/12: makeSystemCapture() ya lo sabe antes de tocar nada (SystemAudioTapSource::isAvailable()
+    // falso y SCK falso). Pasar igual por `requesting` sería teatro: un intento condenado a fallar, medio
+    // segundo de aviso vacío y —si `sysAudioAsked` quedó persistido de otra Mac o de un backup— un
+    // arranque que dispara la captura sin razón. Se pregunta ANTES de pedir.
+    auto dbl = std::make_unique<FakeCapture>();
+    dbl->supported = false;
+    Harness h { std::move (dbl) };
+
+    h.engine.useSystemAudio();
+
+    REQUIRE (h.engine.permissionState() == State::unsupported);
+    REQUIRE (h.fake->startCalls == 0);           // ni un intento
+    REQUIRE_FALSE (h.engine.model().kind() == supernova::AudioSourceModel::Kind::inputDevice);
+
+    h.engine.requestSystemAudioPermission();     // y el click, si la barra lo mostrara, tampoco arranca
+    REQUIRE (h.fake->startCalls == 0);
+    REQUIRE (h.engine.permissionState() == State::unsupported);
+}
+
+TEST_CASE ("useSystemAudio: sin backend, ni el arranque con `sysAudioAsked` guardado intenta capturar",
+           "[supernova][app]")
+{
+    auto dbl = std::make_unique<FakeCapture>();
+    dbl->supported = false;
+    Harness h { std::move (dbl) };
+    h.settings.setValue ("sysAudioAsked", true);   // la app ya pidió el permiso alguna vez (otra Mac, backup)
+
+    h.engine.useSystemAudio();
+
+    REQUIRE (h.engine.permissionState() == State::unsupported);   // NO `requesting`
+    REQUIRE (h.fake->startCalls == 0);
+}
 
 TEST_CASE ("poll: el backend arrancó a capturar → el gate pasa a granted y el aviso se va", "[supernova][app]")
 {
@@ -123,11 +164,13 @@ TEST_CASE ("poll: un error del HAL NO deja el gate clavado en requesting", "[sup
     REQUIRE (h.engine.permissionState() == State::granted);
 }
 
-TEST_CASE ("poll: un backend 'unsupported' tampoco deja el gate clavado", "[supernova][app]")
+TEST_CASE ("poll: un backend 'unsupported' dice que esta Mac no puede, no que falta un permiso",
+           "[supernova][app]")
 {
-    // macOS 11/12: ni process taps (14.2+) ni ScreenCaptureKit (13+). Mismo agujero que 'error' — el gate
-    // se quedaba en `requesting` sin nada en pantalla. Mejor el aviso con ALLOW (reintentable, y no
-    // miente diciendo "prendelo en Ajustes") que una app muda para siempre.
+    // macOS 11/12: ni process taps (14.2+) ni ScreenCaptureKit (13+). 0.3.1 mandaba esto a
+    // `needsPermission`, o sea a un botón ALLOW que en esas versiones NO puede resolver nada: macOS no
+    // muestra ningún cartel, el intento vuelve a fallar y el usuario clickea al vacío. Ahora el gate lo
+    // dice: no falta un permiso, falta versión de macOS (D-35).
     auto dbl = std::make_unique<FakeCapture>();
     dbl->next = SystemCaptureStatus::unsupported;
     Harness h { std::move (dbl) };
@@ -136,7 +179,61 @@ TEST_CASE ("poll: un backend 'unsupported' tampoco deja el gate clavado", "[supe
     h.engine.requestSystemAudioPermission();
     h.engine.pollSystemAudio();
 
-    REQUIRE (h.engine.permissionState() == State::needsPermission);
+    REQUIRE (h.engine.permissionState() == State::unsupported);
+    REQUIRE (h.fake->stopCalls >= 1);          // y se suelta lo que el intento hubiera creado
+
+    // Y NO se reintenta solo: la versión de macOS no cambia mientras la app está abierta.
+    const int startsAfter = h.fake->startCalls;
+    for (int i = 0; i < 120; ++i) h.engine.pollSystemAudio();   // 4s de poll a 30Hz
+    REQUIRE (h.engine.permissionState() == State::unsupported);
+    REQUIRE (h.fake->startCalls == startsAfter);
+}
+
+TEST_CASE ("poll: un start rechazado (setup en vuelo) NO deja el aviso clavado esperando a macOS",
+           "[supernova][app]")
+{
+    // El caso del 29: cambiar de SOURCE dos veces con el cartel de macOS abierto. El segundo intento cae
+    // sobre un setup todavía en vuelo, el backend lo rechaza (TapLifecycle no apila intentos) y el gate
+    // queda en `requesting` con el backend en `idle`. Cuando el usuario al fin contesta, el setup viejo
+    // aborta por generación caducada y NADIE rearma: "Waiting for macOS permission…" clavado hasta
+    // re-elegir la fuente. Ahora el poll lo ve —1s de `requesting` + `idle`— y vuelve a pedirlo.
+    auto dbl = std::make_unique<FakeCapture>();
+    dbl->next = SystemCaptureStatus::capturing;
+    dbl->rejectNextStarts = 1;                 // el primer start cae sobre un setup en vuelo
+    Harness h { std::move (dbl) };
+
+    h.engine.useSystemAudio();
+    h.engine.requestSystemAudioPermission();   // el click de ALLOW
+    REQUIRE (h.engine.permissionState() == State::requesting);
+    REQUIRE (h.fake->startCalls == 1);
+    REQUIRE (h.engine.systemStatus() == SystemCaptureStatus::idle);   // el intento no prendió nada
+
+    for (int i = 0; i < 60; ++i) h.engine.pollSystemAudio();          // 2s de poll a 30Hz
+
+    REQUIRE (h.engine.permissionState() == State::granted);           // se rearmó solo
+    REQUIRE (h.fake->startCalls >= 2);
+}
+
+TEST_CASE ("poll: el rearme de `requesting` no martilla — espera 1s antes de volver a intentar",
+           "[supernova][app]")
+{
+    // Mientras el cartel del sistema está abierto, el backend queda en `idle` legítimamente. El poll no
+    // puede reintentar a 30Hz: cada intento es un dispatch más sobre la cola del setup.
+    auto dbl = std::make_unique<FakeCapture>();
+    dbl->next = SystemCaptureStatus::capturing;
+    dbl->rejectNextStarts = 999;               // el setup nunca termina (cartel abierto)
+    Harness h { std::move (dbl) };
+
+    h.engine.useSystemAudio();
+    h.engine.requestSystemAudioPermission();
+    REQUIRE (h.fake->startCalls == 1);
+
+    for (int i = 0; i < 29; ++i) h.engine.pollSystemAudio();   // menos de 1s
+    REQUIRE (h.fake->startCalls == 1);                         // todavía nada
+
+    for (int i = 0; i < 91; ++i) h.engine.pollSystemAudio();   // hasta los 4s
+    REQUIRE (h.fake->startCalls == 5);                         // uno por segundo, ni más ni menos
+    REQUIRE (h.engine.permissionState() == State::requesting);
 }
 
 TEST_CASE ("poll: si la captura se cae con el permiso ya dado, se rearma sola y callada", "[supernova][app]")

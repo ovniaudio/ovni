@@ -96,7 +96,12 @@ struct SystemAudioTapSource::Impl : std::enable_shared_from_this<SystemAudioTapS
 
     SampleCallback cb;
     std::vector<float> planar;      // scratch para el caso interleaved (preasignado, no realoca en el IO)
-    double tapSr = 48000.0;
+
+    // La tasa a la que LLEGAN los frames, que es la del AGGREGATE — no la del tap. El formato del tap
+    // reporta 48k aunque la salida del usuario esté a 44.1k, y hasta 0.3.1 era ese número el que viajaba
+    // en cb(…, sr) y el que comparaba el srListener. Atómico: lo escribe la cola del setup y lo leen el
+    // IOProc y los bloques de notifyQ.
+    std::atomic<double> streamSr { 48000.0 };
 
     // Destruye lo que EXISTA, en el orden inverso exacto a la construcción (IOProc → aggregate → tap).
     // Idempotente, y por eso sirve para las dos cosas: el stop() normal y abortar un intento a medio
@@ -134,14 +139,19 @@ struct SystemAudioTapSource::Impl : std::enable_shared_from_this<SystemAudioTapS
         if (notifyQ == nil)
             notifyQ = dispatch_queue_create ("com.ovni.supernova.tap.notify", DISPATCH_QUEUE_SERIAL);
 
-        Impl* self = this;   // los listeners se sacan en destroyChain(), siempre antes de que muera el Impl
+        // WEAK, no crudo: removeDeviceListeners() saca el registro del HAL, pero un bloque YA despachado
+        // en notifyQ puede seguir en la cola y correr después — y si el Impl se fue en el medio (cerrar la
+        // app justo cuando cambia la salida) escribiría sobre memoria liberada. Con weak_ptr, el bloque
+        // que llega tarde no encuentra a nadie y se va callado.
+        std::weak_ptr<Impl> weakSelf = shared_from_this();
 
         AudioObjectPropertyAddress outAddr { kAudioHardwarePropertyDefaultOutputDevice,
                                              kAudioObjectPropertyScopeGlobal,
                                              kAudioObjectPropertyElementMain };
         outListener = ^(UInt32, const AudioObjectPropertyAddress*)
         {
-            self->releaseForRestart ("cambió la salida por default");
+            if (auto self = weakSelf.lock())
+                self->releaseForRestart ("cambió la salida por default");
         };
         const OSStatus outSt = AudioObjectAddPropertyListenerBlock (kAudioObjectSystemObject, &outAddr, notifyQ, outListener);
         if (outSt != noErr) tapLog ("[sysaudio] listener de salida-default FALLÓ st=%d (no se autorearma)\n", (int) outSt);
@@ -153,6 +163,9 @@ struct SystemAudioTapSource::Impl : std::enable_shared_from_this<SystemAudioTapS
                                             kAudioObjectPropertyElementMain };
         srListener = ^(UInt32, const AudioObjectPropertyAddress*)
         {
+            const auto self = weakSelf.lock();
+            if (! self) return;
+
             // Sólo si CAMBIÓ de verdad: el aggregate avisa también al asentarse, y un rearme por cada
             // aviso sería un bucle stop/start eterno.
             Float64 sr = 0.0;
@@ -161,7 +174,7 @@ struct SystemAudioTapSource::Impl : std::enable_shared_from_this<SystemAudioTapS
                                            kAudioObjectPropertyScopeGlobal,
                                            kAudioObjectPropertyElementMain };
             if (AudioObjectGetPropertyData (self->aggID, &a, 0, nullptr, &sz, &sr) == noErr
-                && sr > 0.0 && std::abs (sr - self->tapSr) > 1.0)
+                && sr > 0.0 && std::abs (sr - self->streamSr.load()) > 1.0)
                 self->releaseForRestart ("cambió el sample rate de la salida");
         };
         const OSStatus srSt = AudioObjectAddPropertyListenerBlock (aggID, &srAddr, notifyQ, srListener);
@@ -221,7 +234,7 @@ struct SystemAudioTapSource::Impl : std::enable_shared_from_this<SystemAudioTapS
 SystemAudioTapSource::SystemAudioTapSource() : impl (std::make_shared<Impl>()) {}
 SystemAudioTapSource::~SystemAudioTapSource() { stop(); }
 
-bool SystemAudioTapSource::isSupported() noexcept
+bool SystemAudioTapSource::isAvailable() noexcept
 {
     if (@available (macOS 14.2, *)) return true;
     return false;
@@ -234,7 +247,7 @@ bool SystemAudioTapSource::isAuthorized() const noexcept { return impl->authoriz
 // ------------------------------------------------------------------------------------------- start
 bool SystemAudioTapSource::start (int sampleRate, int channels, SampleCallback onSamples) noexcept
 {
-    if (! isSupported()) { impl->status = SystemCaptureStatus::unsupported; return false; }
+    if (! isAvailable()) { impl->status = SystemCaptureStatus::unsupported; return false; }
     if (impl->status.load() == SystemCaptureStatus::capturing) return true;
 
     juce::ignoreUnused (sampleRate, channels);   // el formato lo manda el TAP, no nosotros
@@ -244,7 +257,9 @@ bool SystemAudioTapSource::start (int sampleRate, int channels, SampleCallback o
     // El setup va a una cola de fondo: la PRIMERA vez, AudioHardwareCreateProcessTap levanta el cartel de
     // TCC y bloquea hasta que el usuario contesta — en el message thread congelaría la ventana. La tarea
     // se lleva una referencia FUERTE al Impl: puede seguir viva después de que el dueño se haya ido.
-    impl->life.start ([owner = impl, sink = std::move (onSamples)] (int gen)
+    // El resultado de life.start() es LA respuesta de start(): false = ya había un setup en vuelo, así que
+    // este intento no existió. Hasta 0.3.1 devolvíamos true igual y el engine creía que había pedido algo.
+    return impl->life.start ([owner = impl, sink = std::move (onSamples)] (int gen)
     {
         Impl* I = owner.get();
         @autoreleasepool
@@ -289,15 +304,17 @@ bool SystemAudioTapSource::start (int sampleRate, int channels, SampleCallback o
                                                      kAudioObjectPropertyElementMain };
                 AudioStreamBasicDescription asbd {};
                 UInt32 fmtSize = sizeof (asbd);
+                double tapFmtSr = 48000.0;
                 if (AudioObjectGetPropertyData (tapID, &fmtAddr, 0, nullptr, &fmtSize, &asbd) == noErr
                     && asbd.mSampleRate > 0.0)
-                    I->tapSr = asbd.mSampleRate;
+                    tapFmtSr = asbd.mSampleRate;
+                I->streamSr.store (tapFmtSr);   // provisorio: lo pisa la tasa REAL del aggregate, más abajo
                 // flags observadas en 14.2+: 0x9 = kAudioFormatFlagIsFloat (0x1) | …IsPacked (0x8).
                 // NO trae kAudioFormatFlagIsNonInterleaved (0x20): el tap entrega float INTERLEAVED, así
                 // que la rama que corre de verdad es la del de-interleave, no la planar. La planar queda
                 // como fallback por contrato del HAL (mNumberBuffers>1), no porque sea "lo normal" acá.
                 tapLog ("[sysaudio] tap format: %.0fHz %uch flags=0x%x (%s)\n",
-                        I->tapSr, (unsigned) asbd.mChannelsPerFrame, (unsigned) asbd.mFormatFlags,
+                        tapFmtSr, (unsigned) asbd.mChannelsPerFrame, (unsigned) asbd.mFormatFlags,
                         (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) ? "planar" : "interleaved");
 
                 // 3) Aggregate PRIVADO con el tap + el output default como sub-device/main.
@@ -324,6 +341,26 @@ bool SystemAudioTapSource::start (int sampleRate, int channels, SampleCallback o
                 if (aggSt != noErr || aggID == kAudioObjectUnknown) {
                     I->destroyChain(); I->setStatusIfCurrent (gen, SystemCaptureStatus::error); return; }
                 I->aggID = aggID;
+
+                // La tasa a la que va a bombear el IO es la del AGGREGATE, no la que declara el tap: con
+                // la salida a 44.1k el tap sigue reportando 48k y hasta 0.3.1 ese número mentiroso viajaba
+                // en cb(…, sr) y era el que comparaba el srListener (por eso nunca detectaba el cambio).
+                {
+                    AudioObjectPropertyAddress srAddr { kAudioDevicePropertyNominalSampleRate,
+                                                        kAudioObjectPropertyScopeGlobal,
+                                                        kAudioObjectPropertyElementMain };
+                    Float64 aggSr = 0.0;
+                    UInt32  srSize = sizeof (aggSr);
+                    if (AudioObjectGetPropertyData (aggID, &srAddr, 0, nullptr, &srSize, &aggSr) == noErr
+                        && aggSr > 0.0)
+                        I->streamSr.store ((double) aggSr);
+                    else
+                        tapLog ("[sysaudio] no pude leer la tasa del aggregate; uso la del tap (%.0fHz)\n",
+                                tapFmtSr);
+                }
+                if (std::abs (I->streamSr.load() - tapFmtSr) > 1.0)
+                    tapLog ("[sysaudio] la salida corre a %.0fHz y el tap declara %.0fHz: manda la del aggregate\n",
+                            I->streamSr.load(), tapFmtSr);
 
                 // Scratch del de-interleave, dimensionado antes de que corra el IO (jamás realoca ahí).
                 I->planar.assign ((size_t) kMaxCh * 8192u, 0.0f);
@@ -380,9 +417,9 @@ bool SystemAudioTapSource::start (int sampleRate, int channels, SampleCallback o
                             {
                                 I->frameLogs.fetch_add (1);
                                 tapLog ("[sysaudio] audio fluyendo por TAP (%dch @%.0fHz, %s)\n",
-                                        nCh, I->tapSr, planarPath ? "planar" : "de-interleave");
+                                        nCh, I->streamSr.load(), planarPath ? "planar" : "de-interleave");
                             }
-                            I->cb (chans, nCh, nFrames, I->tapSr);
+                            I->cb (chans, nCh, nFrames, I->streamSr.load());
                         }
                     });
 
@@ -391,6 +428,12 @@ bool SystemAudioTapSource::start (int sampleRate, int channels, SampleCallback o
                                                             I->setStatusIfCurrent (gen, SystemCaptureStatus::error); return; }
                 I->procID = procID;
 
+                // Armar el aggregate y el IOProc lleva su tiempo: un stop() (cambio de SOURCE, cierre de
+                // la app) puede caer JUSTO acá. Sin este guard el HAL veía un start que nadie pidió y que
+                // la línea de la limpieza tiraba un instante después. El guard de abajo, después del
+                // start, ya no alcanza: llega tarde.
+                if (! I->life.isCurrent (gen)) { I->destroyChain(); return; }
+
                 const OSStatus startSt = AudioDeviceStart (aggID, procID);
                 tapLog ("[sysaudio] deviceStart st=%d\n", (int) startSt);
                 if (startSt != noErr) { I->destroyChain(); I->setStatusIfCurrent (gen, SystemCaptureStatus::error); return; }
@@ -398,7 +441,8 @@ bool SystemAudioTapSource::start (int sampleRate, int channels, SampleCallback o
                 if (! I->life.isCurrent (gen)) { I->destroyChain(); return; }
                 I->installDeviceListeners();
                 I->status = SystemCaptureStatus::capturing;
-                tapLog ("[sysaudio] CAPTURANDO por process tap (@%.0fHz) — permiso: audio del sistema\n", I->tapSr);
+                tapLog ("[sysaudio] CAPTURANDO por process tap (@%.0fHz) — permiso: audio del sistema\n",
+                        I->streamSr.load());
             }
             else
             {
@@ -406,8 +450,6 @@ bool SystemAudioTapSource::start (int sampleRate, int channels, SampleCallback o
             }
         }
     });   // false = ya había un setup en vuelo (el poll a 30Hz no apila carteles): tampoco es un error
-
-    return true;
 }
 
 // -------------------------------------------------------------------------------------------- stop

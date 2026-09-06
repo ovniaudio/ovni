@@ -49,6 +49,12 @@ public:
     virtual void stop() noexcept = 0;
     virtual SystemCaptureStatus status() const noexcept = 0;
     virtual bool isAuthorized() const noexcept = 0;          // estado TCC EN VIVO del permiso del backend
+
+    // ¿La API que necesita este backend EXISTE en esta Mac? false = macOS 11/12 (ni taps 14.2+ ni SCK
+    // 13+). Se pregunta ANTES de intentar: sin esto el único modo de enterarse era arrancar la captura y
+    // esperar el `unsupported` — un intento condenado, y en el arranque con `sysAudioAsked` guardado, uno
+    // que ni siquiera nace de un click del usuario.
+    virtual bool isSupported() const noexcept = 0;
     virtual SystemAudioBackend backend() const noexcept = 0;
 };
 

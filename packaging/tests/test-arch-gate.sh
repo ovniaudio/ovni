@@ -7,8 +7,9 @@
 # bug de ORBIT del 3-sep; la de ARQUITECTURA faltaba.
 #
 # Arma bundles de mentira (Info.plist + un ejecutable de verdad hecho con clang) y comprueba las dos caras:
-#   · arm64-only  → el empaquetado tiene que FALLAR, y decir por qué.
-#   · universal   → el empaquetado tiene que PASAR (si no, la guardia sería un "siempre falla" inútil).
+#   · arm64-only            → el empaquetado tiene que FALLAR, y decir por qué.
+#   · universal             → el empaquetado tiene que PASAR (si no, la guardia sería un "siempre falla").
+#   · un bundle sin binario → tiene que FALLAR aunque los OTROS bundles del payload sí traigan ejecutables.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -76,6 +77,27 @@ if run_pkg fat; then
 else
   bad "un payload universal fue rechazado — la guardia se come lo bueno:"
   tail -5 "$WORK/fat/log" | sed 's/^/      /'
+fi
+
+# ------------------------------------------- caso 3: un bundle SIN ejecutable → tiene que FALLAR
+# El chequeo "trae ejecutables" era GLOBAL: contaba binarios en todo el payload, así que un .component
+# vacío pasaba sin que nadie lo notara mientras el .vst3 de al lado trajera el suyo. Y en una Mac Intel
+# eso es un plugin que instala y no carga.
+mkdir -p "$WORK/hollow/bundles" "$WORK/hollow/out"
+make_bundle "$WORK/hollow/bundles/ARCHGATE.vst3" ARCHGATE -arch arm64 -arch x86_64
+mkdir -p "$WORK/hollow/bundles/ARCHGATE.component/Contents/MacOS"   # Info.plist y MacOS/, sin binario
+cp "$WORK/hollow/bundles/ARCHGATE.vst3/Contents/Info.plist" \
+   "$WORK/hollow/bundles/ARCHGATE.component/Contents/Info.plist"
+
+if run_pkg hollow; then
+  bad "un bundle sin ejecutable se empaquetó igual (el .component vacío pasa colgado del .vst3 lleno)"
+else
+  if grep -qi "sin ejecutable" "$WORK/hollow/log"; then
+    ok "bundle vacío rechazado: $(grep -m1 -i 'sin ejecutable' "$WORK/hollow/log" | sed 's/^ *//')"
+  else
+    bad "falló, pero no por el bundle vacío — el mensaje no lo dice:"
+    tail -3 "$WORK/hollow/log" | sed 's/^/      /'
+  fi
 fi
 
 [ "$fails" -eq 0 ] && { printf '  arch-gate: OK\n'; exit 0; }

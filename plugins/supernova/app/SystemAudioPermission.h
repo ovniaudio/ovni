@@ -14,6 +14,11 @@
 //   granted         — capturando; sin aviso.
 //   denied          — el usuario dijo que no. La app sigue usable (MIC/MIDI); el aviso pasa a decir dónde
 //                     prenderlo. NO se vuelve a intentar solo: sólo si TCC cambia (authorizationSeen).
+//   unsupported     — esta Mac NO PUEDE capturar el audio del sistema: macOS 11/12, donde no existen ni
+//                     los process taps (14.2+) ni ScreenCaptureKit (13+). No falta un permiso, falta
+//                     versión: no hay cartel que macOS pueda mostrar ni botón que arregle nada, así que
+//                     el aviso lo dice y NO ofrece acción (D-35). Terminal: no se reintenta solo — la
+//                     versión de macOS no cambia con la app abierta.
 #include <juce_core/juce_core.h>
 #include "audio/SystemCapture.h"
 
@@ -22,7 +27,7 @@ namespace supernova {
 class SystemAudioPermissionGate
 {
 public:
-    enum class State { needsPermission, requesting, granted, denied };
+    enum class State { needsPermission, requesting, granted, denied, unsupported };
 
     // askedBefore = persistido por la app (¿ya salió el cartel alguna vez?).
     // authorized  = estado TCC EN VIVO si el backend lo sabe (SCK sí, por CGPreflight; taps no tiene
@@ -38,7 +43,7 @@ public:
     // El click de ALLOW. Devuelve true si el caller debe arrancar la captura (= dejar salir el cartel).
     bool allowClicked() noexcept
     {
-        if (state_ != State::needsPermission) return false;   // denegado ⇒ no se insiste con el cartel
+        if (state_ != State::needsPermission) return false;   // denegado / sin soporte ⇒ no se insiste
         asked_ = true;
         state_ = State::requesting;
         return true;
@@ -53,10 +58,15 @@ public:
     // a un panel de Ajustes que no arregla nada. `asked_` no se toca: el cartel ya se pidió o no, aparte.
     void captureFailed() noexcept  { state_ = State::needsPermission; }
 
+    // Esta versión de macOS no tiene NINGUNA de las dos APIs. Distinto de captureFailed(): ahí reintentar
+    // tiene sentido (fue un tropiezo del HAL), acá no lo tiene nunca — hasta 0.3.1 caía igual en
+    // `needsPermission` y la barra ofrecía un ALLOW que en macOS 11/12 no puede resolver nada.
+    void captureUnsupported() noexcept { state_ = State::unsupported; }
+
     // El poll en vivo vio el permiso encendido (típico: el usuario lo prendió en Ajustes). Reintentar.
     void authorizationSeen() noexcept
     {
-        if (state_ == State::granted) return;
+        if (state_ == State::granted || state_ == State::unsupported) return;
         state_ = State::requesting;
     }
 
@@ -69,10 +79,11 @@ public:
         return state_ == State::requesting || state_ == State::granted;
     }
 
-    // El aviso sólo se ve cuando hay algo que hacer: pedirlo, o ir a Ajustes.
+    // El aviso se ve cuando hay algo que hacer (pedirlo, ir a Ajustes) o algo que explicar (macOS viejo).
     bool noticeVisible() const noexcept
     {
-        return state_ == State::needsPermission || state_ == State::denied;
+        return state_ == State::needsPermission || state_ == State::denied
+            || state_ == State::unsupported;
     }
 
 private:
@@ -89,7 +100,7 @@ private:
 //     de macOS de la nada y la app parecía indiferente.
 // Los separa el TIEMPO, así que el aviso necesita un modelo con reloj. Sigue siendo puro: la barra le pasa
 // su reloj de 30Hz y él decide.
-enum class NoticeMode { hidden, ask, waiting, denied };
+enum class NoticeMode { hidden, ask, waiting, denied, unsupported };
 
 // 2s: no alcanza para que el reintento silencioso parpadee, y es poco para el que está mirando el cartel.
 inline constexpr double kWaitNoticeMs = 2000.0;
@@ -108,6 +119,7 @@ public:
         {
             case State::needsPermission: return NoticeMode::ask;
             case State::denied:          return NoticeMode::denied;
+            case State::unsupported:     return NoticeMode::unsupported;   // sin reloj: no se espera a nadie
             case State::requesting:      return (nowMs - sinceMs_) >= kWaitNoticeMs ? NoticeMode::waiting
                                                                                     : NoticeMode::hidden;
             case State::granted:         break;
@@ -135,6 +147,12 @@ inline juce::String noticeText (NoticeMode mode, SystemAudioBackend backend)
     if (mode == NoticeMode::waiting)
         return juce::String (juce::CharPointer_UTF8 ("Waiting for macOS permission\xe2\x80\xa6"));
 
+    // macOS 11/12: no depende del backend (no hay ninguno disponible) ni de Ajustes. Se nombra la salida
+    // que SÍ existe y está a dos centímetros, en la misma barra.
+    if (mode == NoticeMode::unsupported)
+        return juce::String (juce::CharPointer_UTF8 (
+            "System Audio needs macOS 13 or later on this Mac \xe2\x80\x94 use an input device or MIDI"));
+
     return {};
 }
 
@@ -146,7 +164,8 @@ inline juce::String noticeAction (NoticeMode mode)
     {
         case NoticeMode::ask:    return "ALLOW";
         case NoticeMode::denied: return "OPEN";
-        case NoticeMode::waiting:
+        case NoticeMode::waiting:       // esperando al sistema: no hay nada que el usuario pueda hacer
+        case NoticeMode::unsupported:   // macOS viejo: tampoco, y no va a cambiar
         case NoticeMode::hidden: break;
     }
     return {};

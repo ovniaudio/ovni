@@ -96,6 +96,37 @@ TEST_CASE ("permission gate: si el permiso aparece en Ajustes, el aviso se va so
     REQUIRE_FALSE (g.noticeVisible());
 }
 
+// --------------------------------------------------------------------------------- macOS 11/12 (D-35)
+// 0.3.1 hacía caer `unsupported` en `needsPermission`: la barra ofrecía ALLOW en una Mac donde ni los taps
+// (14.2+) ni ScreenCaptureKit (13+) existen. El botón no podía resolver NADA — el cartel de macOS no sale,
+// el intento vuelve a fallar, y el usuario queda clickeando algo que nunca va a funcionar. El cuarto
+// estado dice la verdad y no ofrece nada que tocar: MIC/MIDI están al lado, en la misma barra.
+TEST_CASE ("permission gate: en macOS 11/12 el estado es `unsupported`, no `needs permission`",
+           "[supernova][app]")
+{
+    Gate g;
+    g.begin (/*askedBefore*/ false, /*authorized*/ false);
+    g.captureUnsupported();
+
+    REQUIRE (g.state() == State::unsupported);
+    REQUIRE_FALSE (g.shouldStartCapture());   // no hay nada que intentar en esta versión de macOS
+    REQUIRE (g.noticeVisible());              // pero SÍ hay algo que explicar
+    REQUIRE_FALSE (g.allowClicked());         // …y nada que clickear: el click no cambia el estado
+    REQUIRE (g.state() == State::unsupported);
+}
+
+TEST_CASE ("permission gate: `unsupported` no se reintenta solo — la versión de macOS no cambia sola",
+           "[supernova][app]")
+{
+    Gate g;
+    g.begin (true, false);
+    g.captureUnsupported();
+
+    g.authorizationSeen();                    // el poll lento, si alguna vez llegara hasta acá
+    REQUIRE (g.state() == State::unsupported);
+    REQUIRE_FALSE (g.shouldStartCapture());
+}
+
 // --------------------------------------------------------------------------------- el aviso en el tiempo
 // Visto en el smoke del 5-sep: con `sysAudioAsked=1` guardado y el permiso reseteado (usuario que limpia
 // permisos, o reinstala macOS), la app arranca en `requesting`, el cartel del sistema sale SOLO… y la
@@ -158,6 +189,25 @@ TEST_CASE ("aviso: cada intento nuevo vuelve a arrancar el reloj de la espera", 
     REQUIRE (m.update (State::requesting, 6300.0) == NoticeMode::waiting);
 }
 
+TEST_CASE ("aviso: en macOS 11/12 la barra dice la verdad y no ofrece ningún bot\xc3\xb3n", "[supernova][app]")
+{
+    SourceNoticeModel m;
+    Gate g;
+    g.begin (false, false);
+    g.captureUnsupported();
+
+    // Sin reloj de por medio: no se está esperando a nadie, se está informando. Se ve YA.
+    REQUIRE (m.update (g.state(), 0.0) == NoticeMode::unsupported);
+    REQUIRE (m.update (g.state(), 9999.0) == NoticeMode::unsupported);
+
+    REQUIRE (supernova::noticeText (NoticeMode::unsupported, SystemAudioBackend::screenCapture)
+             == juce::String (juce::CharPointer_UTF8 (
+                    "System Audio needs macOS 13 or later on this Mac \xe2\x80\x94 use an input device or MIDI")));
+    REQUIRE (supernova::noticeText (NoticeMode::unsupported, SystemAudioBackend::processTap)
+             == supernova::noticeText (NoticeMode::unsupported, SystemAudioBackend::screenCapture));
+    REQUIRE (supernova::noticeAction (NoticeMode::unsupported).isEmpty());   // no hay nada que tocar
+}
+
 TEST_CASE ("permission gate: los textos nombran el permiso que pide CADA backend", "[supernova][app]")
 {
     REQUIRE (supernova::noticeText (NoticeMode::ask, SystemAudioBackend::processTap)
@@ -171,14 +221,15 @@ TEST_CASE ("permission gate: los textos nombran el permiso que pide CADA backend
     REQUIRE (supernova::noticeAction (NoticeMode::denied) == juce::String ("OPEN"));
 }
 
-// [.uisnap] — los TRES estados del aviso de la barra SOURCE, para el ojo (y para las capturas del manual).
-TEST_CASE ("uisnap: aviso de System Audio — pidiendo, esperando y denegado \xe2\x86\x92 /tmp/snv-perm-notice-*.png",
+// [.uisnap] — los CUATRO estados del aviso de la barra SOURCE, para el ojo (y para las capturas del manual).
+TEST_CASE ("uisnap: aviso de System Audio — pidiendo, esperando, denegado y sin soporte \xe2\x86\x92 /tmp/snv-perm-notice-*.png",
            "[supernova][.uisnap]")
 {
     const struct { NoticeMode mode; const char* path; } cases[] = {
-        { NoticeMode::ask,     "/tmp/snv-perm-notice-ask.png"     },
-        { NoticeMode::waiting, "/tmp/snv-perm-notice-waiting.png" },
-        { NoticeMode::denied,  "/tmp/snv-perm-notice-denied.png"  },
+        { NoticeMode::ask,         "/tmp/snv-perm-notice-ask.png"         },
+        { NoticeMode::waiting,     "/tmp/snv-perm-notice-waiting.png"     },
+        { NoticeMode::denied,      "/tmp/snv-perm-notice-denied.png"      },
+        { NoticeMode::unsupported, "/tmp/snv-perm-notice-unsupported.png" },
     };
 
     // El aviso es TRANSPARENTE (vive sobre la barra, que pinta su propio fondo): para que el PNG muestre

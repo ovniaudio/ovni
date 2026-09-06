@@ -23,9 +23,15 @@ struct Prompt
     void wait()   { std::unique_lock<std::mutex> lk (m); cv.wait (lk, [this] { return answered; }); }
     void answer() { { std::lock_guard<std::mutex> lk (m); answered = true; } cv.notify_all(); }
 
+    // Segunda barrera: el setup real tiene DOS etapas que se pueden interrumpir (crear el tap, y armar
+    // aggregate+IOProc antes del AudioDeviceStart). Sirve para parar el setup en la de más adentro.
+    void waitSecond()   { std::unique_lock<std::mutex> lk (m); cv.wait (lk, [this] { return second; }); }
+    void answerSecond() { { std::lock_guard<std::mutex> lk (m); second = true; } cv.notify_all(); }
+
     std::mutex m;
     std::condition_variable cv;
     bool answered = false;
+    bool second   = false;
 };
 
 template <typename Pred>
@@ -94,6 +100,43 @@ TEST_CASE ("tap lifecycle: la limpieza corre DESPUÉS del setup, nunca en el med
     REQUIRE (waitUntil ([&] { return teardownRanAt.load() > 0; }));
     REQUIRE (setupEndedAt.load()  == 1);    // la cola es SERIAL: primero termina el setup…
     REQUIRE (teardownRanAt.load() == 2);    // …y recién ahí se destruye lo que dejó
+}
+
+TEST_CASE ("tap lifecycle: un stop() entre 'IOProc creado' y 'start' NO arranca el device",
+           "[supernova][app]")
+{
+    // El setup real tiene DOS etapas largas: crear el tap (bloquea con el cartel de TCC) y, después,
+    // armar aggregate + IOProc. Hasta 0.3.1 el guard de generación estaba en la primera y en la que sigue
+    // AL AudioDeviceStart — no justo ANTES. Un stop() que caía en esa ventana arrancaba el IO un instante
+    // y la línea siguiente lo destruía: ninguna muestra llegaba al engine (el bloque del IOProc chequea
+    // la generación), pero el HAL veía un start/stop que nadie pidió.
+    TapLifecycle life { "com.ovni.supernova.test.tap.prestart" };
+
+    Prompt tccPrompt, ioProcReady;
+    std::atomic<bool> ioProcCreated { false }, deviceStarted { false }, tornDown { false };
+
+    REQUIRE (life.start ([&] (int gen)
+    {
+        tccPrompt.wait();                        // 1) AudioHardwareCreateProcessTap con el cartel arriba
+        if (! life.isCurrent (gen)) return;
+
+        ioProcCreated = true;                    // 2) aggregate + AudioDeviceCreateIOProcIDWithBlock
+        ioProcReady.answer();
+        tccPrompt.waitSecond();                  // ← la ventana: acá cae el stop()
+
+        if (! life.isCurrent (gen)) return;      // 3) el guard que faltaba, justo antes del start
+        deviceStarted = true;                    // AudioDeviceStart
+    }));
+
+    tccPrompt.answer();                          // el usuario concede el permiso
+    REQUIRE (waitUntil ([&] { return ioProcCreated.load(); }));
+
+    life.stop ([&] { tornDown = true; });        // cambio de SOURCE / cierre con el IOProc ya creado
+    tccPrompt.answerSecond();                    // el setup sigue
+
+    REQUIRE (waitUntil ([&] { return tornDown.load(); }));
+    REQUIRE (ioProcCreated.load());              // llegó a crear el IOProc…
+    REQUIRE_FALSE (deviceStarted.load());        // …y NO arrancó el device: la generación ya había caducado
 }
 
 TEST_CASE ("tap lifecycle: no se apilan intentos mientras hay uno en vuelo", "[supernova][app]")

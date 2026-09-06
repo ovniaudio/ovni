@@ -14,17 +14,24 @@
 //
 // Vidas: el estado va en un shared_ptr que capturan las tareas, así que destruir el TapLifecycle (o el
 // dueño entero) mientras un setup está bloqueado es seguro — la última tarea en soltar la referencia lo
-// libera. La COLA no se libera nunca a propósito: dispatch_release no existe bajo ARC y este header se
-// compila en TUs con y sin ARC — una definición distinta por TU sería una violación de ODR. Es UNA cola
-// serial por instancia (una por corrida de la app), y el proceso se la lleva al salir.
-#include <dispatch/dispatch.h>
-
+// libera. Y la COLA se libera con el State, ahora que se puede: hasta 0.3.1 el miembro era un
+// `dispatch_queue_t` y este header se compila en TUs con ARC (los .mm de la app) y sin ARC (los .cpp de
+// los tests) — bajo ARC ese miembro trae destructor implícito y sin ARC no, o sea la MISMA struct con dos
+// destructores según quién la incluya: ODR. Así que acá adentro no se nombra NINGÚN tipo de Objective-C;
+// el puente a libdispatch vive en TapLifecycle.cpp, una sola TU, y el header compila idéntico en todas.
 #include <atomic>
 #include <functional>
 #include <memory>
 #include <utility>
 
 namespace supernova {
+
+// El puente. Implementado en TapLifecycle.cpp (sin ARC: ahí `dispatch_release` existe y es lo correcto).
+namespace tapqueue {
+    void* createSerial (const char* label) noexcept;                       // cola serial nueva, ya nuestra
+    void  destroy (void* queue) noexcept;                                  // idempotente con nullptr
+    void  async (void* queue, void* context, void (*fn) (void*)) noexcept; // dispatch_async_f
+}
 
 class TapLifecycle
 {
@@ -35,7 +42,7 @@ public:
     explicit TapLifecycle (const char* queueLabel)
         : st (std::make_shared<State>())
     {
-        st->queue = dispatch_queue_create (queueLabel, DISPATCH_QUEUE_SERIAL);
+        st->queue = tapqueue::createSerial (queueLabel);
     }
 
     TapLifecycle (const TapLifecycle&) = delete;
@@ -49,7 +56,7 @@ public:
         if (! st->inFlight.compare_exchange_strong (expected, true)) return false;
 
         auto* task = new Task { st, std::move (setup), {}, ++st->generation };
-        dispatch_async_f (st->queue, task, &runSetup);
+        tapqueue::async (st->queue, task, &runSetup);
         return true;
     }
 
@@ -58,7 +65,7 @@ public:
     {
         ++st->generation;
         auto* task = new Task { st, {}, std::move (teardown), 0 };
-        dispatch_async_f (st->queue, task, &runTeardown);
+        tapqueue::async (st->queue, task, &runTeardown);
     }
 
     // ¿La generación `gen` sigue siendo la vigente? false ⇒ hubo stop() (o un start() nuevo): no arranques.
@@ -69,9 +76,15 @@ public:
 private:
     struct State
     {
-        dispatch_queue_t  queue = nullptr;
+        void*             queue = nullptr;   // opaca a propósito: ver la cabecera del archivo
         std::atomic<int>  generation { 0 };
         std::atomic<bool> inFlight   { false };
+
+        State() = default;
+        ~State() { tapqueue::destroy (queue); queue = nullptr; }
+
+        State (const State&) = delete;
+        State& operator= (const State&) = delete;
     };
 
     struct Task

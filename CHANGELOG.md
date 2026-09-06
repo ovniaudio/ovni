@@ -5,6 +5,36 @@ All notable changes to the [OVNI](https://github.com/ovniaudio/ovni) catalog are
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.3.2] - 2026-09-06
+
+**A small SUPERNOVA-only fix release.** The app is honest about what it can do on older
+Macs, and a handful of things around system-audio capture that only bite in edge cases now
+behave. Nothing changed in the sound, the visuals or the worlds. The seven OVNI audio
+plugins and ORBIT are unchanged and are not part of this release.
+
+### Fixed
+
+- **On macOS 11 and 12 the app now says System Audio needs macOS 13, instead of offering a
+  permission it cannot get.** Neither route to system audio exists on those versions — Core
+  Audio taps need 14.2, ScreenCaptureKit needs 13 — so the old **ALLOW** button could never
+  work: macOS showed no dialog and the attempt failed again, every time. The top bar now
+  states the requirement plainly and offers no button, because an input device and MIDI are
+  right there in the same bar and both work fine. On those Macs SUPERNOVA no longer even
+  tries to capture. The plug-ins are unaffected: VST3 and AU still run on macOS 11 and up.
+- **"Waiting for macOS permission…" no longer gets stuck.** Switching the source twice while
+  the macOS dialog was still open left the notice frozen until you re-picked the source: the
+  second attempt landed on one already in flight and nothing ever restarted it. The app now
+  notices and asks again, once a second, without raising new dialogs.
+- **The capture reports the rate audio actually arrives at.** With the output at 44.1 kHz the
+  tap still declares 48 kHz; that was the number being passed along, and the reason a
+  sample-rate change went unnoticed. The aggregate device's real rate is now read and used.
+- **Plugging headphones in, or quitting while macOS is still asking, is tidier under the
+  hood.** The capture no longer starts the audio device for an instant when the attempt was
+  already cancelled, and a late notification from the system can no longer reach an object
+  that is already gone.
+- **The packaging step refuses to build a package where any single bundle is missing its
+  binary**, instead of only checking that the payload contained some binary somewhere.
+
 ## [0.3.1] - 2026-09-06
 
 **A SUPERNOVA-only maintenance release, all of it about the app's audio.** The system-audio

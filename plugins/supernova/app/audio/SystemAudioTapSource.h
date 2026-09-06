@@ -21,9 +21,10 @@ public:
     void stop() noexcept override;
     SystemCaptureStatus status() const noexcept override;
     bool isAuthorized() const noexcept override;
+    bool isSupported() const noexcept override { return isAvailable(); }
     SystemAudioBackend backend() const noexcept override { return SystemAudioBackend::processTap; }
 
-    static bool isSupported() noexcept;   // macOS 14.2+
+    static bool isAvailable() noexcept;   // macOS 14.2+ (estático: la fábrica pregunta sin instanciar)
 
 private:
     struct Impl;

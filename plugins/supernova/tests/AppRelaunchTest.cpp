@@ -11,7 +11,7 @@
 namespace {
 // Rutas legales y hostiles: sustitución de comandos, backticks, comillas de los dos tipos y espacios.
 const char* const kNastyPaths[] = {
-    "/Users/musik/Mis Apps/SUPERNOVA.app",
+    "/Users/someone/My Apps/SUPERNOVA.app",
     "/tmp/SUPERNOVA $(echo INJECTED).app",
     "/tmp/SUPERNOVA `echo INJECTED`.app",
     "/tmp/SUPERNOVA \"quoted\".app",

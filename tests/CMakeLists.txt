@@ -571,6 +571,7 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ProcessorIntegrationTest.cpp
         ${_snv_src}
         ${CMAKE_SOURCE_DIR}/plugins/supernova/app/AppAudioEngine.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/TapLifecycle.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemCapture.mm
         ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemAudioSource.mm
         ${CMAKE_SOURCE_DIR}/plugins/supernova/app/audio/SystemAudioTapSource.mm

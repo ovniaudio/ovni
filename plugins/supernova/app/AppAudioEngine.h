@@ -73,6 +73,7 @@ private:
     void startSystemCapture();                 // arranca el backend con el sink de siempre
     static constexpr int    kPollRetryTicks = 75;    // ~2.5s a 30Hz: reintento lento mientras esté denegado
     static constexpr int    kRestartTicks   = 15;    // ~0.5s a 30Hz: rearme de una captura que se cayó sola
+    static constexpr int    kRequestTicks   = 30;    // ~1s a 30Hz: re-pedido de un intento que no prendió
 
     static constexpr int    kPrepBlock    = 4096;
     static constexpr int    kHeartbeatHz  = 90;      // cadencia del tick (buena precisión de tap, barato)
@@ -98,6 +99,7 @@ private:
     int  preparedBlock = 0;
     int  retryTicks = 0;
     int  restartTicks = 0;
+    int  requestTicks = 0;      // ticks desde el último intento de captura (rearme de `requesting`)
     bool deviceCallbackAdded = false;
     bool loggedLive = false;                   // el "[supernova] live: …" sale una vez por captura
 

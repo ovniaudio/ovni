@@ -338,13 +338,22 @@ verify_pkg() { # $1 = .pkg emitido
   # hubiera atrapado. El .pkg se arma igual de contento con un payload thin, y el problema recién
   # aparece en una Mac Intel, después de publicar. Se mira el binario que REALMENTE va adentro del
   # paquete —no el que había en disco cuando se lanzó el script—, que es lo único que se distribuye.
+  # -L: sigue los symlinks. Sin eso, un ejecutable que sea un enlace (lo normal en los frameworks
+  # versionados de un .app) no es "-type f" y la guardia lo saltearía en silencio.
   while IFS= read -r bin; do
     archs="$(lipo -archs "$bin" 2>/dev/null)"
     case " $archs " in *" x86_64 "*) ;; *) fail "no universal: ${bin#"$x/"} = ${archs:-<no es Mach-O>}" ;; esac
     case " $archs " in *" arm64 "*)  ;; *) fail "no universal: ${bin#"$x/"} = ${archs:-<no es Mach-O>}" ;; esac
     bins=$((bins+1))
-  done < <(find "$x" -type f -path "*/Contents/MacOS/*" -perm -u+x)
+  done < <(find -L "$x" -type f -path "*/Contents/MacOS/*" -perm -u+x)
   [ "$bins" -gt 0 ] || fail "post-check: $n no trae ningún ejecutable en el payload (¿bundles vacíos?)"
+
+  # …y POR BUNDLE, no en total: contar todo junto deja pasar un .component vacío colgado del .vst3 que sí
+  # trae el suyo. Cada bundle del payload tiene que traer al menos un ejecutable propio.
+  while IFS= read -r bundle; do
+    [ -n "$(find -L "$bundle/Contents/MacOS" -type f -perm -u+x -print -quit 2>/dev/null)" ] \
+      || fail "post-check: $n → ${bundle#"$x/"} sin ejecutable en Contents/MacOS"
+  done < <(find "$x" \( -name "*.app" -o -name "*.vst3" -o -name "*.component" \) -type d)
 
   rm -rf "$x"
   log "  post-check OK: $n declara $VERSION en $seen componentes + Distribution · $bins binarios universales"

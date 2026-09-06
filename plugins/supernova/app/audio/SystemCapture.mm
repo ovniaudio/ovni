@@ -40,6 +40,7 @@ public:
     }
 
     bool isAuthorized() const noexcept override         { return SystemAudioSource::hasPermission(); }
+    bool isSupported()  const noexcept override         { return SystemAudioSource::isSupported(); }
     SystemAudioBackend backend() const noexcept override { return SystemAudioBackend::screenCapture; }
 
 private:
@@ -53,7 +54,7 @@ std::unique_ptr<SystemCapture> makeSystemCapture()
     const auto v = NSProcessInfo.processInfo.operatingSystemVersion;
     const auto choice = pickBackend ((int) v.majorVersion, (int) v.minorVersion);
 
-    if (choice == SystemAudioBackend::processTap && SystemAudioTapSource::isSupported())
+    if (choice == SystemAudioBackend::processTap && SystemAudioTapSource::isAvailable())
         return std::make_unique<SystemAudioTapSource>();
 
     return std::make_unique<ScreenCaptureAdapter>();

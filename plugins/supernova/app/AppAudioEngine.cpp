@@ -51,6 +51,15 @@ void AppAudioEngine::useSystemAudio()
     prepareProcessor (48000.0, kPrepBlock);
     midiCollector.reset (48000.0);
 
+    // D-35: si en esta Mac no existe NINGÚN backend (macOS 11/12), se sabe ACÁ — sin intentar. Pasar por
+    // `requesting` sería un intento condenado, y con `sysAudioAsked` guardado ni siquiera nacería de un
+    // click. El gate arranca diciendo la verdad y la barra ofrece MIC/MIDI, que es lo que sí anda.
+    if (! sysAudio->isSupported())
+    {
+        gate.captureUnsupported();
+        return;
+    }
+
     // D-33: acá NO se arranca a ciegas. El gate decide — sin permiso todavía, la app queda viva (heartbeat,
     // MIC/MIDI) y la barra muestra el aviso; el cartel del sistema espera al click de ALLOW.
     gate.begin (settings.getBoolValue (kSettingAsked, false), sysAudio->isAuthorized());
@@ -61,6 +70,7 @@ void AppAudioEngine::useSystemAudio()
 void AppAudioEngine::startSystemCapture()
 {
     loggedLive = false;
+    requestTicks = 0;          // el reloj del rearme cuenta desde el ÚLTIMO intento
     sysAudio->start (48000, 2, [this] (const float* const* ch, int nc, int nf, double sr)
     {
         pushAudio (ch, nc, nf, sr);
@@ -90,13 +100,33 @@ void AppAudioEngine::pollSystemAudio()
     {
         if (st == SystemCaptureStatus::capturing)             gate.captureStarted();
         else if (st == SystemCaptureStatus::permissionDenied) { gate.captureDenied(); sysAudio->stop(); }
-        else if (st == SystemCaptureStatus::error || st == SystemCaptureStatus::unsupported)
+        else if (st == SystemCaptureStatus::idle)
         {
-            // NO es un permiso faltante (HAL sin salida default, aggregate caído, API que no existe en
-            // esta versión de macOS): sería mentira mandar al usuario a Ajustes. Pero hasta 0.3.0 esto
-            // no hacía NADA y el gate quedaba clavado en `requesting` PARA SIEMPRE — sin aviso, sin
-            // botón, sin audio, y con lo que el intento hubiera creado colgando del HAL. Soltamos la
-            // captura y volvemos al aviso con ALLOW, que es lo honesto: "no pude, probá de nuevo".
+            // El intento no prendió NADA. Dos motivos, y los dos se arreglan igual: el cartel del sistema
+            // está abierto (el setup sigue en vuelo y el backend rechaza este start sin daño), o el start
+            // se cayó sobre un setup en vuelo que después abortó por generación caducada — el caso de
+            // cambiar de SOURCE dos veces con el cartel arriba, que hasta 0.3.1 dejaba "Waiting for macOS
+            // permission…" clavado hasta re-elegir la fuente porque NADIE rearmaba. Se vuelve a pedir una
+            // vez por segundo: sin martillar la cola del setup y sin carteles nuevos (TCC ya está en juego).
+            if (++requestTicks >= kRequestTicks)
+                startSystemCapture();
+        }
+        else if (st == SystemCaptureStatus::unsupported)
+        {
+            // macOS 11/12: no existe NI la API de taps (14.2+) NI ScreenCaptureKit (13+). Hasta 0.3.1
+            // esto caía en el mismo saco que `error` y la barra volvía a ofrecer ALLOW — un botón que en
+            // esas versiones no puede resolver nada: macOS no muestra cartel, el intento falla igual y el
+            // usuario clickea al vacío. Es un problema de VERSIÓN, no de permiso, y así se dice (D-35).
+            gate.captureUnsupported();
+            sysAudio->stop();
+        }
+        else if (st == SystemCaptureStatus::error)
+        {
+            // NO es un permiso faltante (HAL sin salida default, aggregate caído): sería mentira mandar
+            // al usuario a Ajustes. Pero hasta 0.3.0 esto no hacía NADA y el gate quedaba clavado en
+            // `requesting` PARA SIEMPRE — sin aviso, sin botón, sin audio, y con lo que el intento
+            // hubiera creado colgando del HAL. Soltamos la captura y volvemos al aviso con ALLOW, que es
+            // lo honesto: "no pude, probá de nuevo".
             gate.captureFailed();
             sysAudio->stop();
         }
