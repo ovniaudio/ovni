@@ -1857,3 +1857,118 @@ TEST_CASE ("mediasession: sacar, relinkear y vaciar sueltan el decode cacheado",
     holder.reset();
     a.deleteFile(); b.deleteFile(); c.deleteFile(); nuevo.deleteFile();
 }
+
+// [mediasession][dissolve] — FUNDIDO AUTOMÁTICO: todo cambio de foto disuelve, y la duración sale del RELOJ
+// de la secuencia (min(0.7 s, 45% del intervalo), piso 0.1 s). El editor se la pasa a la vista JUNTO con la
+// imagen; la vista se la da al renderer antes del upload. Sin GPU la vista no rinde nada, pero el valor que
+// PIDE el editor se registra igual (lastDissolveSeconds) — que es exactamente lo que este test verifica.
+TEST_CASE ("mediasession: la duración del fundido sale del reloj — SECONDS 8 s pide 0,7 y KICK 0,25 pide 0,1125",
+           "[supernova][mediasession][dissolve]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    const juce::File a = writePng (200, 200, juce::Colours::orange);
+    const juce::File b = writePng (200, 200, juce::Colours::teal);
+
+    supernova::SupernovaProcessor proc;
+    supernova::PhotoSequence seq;
+    seq.setFiles ({ a.getFullPathName(), b.getFullPathName() });
+    seq.setIntervalSeconds (8.0);                       // el default de la casa
+    proc.apvts.state.appendChild (seq.toValueTree(), nullptr);
+
+    auto holder = std::unique_ptr<juce::AudioProcessorEditor> (proc.createEditor());
+    auto* ed = dynamic_cast<supernova::SupernovaEditor*> (holder.get());
+    REQUIRE (ed != nullptr);
+    ed->setBounds (0, 0, 1100, 760);
+    pump (250);
+
+    // 1. La RESTAURACIÓN de la sesión al abrir el editor NO funde: no hay foto desde la cual disolver,
+    //    sólo el gradiente de fábrica. Pide 0 = corte.
+    REQUIRE (ed->visualView().lastDissolveSeconds() == Approx (0.0));
+
+    // 2. Un cue a mano con el reloj en SECONDS 8 s: 45% de 8 son 3,6 → lo corta el tope de 0,7.
+    ed->cueMedia (1);
+    pump (250);
+    REQUIRE (ed->currentMediaIndex() == 1);
+    REQUIRE (ed->visualView().lastDissolveSeconds() == Approx (0.7));
+
+    // 3. Con el reloj en KICK y el gap MÍNIMO (0,25 s) el fundido dura 0,1125 s: cierra ANTES del próximo
+    //    kick, así una ráfaga nunca se pisa consigo misma.
+    ed->setSequenceClock (supernova::SeqClock::Kick);
+    proc.photoSequence().setKickGapSeconds (0.25);
+    ed->cueMedia (0);
+    pump (250);
+    REQUIRE (ed->currentMediaIndex() == 0);
+    REQUIRE (ed->visualView().lastDissolveSeconds() == Approx (0.1125));
+
+    // 4. "Cortar YA" (Shift / MIDI cue: now) es no esperar al COMPÁS, no cortar en seco: sigue fundiendo.
+    ed->setSequenceClock (supernova::SeqClock::Seconds);
+    ed->cueMedia (1, /*immediate*/ true);
+    pump (250);
+    REQUIRE (ed->visualView().lastDissolveSeconds() == Approx (0.7));
+
+    // 5. CLEAR es un corte declarado (el lienzo aparece YA): pide 0.
+    ed->clearMedia();
+    pump (250);
+    REQUIRE (ed->visualView().lastDissolveSeconds() == Approx (0.0));
+
+    holder.reset();
+    a.deleteFile(); b.deleteFile();
+}
+
+// ================== MEDIUM-1 del revisor del 44 — el fundido de un video no queda estacionado ==============
+// `pendingVideoDissolve` se estaciona entre `openVideo()` y el PRIMER frame decodificado (que llega por
+// `videoTick`, no por `decodeImageAsync`). Si ese video se cierra ANTES de entregar su primer frame — CLEAR,
+// o el decode que tarda — el valor quedaba parado en el miembro del editor y se lo comía el SIGUIENTE video,
+// que tenía que CORTAR. El interleaving del revisor, sin threads: todo en el message thread.
+TEST_CASE ("mediasession: un video cerrado antes de su primer frame no le deja el fundido al siguiente",
+           "[supernova][mediasession][media][video][dissolve]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    const juce::File asset = juce::File (__FILE__).getParentDirectory().getChildFile ("assets/tiny.mp4");
+    if (! asset.existsAsFile()) { SUCCEED ("asset tiny.mp4 ausente - test saltado"); return; }
+
+    supernova::SupernovaProcessor proc;
+    supernova::PhotoSequence seq;
+    const juce::File foto = writePng (128, 128, juce::Colours::orange);
+    seq.setFiles ({ foto.getFullPathName(), asset.getFullPathName() });
+    proc.apvts.state.appendChild (seq.toValueTree(), nullptr);
+
+    auto holder = std::unique_ptr<juce::AudioProcessorEditor> (proc.createEditor());
+    auto* ed = dynamic_cast<supernova::SupernovaEditor*> (holder.get());
+    REQUIRE (ed != nullptr);
+    ed->setBounds (0, 0, 1100, 760);
+    pump (120);
+
+    // 1) El reloj cuea el ITEM DE VIDEO: su primer frame tiene que entrar FUNDIENDO, así que la duración
+    //    queda estacionada esperándolo.
+    ed->cueMedia (1, true);
+    const double estacionado = ed->pendingVideoDissolveSeconds();   // SIN pump: el primer frame no llegó
+    INFO ("fundido estacionado tras cuear el video: " << estacionado);
+    REQUIRE (estacionado > 0.0);      // si no hay nada estacionado, el test no está midiendo el bug
+
+    // 2) CLEAR antes de que llegue ese primer frame. Vaciar la sesión es un CORTE declarado: no puede quedar
+    //    nada esperando fundir.
+    ed->clearMedia();
+    CHECK (ed->pendingVideoDissolveSeconds() == 0.0);
+
+    // 3) Se suelta un video NUEVO sobre la sesión ya vacía. Ese camino abre el video directo y también tiene
+    //    que ser un CORTE — antes se comía el valor del paso 1 y disolvía sobre la imagen de fábrica.
+    ed->filesDropped ({ asset.getFullPathName() }, 0, 0);
+    pump (60);
+    CHECK (ed->pendingVideoDissolveSeconds() == 0.0);
+
+    // 4) Y restaurar una sesión guardada tampoco funde (misma regla que reabrir un proyecto).
+    holder.reset();
+    supernova::SupernovaProcessor proc2;
+    proc2.apvts.state.setProperty ("singlePath", asset.getFullPathName(), nullptr);
+    proc2.apvts.state.setProperty ("singleRot", 0, nullptr);
+    auto holder2 = std::unique_ptr<juce::AudioProcessorEditor> (proc2.createEditor());
+    auto* ed2 = dynamic_cast<supernova::SupernovaEditor*> (holder2.get());
+    REQUIRE (ed2 != nullptr);
+    ed2->setBounds (0, 0, 1100, 760);
+    pump (60);
+    CHECK (ed2->pendingVideoDissolveSeconds() == 0.0);
+
+    holder2.reset();
+    foto.deleteFile();
+}

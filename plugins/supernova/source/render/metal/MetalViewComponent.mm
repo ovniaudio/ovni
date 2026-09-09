@@ -90,7 +90,10 @@ void MetalViewComponent::tick (double timestampSec)
     if (pendingImage != nullptr)
     {
         if (pendingImage->valid())
+        {
+            renderer->setDissolveSeconds (pendingDissolve);   // FUNDIDO: 0 = corte (el camino histórico)
             renderer->uploadImage (pendingImage->source (true));
+        }
         pendingImage.reset();
     }
 

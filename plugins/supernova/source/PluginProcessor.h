@@ -3,6 +3,7 @@
 #include "analysis/LockFreeAudioFifo.h"
 #include "analysis/TripleBuffer.h"
 #include "analysis/AnalysisFrame.h"
+#include "video/ExportAudioLoop.h"
 #include "analysis/MidiTriggerQueue.h"
 #include "analysis/MidiCcQueue.h"
 #include "analysis/MidiCueQueue.h"
@@ -69,13 +70,16 @@ public:
     void syncLfosToState()   { apvts.state.setProperty ("lfoBank",   juce::String (lfos.serialize()), nullptr); }
     void syncScenesToState() { apvts.state.setProperty ("sceneBank", juce::String (scenes.serialize()), nullptr); }
 
-    // EXPORT CON SONIDO: snapshot desenrollado (viejo→nuevo, interleaved L/R) de los últimos ~12s del
+    // EXPORT CON SONIDO: snapshot desenrollado (viejo→nuevo, interleaved L/R) de los últimos ~30s del
     // MISMO audio que alimenta el análisis — el export lo muxea al MP4 en sync con recentFrames.
+    // El snapshot trae el loop MÁS el colchón del crossfade (ExportAudioLoop.h): el export se queda con
+    // los últimos `kAudioRingSeconds` y usa lo anterior para que el empalme de la vuelta no tique.
     std::vector<float> audioRingSnapshot (double& srOut) const;
 
-    // Cuántos segundos de audio guarda el anillo del export-con-sonido. Es CONTRATO con el editor: la
-    // ventana de análisis que se exporta tiene que cubrir el mismo tramo que este audio.
-    static constexpr int kAudioRingSeconds = 12;
+    // Cuántos segundos de audio se repiten en el clip. Es CONTRATO con el editor: la ventana de análisis
+    // que se exporta tiene que cubrir el mismo tramo que este audio. La constante vive en el header puro
+    // del export para que el editor y los tests la lean de un solo lado (antes se copiaba a mano).
+    static constexpr int kAudioRingSeconds = kExportAudioRingSeconds;
 
     // PHOTO SEQUENCE (spec §D): fuente de verdad; el editor la maneja SOLO en el message thread.
     PhotoSequence& photoSequence() noexcept { return photoSeq; }

@@ -184,7 +184,7 @@ TopBar::TopBar (SupernovaEditor& ed, SupernovaProcessor& p)
     addAndMakeVisible (presetLabel);
 
     styleAction (seqBtn, "SEQUENCE: click for the clock (seconds / beats / kick), the order (loop / shuffle) "
-                         "and the transition (cut / burst). Load 2+ photos to build a sequence.");
+                         "and the transition (dissolve / burst). Load 2+ photos to build a sequence.");
     seqBtn.onClick = [this] { showSeqMenu(); };
     styleAction (seqMinusBtn, "Faster: fewer seconds / beats / less gap per photo");
     styleAction (seqPlusBtn,  "Slower: more seconds / beats / more gap per photo");
@@ -258,8 +258,9 @@ void TopBar::showExportMenu()
 
     juce::PopupMenu m;
     m.addSectionHeader ("Export to video");
-    // Sonido: muxea los últimos ~12s de audio VIVO (el mismo que ves reaccionar), loopeados en sync.
-    m.addItem (90001, "With sound (loops the last 12s you heard)", true, exportWithSound);
+    // Sonido: muxea los últimos ~30s de audio VIVO (el mismo que ves reaccionar), loopeados en sync y
+    // con un crossfade en el empalme para que la vuelta no tique (D-42 (b)).
+    m.addItem (90001, "With sound (loops the last 30s you heard)", true, exportWithSound);
     m.addSeparator();
     // MEDIA SESSION PRO: el formato que COINCIDE con el lienzo va primero, marcado "canvas" (9:16 para una
     // sesión vertical, 1:1 cuadrada, 1080p el resto). Los 4 siguen disponibles.
@@ -446,8 +447,8 @@ void TopBar::showSeqMenu()
     m.addItem (312, "Shuffle - random, never the same twice",                true, seq.orderMode() == SeqOrder::Shuffle);
     m.addSeparator();
     m.addSectionHeader ("Transition");
-    m.addItem (321, "Cut - the particles travel to the new photo",           true, ! seq.burst());
-    m.addItem (322, "Burst - explode, then re-form as the new photo",        true, seq.burst());
+    m.addItem (321, "Dissolve - the picture melts into the next (always on)", true, ! seq.burst());
+    m.addItem (322, "Burst - explode, then re-form as the next picture (dissolves too)", true, seq.burst());
     m.addSeparator();
     m.addSectionHeader ("MIDI cue (notes 72-87 = tiles, 88/89/90 = next/prev/random)");
     m.addItem (341, "MIDI cue: on the bar - same as the strip",  true, ! editor.midiCueImmediate());

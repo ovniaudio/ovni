@@ -117,7 +117,7 @@ bool SupernovaEditor::relinkMediaAt (int idx, const juce::File& newFile)
     seqPrefetchPath.clear();
     seqNextReady.reset();
     syncSequenceIfCurrent();
-    if (idx == seq.currentIndex()) showSequenceItem (idx);
+    if (idx == seq.currentIndex()) showSequenceItem (idx, dissolveSecondsNow());   // relink: también disuelve
     refreshMediaStrip();
     return true;
 }
@@ -153,7 +153,7 @@ int SupernovaEditor::relinkFolderAt (int idx, const juce::File& newFolder)
     seqPrefetchPath.clear();
     seqNextReady.reset();
     syncSequenceIfCurrent();
-    if (hits.contains (seq.currentIndex())) showSequenceItem (seq.currentIndex());
+    if (hits.contains (seq.currentIndex())) showSequenceItem (seq.currentIndex(), dissolveSecondsNow());
     refreshMediaStrip();
     return hits.size();
 }
@@ -217,6 +217,9 @@ void SupernovaEditor::cueMedia (int idx, bool immediate, double beatPosNow)
         return;
     }
     const bool cueHit = (cueReady != nullptr && cuePath == seq.pathAt (idx));   // el armado, ya decodificado
+    // FUNDIDO: la duración se toma ANTES del jumpTo (el reloj no cambia con el salto, pero el orden es
+    // explícito). "Cortar YA" (Shift / MIDI cue: now) significa no esperar al COMPÁS — no cortar en seco.
+    const double dissolve = dissolveSecondsNow();
     if (! seq.jumpTo (idx)) return;
     mediaStrip.setPendingCue (-1);
     seqPrefetchPath.clear();
@@ -227,10 +230,10 @@ void SupernovaEditor::cueMedia (int idx, bool immediate, double beatPosNow)
         videoSource.close();
         videoGeomReady = false;
         currentImage = cueReady;
-        view.loadImage (cueReady);
+        view.loadImage (cueReady, dissolve);
         markShown (juce::File (seq.currentPath()), seq.currentRotation());
     }
-    else showSequenceItem (seq.currentIndex());   // trae el onFail: un archivo que está pero no decodifica se marca
+    else showSequenceItem (seq.currentIndex(), dissolve);   // trae el onFail: un archivo que está pero no decodifica se marca
     cancelCuePrefetch();
     userImageLoaded = true;
     syncSequenceIfCurrent();
@@ -306,7 +309,7 @@ void SupernovaEditor::removeMediaAt (int idx)
         seqNextReady.reset();
         if (seq.size() == 0) { unloadMedia(); return; }
         syncSequenceIfCurrent();
-        if (wasCurrent) showItem (juce::File (seq.currentPath()), seq.currentRotation());
+        if (wasCurrent) showItem (juce::File (seq.currentPath()), seq.currentRotation(), dissolveSecondsNow());
         demoteToSingleIfNeeded();   // quedó 1 → foto única real
         refreshMediaStrip();
         return;
@@ -348,6 +351,9 @@ void SupernovaEditor::unloadMedia()
 {
     videoSource.close();
     videoGeomReady = false;
+    // Un video que se cierra ANTES de entregar su primer frame no puede dejar su fundido esperando: se lo
+    // comería el próximo video, que tiene que CORTAR (vaciar la sesión es un corte declarado).
+    pendingVideoDissolve = 0.0;
     auto& seq = proc.photoSequence();
     if (seq.size() > 0) seq.setFiles ({});
     syncSequenceIfCurrent();
@@ -366,7 +372,7 @@ void SupernovaEditor::unloadMedia()
     auto li = std::make_shared<LoadedImage>();
     li->rgba = makeFactoryImage (kParticleGrid, kParticleGrid);
     li->width = li->height = kParticleGrid;
-    view.loadImage (li);
+    view.loadImage (li, 0.0);   // vaciar la sesión es un CORTE declarado: el lienzo vuelve a fábrica YA
     knownSourceAspect = 0.0f;
     refreshMediaStrip();
 }

@@ -249,3 +249,47 @@ TEST_CASE ("imgcache: decodeBaseImage + rotatedCopy == el RGBA del camino viejo 
     }
     f.deleteFile();
 }
+
+// MEDIUM-1 del revisor del prompt 45: el export re-decodificaba (y re-corría Vision sobre) la MISMA foto
+// cada vez que volvía en el ciclo de la secuencia. Con dos fotos y un gap corto, un clip de 30 s son ~120
+// vueltas: hasta 120 decodes en vez de 2. Este test cuenta los decodes por el hit/miss del caché.
+TEST_CASE ("imgcache: el export decodifica cada foto UNA vez por clip, no una por vuelta",
+           "[supernova][imgcache]")
+{
+    juce::ScopedJuceInitialiser_GUI gui;
+    const juce::File a = writeJpeg (320, 240), b = writeJpeg (240, 320);
+
+    DecodedImageCache cache;
+    const juce::File plan[] = { a, b, a, b, a, b, a, b };   // el ciclo del clip: A→B→A→B…
+    std::vector<LoadedImage> salida;
+    for (const auto& f : plan) salida.push_back (exportSlotImage (cache, f, 0));
+
+    CHECK (cache.misses() == 2);        // un decode por FOTO
+    CHECK (cache.hits()   == 6);        // las seis vueltas siguientes salen del caché
+    CHECK (cache.count()  == 2);
+
+    // Y lo que sale del caché es EXACTAMENTE lo mismo que el camino sin caché (mismo píxel, misma saliencia,
+    // misma máscara): el arreglo es de velocidad, no de imagen.
+    for (int turns = 0; turns < 4; ++turns)
+    {
+        const auto sinCache = exportSlotImage (a, turns);
+        const auto conCache = exportSlotImage (cache, a, turns);
+        REQUIRE (conCache.width  == sinCache.width);
+        REQUIRE (conCache.height == sinCache.height);
+        REQUIRE (conCache.rgba        == sinCache.rgba);
+        REQUIRE (conCache.saliency    == sinCache.saliency);
+        REQUIRE (conCache.subjectMask == sinCache.subjectMask);
+    }
+
+    // Un archivo que falta NO entra al caché (contrato de `put`: puede aparecer con un relink), así que
+    // se reintenta cada vuelta — pero eso es un `fromFile` que falla al abrir, no una corrida de Vision.
+    const juce::File fantasma = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                    .getChildFile ("snv-no-existe-jamas.png");
+    REQUIRE_FALSE (fantasma.existsAsFile());
+    const int missesAntes = cache.misses(), entradasAntes = (int) cache.count();
+    for (int i = 0; i < 5; ++i) CHECK_FALSE (exportSlotImage (cache, fantasma, 0).valid());
+    CHECK (cache.misses() == missesAntes + 5);
+    CHECK ((int) cache.count() == entradasAntes);   // y no ensucia el caché de las fotos que sí están
+
+    a.deleteFile(); b.deleteFile();
+}

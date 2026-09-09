@@ -133,4 +133,23 @@ void DecodedImageCache::evictToBudget()
         entries.erase (oldest);
     }
 }
+
+LoadedImage exportSlotImage (const juce::File& file, int turns)
+{
+    return rotatedCopy (decodeBaseImage (file), turns);
+}
+
+LoadedImage exportSlotImage (DecodedImageCache& cache, const juce::File& file, int turns)
+{
+    auto base = cache.get (file);
+    if (base == nullptr)
+    {
+        base = std::make_shared<const LoadedImage> (decodeBaseImage (file));
+        // `put` NO guarda un decode fallido (contrato del caché del editor: un archivo que falta puede
+        // aparecer después, con un relink). Un slot roto vuelve a intentarse en cada vuelta, pero eso
+        // cuesta un `fromFile` que falla al abrir — nunca Vision, que es lo caro.
+        cache.put (file, base);
+    }
+    return rotatedCopy (*base, turns);
+}
 }

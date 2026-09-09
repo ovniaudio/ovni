@@ -428,7 +428,11 @@ void ControlStrip::updateHint (juce::Component* under)
         auto it = hints.find (c);
         if (it != hints.end()) { hintBar.setText (it->second, juce::dontSendNotification); return; }
     }
-    hintBar.setText ("hover a control - double-click = default - everything automatable from the DAW",
+    // En la app standalone NO hay host que automatice: ofrecerlo ahí es prometer algo que no existe. Lo
+    // que sí mueve un control sin las manos, en las dos, es un LFO o un CC de MIDI-learn.
+    hintBar.setText (juce::JUCEApplicationBase::isStandaloneApp()
+                         ? "hover a control - double-click = default - LFO or MIDI-learn moves any control"
+                         : "hover a control - double-click = default - everything automatable from the DAW",
                      juce::dontSendNotification);
 }
 

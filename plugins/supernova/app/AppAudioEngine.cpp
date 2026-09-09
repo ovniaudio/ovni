@@ -252,7 +252,7 @@ void AppAudioEngine::pushAudio (const float* const* chans, int numCh, int numSam
         {
             loggedLive = true;
             std::fprintf (stderr, "[supernova] live: system-audio %s %dch @%.0fHz rms>0 (peak %.4f)\n",
-                          sysAudio->backend() == SystemAudioBackend::processTap ? "process-tap" : "screencapturekit",
+                          backendName (sysAudio->backend()),
                           numCh, sr, (double) pk);
         }
 

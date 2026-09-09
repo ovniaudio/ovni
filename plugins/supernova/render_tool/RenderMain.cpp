@@ -63,6 +63,12 @@ int main (int argc, char** argv)
     float colorAmtPct = -1.0f, bgPct = -1.0f;
     int shapeMode = -1;   // TODOS los flags que espejan params defaultean "no tocar" (o pisan a los presets)
     bool syphonSmoke = false, cutout = false;
+    // QA de la INVARIANCIA (prompt 45): --sim-hz cambia el paso de la simulación (default 60 = el paso del
+    // export y de los goldens) para comparar el mismo tramo de SEGUNDOS a 60 y a 120. Con el ancla de la
+    // física en 120 Hz (D-43), el camino SIN pow() es --sim-hz 120, no el default. --luma imprime la
+    // luminancia media del último cuadro (la medición de la invariancia al TAMAÑO: 1024² vs 1080p vs 4K).
+    float simHz = 60.0f;
+    bool  wantLuma = false, sizeInvariance = false;
     juce::String out = "/tmp/supernova_frame.png";
     juce::String imagePath, presetName, scenario, outDir, emitCsv;
     for (int i = 1; i < argc; ++i)
@@ -112,6 +118,9 @@ int main (int argc, char** argv)
         else if (a == "--palette")   paletteIdx = next().getIntValue();       // look del COLOR LAB (0=Original)
         else if (a == "--color-amt") colorAmtPct = next().getFloatValue();    // mix del gradient map 0..100
         else if (a == "--bg")        bgPct = next().getFloatValue();          // papel del look 0..100
+        else if (a == "--sim-hz")    simHz = next().getFloatValue();        // pasos de simulación por segundo
+        else if (a == "--luma")      wantLuma = true;                       // luminancia media del último cuadro
+        else if (a == "--size-invariance") sizeInvariance = true;           // el glifo escala con min(w,h)/1024
         else if (a == "--out")       out = next();
     }
 
@@ -136,6 +145,8 @@ int main (int argc, char** argv)
     }
 
     r.prepare (512, 512);
+    if (simHz > 0.0f) r.setOffscreenDt (1.0 / (double) simHz);
+    r.setOffscreenSizeInvariance (sizeInvariance);   // apagado = camino legacy de los goldens
     if (imagePath.isNotEmpty())
     {
         auto loaded = supernova::ImageLoader::fromFile (juce::File (imagePath));
@@ -253,7 +264,10 @@ int main (int argc, char** argv)
         else                                          // modo interactivo
         {
             af.onset = (kickAt >= 0 && f == kickAt);
-            af.bass  = (kickAt >= 0 && f >= kickAt && f < kickAt + 4) ? 0.85f : 0.08f;
+            // La cola de graves del kick dura los mismos SEGUNDOS a cualquier --sim-hz (4 cuadros a 60 Hz,
+            // que es el valor histórico exacto): si no, comparar 60 con 120 compararía dos audios distintos.
+            const int bassFrames = juce::jmax (1, juce::roundToInt (4.0f * simHz / 60.0f));
+            af.bass  = (kickAt >= 0 && f >= kickAt && f < kickAt + bassFrames) ? 0.85f : 0.08f;
             af.rms   = 0.30f; af.energy = 0.30f; af.treble = 0.12f;
             pp.rayTrigger = (rayAt >= 0 && f == rayAt);
             pp.rayAngle   = rayAngleDeg * 3.14159265f / 180.0f;
@@ -273,6 +287,19 @@ int main (int argc, char** argv)
     }
 
     if (! ok) { std::fprintf (stderr, "[supernova-render] renderOffscreen falló\n"); return 3; }
+
+    if (wantLuma)   // Rec.709 sobre el cuadro final, en 0..255 — la métrica de "el 4K sale más oscuro"
+    {
+        double sum = 0.0; long lit = 0;
+        for (size_t i = 0; i + 3 < rgba.size(); i += 4)
+        {
+            const double y = 0.2126 * rgba[i] + 0.7152 * rgba[i + 1] + 0.0722 * rgba[i + 2];
+            sum += y; if (y > 16.0) ++lit;
+        }
+        const double n = (double) (w * h);
+        std::fprintf (stderr, "[supernova-render] luma %.4f  encendidos %.4f%%  (%dx%d, sim %.0f Hz, size-inv %d)\n",
+                      sum / n, 100.0 * (double) lit / n, w, h, simHz, sizeInvariance ? 1 : 0);
+    }
 
     if (goldenMode)
     {

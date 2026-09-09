@@ -83,6 +83,10 @@ PKG_ID="com.ovni.plugins"
 ART_DIR="${ART_DIR:-$ROOT/packaging/installer-resources}"
 
 VERSION=""; BUNDLES=""; OUTDIR=""; WINZIP=""
+# COMMIT del árbol que produjo estos bundles. Va al SOURCE.txt para que la oferta de fuente del AGPL §6
+# apunte a algo EXACTO: el tag `v<version>` se mueve/renombra, el hash no. Se DERIVA del repo (nunca a
+# mano); `--commit` existe sólo para el caso de empaquetar bundles de otro árbol.
+COMMIT="${COMMIT:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo "")}"
 LICENSE_FILE="${LICENSE_FILE:-$ROOT/LICENSE}"
 NOTICE_FILE="${NOTICE_FILE:-$ROOT/NOTICE.md}"
 while [ "$#" -gt 0 ]; do
@@ -93,6 +97,7 @@ while [ "$#" -gt 0 ]; do
     --winzip)  WINZIP="${2:-}"; shift 2 ;;
     --license) LICENSE_FILE="${2:-}"; shift 2 ;;
     --notice)  NOTICE_FILE="${2:-}"; shift 2 ;;
+    --commit)  COMMIT="${2:-}"; shift 2 ;;
     *) fail "argumento desconocido: $1" ;;
   esac
 done
@@ -173,6 +178,7 @@ complete corresponding source of this version:
 (source available per AGPLv3 §6)
 
 Versión de este paquete / package version: $VERSION
+Commit exacto de este build / exact build commit: ${COMMIT:-(desconocido)}
 
 ¿Dudas? https://ovniaudio.com  ·  hello@ovniaudio.com
 ============================================================

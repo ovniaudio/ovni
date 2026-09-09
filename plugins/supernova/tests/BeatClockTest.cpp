@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include "tempo/BeatClock.h"
+#include <cmath>
 
 using supernova::BeatClock;
 using Catch::Approx;
@@ -86,3 +87,53 @@ TEST_CASE ("tempo: syncPhase de un LFO al compás corre 0..1 por ciclo", "[super
     REQUIRE (c.syncPhase (4.0) == Approx (0.5).margin (0.02));
     REQUIRE (c.syncPhase (1.0) == Approx (0.0).margin (0.02));   // a 2 beats justos, un LFO de 1 beat cierra ciclo
 }
+
+// Backlog 0.3.3: el reloj trabaja en SEGUNDOS, pero quien lo alimenta divide el tamaño del bloque por el
+// sample rate — y el cue de una nota MIDI suma su offset en muestras. Si en algún lado se colara un 48 000
+// supuesto, a 44,1 kHz el reloj correría un 8,8 % lento y a 96 kHz al doble. Esto lo fija.
+TEST_CASE ("beatclock: la fase avanza los mismos beats a 44,1 · 48 · 96 kHz", "[supernova][tempo]")
+{
+    const double bpm = 126.0, segundos = 8.0;
+
+    for (double sr : { 44100.0, 48000.0, 96000.0 })
+        for (int bloque : { 64, 512, 1024 })
+        {
+            BeatClock c;
+            c.reset();
+            c.setDefaultBpm (bpm);
+            BeatClock::HostInfo sinHost;    // standalone: free-run al bpm_
+            // Un número ENTERO de bloques no cae en 8,000 s exactos a toda tasa: la referencia es el tiempo
+            // que de verdad transcurrió, no el nominal. Lo que se prueba es que la fase siga a los SEGUNDOS.
+            const int    bloques = (int) std::llround (segundos * sr / (double) bloque);
+            const double reales  = (double) bloques * (double) bloque / sr;
+            const double esperado = reales * bpm / 60.0;
+            for (int i = 0; i < bloques; ++i) c.advance ((double) bloque / sr, sinHost);
+
+            INFO ("sr=" << sr << " bloque=" << bloque << " s=" << reales
+                  << " fase=" << c.phaseInBeats() << " esperado=" << esperado);
+            CHECK (std::abs (c.phaseInBeats() - esperado) < 1.0e-6);   // acumulado sobre ~11 000 bloques
+            CHECK (c.bpm() == bpm);
+        }
+}
+
+TEST_CASE ("beatclock: el cue de una nota usa el sample rate REAL, no 48 kHz", "[supernova][tempo]")
+{
+    const double bpm = 120.0;                       // 2 beats/segundo
+    const int    muestras = 22050;                  // media vuelta de reloj a 44,1 kHz
+
+    // El MISMO offset en MUESTRAS cae en tiempos distintos según el sample rate: medio segundo a 44,1 kHz,
+    // ~0,459 s a 48 kHz, ~0,23 s a 96 kHz. En beats, eso es 1,0 · 0,919 · 0,459.
+    CHECK (BeatClock::beatAtSampleOffset (0.0, bpm, muestras, 44100.0) == Approx (1.0));
+    CHECK (BeatClock::beatAtSampleOffset (0.0, bpm, muestras, 48000.0) == Approx (0.91875));
+    CHECK (BeatClock::beatAtSampleOffset (0.0, bpm, muestras, 96000.0) == Approx (0.459375));
+
+    // El mismo TIEMPO da el mismo beat en las tres tasas (que es lo que de verdad importa).
+    for (double sr : { 44100.0, 48000.0, 96000.0 })
+        CHECK (BeatClock::beatAtSampleOffset (4.0, bpm, (int) std::llround (0.25 * sr), sr)
+               == Approx (4.5));
+
+    // Bordes: sin sample rate (nunca preparado) o sin offset, la fase del bloque sale intacta.
+    CHECK (BeatClock::beatAtSampleOffset (3.25, bpm, 512, 0.0) == Approx (3.25));
+    CHECK (BeatClock::beatAtSampleOffset (3.25, bpm, 0,   48000.0) == Approx (3.25));
+}
+

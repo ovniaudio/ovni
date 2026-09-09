@@ -35,7 +35,12 @@ public:
 
     // Carga una imagen del usuario (RF1). La subida al GPU se aplica en tick() (borde de frame, mismo hilo del
     // render → sin carrera con la GPU); el DECODE ya ocurrió fuera del render loop (RNF4). Llamar en msg thread.
-    void loadImage (std::shared_ptr<const LoadedImage> img) noexcept { pendingImage = std::move (img); }
+    // `dissolveSeconds` viaja CON la imagen: el motor la disuelve sobre la que está (0 = corte). La duración
+    // la decide el editor con el reloj de la secuencia — acá sólo se transporta hasta el borde de frame.
+    void loadImage (std::shared_ptr<const LoadedImage> img, double dissolveSeconds = 0.0) noexcept
+    { pendingImage = std::move (img); pendingDissolve = dissolveSeconds; }
+    // Lo último que se PIDIÓ (aunque no haya GPU que lo aplique): los tests del editor miran esto.
+    double lastDissolveSeconds() const noexcept { return pendingDissolve; }
 
     // Densidad efectiva actual (RNF2) para el HUD.
     unsigned activeParticles() const noexcept { return renderer != nullptr ? renderer->activeParticles() : 0; }
@@ -72,6 +77,11 @@ public:
 
     MetalRenderer* getRenderer() noexcept { return renderer.get(); }   // para prepare()/uploadImage()
 
+    // Fases acumuladas del mundo (ROTATE/ORBIT/HUE CYC) — el export las hereda para que el clip arranque
+    // con el encuadre y el tono que tiene la ventana, no frontal y en el tono base.
+    ViewPhases viewPhases() const noexcept
+    { return renderer != nullptr ? renderer->viewPhases() : ViewPhases {}; }
+
 private:
     void tick (double timestampSec);
 
@@ -83,6 +93,7 @@ private:
     MidiTriggerQueue*            midiSrc     = nullptr;
     AnalysisFrame lastAnalysis {};
     std::shared_ptr<const LoadedImage> pendingImage;   // set en msg thread, aplicado en tick() (msg thread)
+    double pendingDissolve = 0.0;                      // duración del fundido que viaja con pendingImage
     std::unique_ptr<FullscreenOutputWindow> fsWindow;   // ventana de salida fullscreen (2º present target)
 
     float  canvasAspectV = 0.0f;   // 0 = libre (llena el target)

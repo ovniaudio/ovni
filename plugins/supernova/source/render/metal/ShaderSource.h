@@ -66,7 +66,12 @@ struct Uniforms {
     // figura cubre la MISMA fracción de pantalla en inmersivo/fullscreen que con los knobs (bug de campo
     // "al ampliar se ve más suave/menos intenso"). Exposición aditiva constante: d² crece como los píxeles.
     // 1.0 = camino legacy byte-exacto (offscreen/goldens; ×1.0 es IEEE-exacto).
-    float fitX, fitY, resScale;   // 40 floats + 4 uint = 176 B (múltiplo de 16), idéntico C++/MSL
+    float fitX, fitY, resScale;
+    // FUNDIDO entre fotos: mezcla [0..1] entre el juego de buffers A (la foto que estaba) y el B (la que
+    // entra). −1 = REPOSO: los kernels toman el camino de siempre sin una sola operación nueva (branch por
+    // uniform). Nunca llega a 1: al completarse, el C++ hace swap A↔B y vuelve a −1 — mix(a,b,1.0) redondea
+    // distinto que `b` y eso movería los goldens.
+    float xfade;                  // 41 floats + 4 uint = 180 B, idéntico C++/MSL
 };
 
 struct PostU {
@@ -193,9 +198,27 @@ kernel void k_simulate(device float2*        positions  [[buffer(0)]],
                        const device float2*  flowField  [[buffer(5)]],
                        const device float4*  content2   [[buffer(6)]],   // (burstX, burstY, signedDist, salW)
                        const device float4*  extra      [[buffer(7)]],   // (depth, formT, formTheta, libre)
+                       // FUNDIDO: el mismo juego de campos para la foto que ENTRA (ver u.xfade).
+                       const device float*   weightsB   [[buffer(8)]],
+                       const device float2*  flowB      [[buffer(9)]],
+                       const device float4*  content2B  [[buffer(10)]],
+                       const device float4*  extraB     [[buffer(11)]],
                        uint gid [[thread_position_in_grid]])
 {
     if (gid >= u.count) return;
+    // FUNDIDO: los cuatro campos por partícula se mezclan UNA vez acá y el resto del kernel los usa igual
+    // que siempre. En reposo (xfade < 0) el branch ni entra: son los mismos loads de hoy → byte-exacto.
+    float  wRaw = weights[gid];
+    float2 fRaw = flowField[gid];
+    float4 c2v  = content2[gid];
+    float4 exv  = extra[gid];
+    if (u.xfade >= 0.0)
+    {
+        wRaw = mix(wRaw, weightsB[gid],   u.xfade);
+        fRaw = mix(fRaw, flowB[gid],      u.xfade);
+        c2v  = mix(c2v,  content2B[gid],  u.xfade);
+        exv  = mix(exv,  extraB[gid],     u.xfade);
+    }
     float2 p = positions[gid];
     float2 v = velocities[gid];
     float2 h = homes[gid];
@@ -210,13 +233,13 @@ kernel void k_simulate(device float2*        positions  [[buffer(0)]],
     // el re-armado existentes hacen TODO el resto (mismo patrón que SCATTER; se componen: figura difusa).
     if (u.formMode != 0u && u.formAmt > 0.001)
     {
-        float3 ftgt = figureTarget(u.formMode, extra[gid].y, extra[gid].z, homes[gid], extra[gid].x);
+        float3 ftgt = figureTarget(u.formMode, exv.y, exv.z, homes[gid], exv.x);
         h = mix(h, ftgt.xy, u.formAmt);
     }
     // Saliencia del contenido (0.25 fondo .. 1 sujeto), atenuada por el CUTOUT gradual: al borrar el fondo,
     // su física también se apaga (queda la escultura del sujeto, el resto no molesta).
-    const float mask = content2[gid].w;
-    const float w = weights[gid] * mix(1.0, 0.15 + 0.85 * mask, u.cutoutAmt);
+    const float mask = c2v.w;
+    const float w = wRaw * mix(1.0, 0.15 + 0.85 * mask, u.cutoutAmt);
 
     const float t = u.time;
     const float s = 6.2831853 * u.curlScale;
@@ -279,7 +302,7 @@ kernel void k_simulate(device float2*        positions  [[buffer(0)]],
         // COHESIÓN del sujeto (bug de campo: "el logo lo rompe al toque"): con CUTOUT activo la escultura
         // recibe el kick ATENUADO (~55%) y un resorte extra → la forma se mantiene legible y se re-arma rápido.
         const float subj = mask * u.cutoutAmt;   // 0 sin cutout / fondo; →1 en el sujeto recortado
-        float2 f = flowField[gid];
+        float2 f = fRaw;
         float  drive = 0.35 + u.bass * 1.6 + u.rms * 0.5;
         float2 flowForce = f * drive * 1.7 + f * kickAmp * 2.4 * (1.0 - 0.45 * subj);
         float  phase  = hash1(float(gid) * 0.031) * 6.2831853;
@@ -300,8 +323,8 @@ kernel void k_simulate(device float2*        positions  [[buffer(0)]],
         //   · el KICK estalla DESDE LA SILUETA del sujeto (burstDir = normal exterior, envolvente exp(−|sd|/σ))
         //     y el reform lo re-arma: la FIGURA respira/exhala, no un punto;
         //   · la saliencia (Vision) escala la energía: el sujeto vive, el fondo acompaña.
-        float4 c2   = content2[gid];
-        float2 f    = flowField[gid];
+        float4 c2   = c2v;
+        float2 f    = fRaw;
         float  sd   = c2.z;
         float  salW = c2.w;   // = máscara del sujeto (mismo espíritu: el sujeto vive, el fondo acompaña)
         float  drive = 0.30 + u.bass * 1.3 + u.rms * 0.4;
@@ -395,8 +418,18 @@ vertex VOut v_particle(uint vid [[vertex_id]],
                        const device float4* content2  [[buffer(3)]],
                        const device float2* velocities [[buffer(4)]],
                        const device float4* extra      [[buffer(5)]],   // (depth, formT, formTheta, libre)
-                       const device float2* homes      [[buffer(6)]])
+                       const device float2* homes      [[buffer(6)]],
+                       // FUNDIDO: color, máscara y depth de la foto que ENTRA (ver u.xfade).
+                       const device float4* colorsB    [[buffer(7)]],
+                       const device float4* content2B  [[buffer(8)]],
+                       const device float4* extraB     [[buffer(9)]])
 {
+    // FUNDIDO: la máscara del sujeto se mezcla una vez (la usan la cáscara 3D y el CUTOUT). En reposo
+    // (xfade < 0) es el mismo load de siempre → byte-exacto. `extra` y `colors` se mezclan donde se leen,
+    // para no agregar un load de 16 B por vértice en el camino plano.
+    float mask2 = content2[vid].w;
+    if (u.xfade >= 0.0) mask2 = mix(mask2, content2B[vid].w, u.xfade);
+
     float2 p = applyFit(positions[vid], u);   // FIT del aspecto (gate: 1,1 = camino legacy byte-exacto)
     // ROTATE: giro de VISTA alrededor del centro (la física vive en el espacio original — las paredes no
     // giran). viewCos=1/viewSin=0 → identidad byte-exacta. Con 3D activo actúa como ROLL de cámara.
@@ -411,8 +444,9 @@ vertex VOut v_particle(uint vid [[vertex_id]],
         o.position = float4(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0, 0.0, 1.0);   // camino legacy EXACTO (goldens)
     else
     {
-        const float4 ex   = extra[vid];
-        const float  mk   = content2[vid].w;
+        float4 ex = extra[vid];
+        if (u.xfade >= 0.0) ex = mix(ex, extraB[vid], u.xfade);
+        const float  mk   = mask2;
         // z de imagen (almohada/luma/CoreML, 0.5 = plano). CÁSCARA por paridad (Photo Wake-Up): la mitad de
         // las partículas del sujeto viven en el DORSO espejado — de frente el aditivo suma igual (cada una
         // dibuja una vez), al girar 180° hay materia, no un hueco. Solo en modo imagen (las figuras ya son
@@ -440,6 +474,7 @@ vertex VOut v_particle(uint vid [[vertex_id]],
     if (persp != 1.0) basePx *= clamp(persp, 0.55, 2.4);
     o.pointSize = basePx * u.resScale;   // invariancia al tamaño de la vista (1.0 = legacy byte-exacto)
     o.color     = colors[vid];   // ya en LINEAL (uploadImage lo convierte)
+    if (u.xfade >= 0.0) o.color = mix(o.color, colorsB[vid], u.xfade);   // FUNDIDO: la foto que entra
     if (persp != 1.0) o.color.rgb *= mix(1.0, persp, 0.6);
     // CONSERVACIÓN DE ENERGÍA del SIZE (bug de campo: "subir SIZE solo suma brillo y pierde definición").
     // Blending aditivo: un punto más grande solapa más → la suma crece ~size². Normalizamos la intensidad por
@@ -469,7 +504,7 @@ vertex VOut v_particle(uint vid [[vertex_id]],
     }
     // CUTOUT gradual EN VIVO: el fondo (mask→0) se desvanece según el knob. mask=1 sin máscara → sin efecto.
     // cutoutMask (curva de contraste²): al 100% el fondo muere EXACTO y el sujeto queda a brillo pleno.
-    o.color.a  *= cutoutMask(content2[vid].w, u.cutoutAmt);
+    o.color.a  *= cutoutMask(mask2, u.cutoutAmt);
     return o;
 }
 
@@ -550,7 +585,7 @@ struct LinkU {
     float depthAmt;
     float formAmt;
     uint  formMode;
-    uint  _p2;
+    float xfade;       // FUNDIDO: mismo contrato que Uniforms.xfade (−1 = reposo, sin operación nueva)
 };
 struct LinkVert { float2 pos; float2 _pad; float4 col; };
 struct DrawArgs { uint vertexCount, instanceCount, vertexStart, baseInstance; };
@@ -591,12 +626,15 @@ kernel void k_linkBin(const device float2* positions  [[buffer(0)]],
 // z de un nodo para las líneas: la MISMA geometría que v_particle (cáscara por paridad + figura), sin el
 // kick-z (el envelope del pulso no viaja en LinkU; la diferencia es invisible en líneas de 1px).
 static inline float linkNodeZ(uint slot, const device float4* extra, const device float2* homes,
-                              const device float4* content2, constant LinkU& u)
+                              const device float4* content2, constant LinkU& u,
+                              const device float4* extraB, const device float4* content2B)
 {
     if (u.depthAmt == 0.0) return 0.0;
-    const float4 ex = extra[slot];
+    float4 ex = extra[slot];
+    float  mk = content2[slot].w;
+    if (u.xfade >= 0.0) { ex = mix(ex, extraB[slot], u.xfade); mk = mix(mk, content2B[slot].w, u.xfade); }
     float zImg = ex.x - 0.5;
-    if (((slot & 1u) != 0u) && content2[slot].w > 0.5) zImg = -zImg;
+    if (((slot & 1u) != 0u) && mk > 0.5) zImg = -zImg;
     float z = zImg;
     if (u.formMode != 0u && u.formAmt > 0.001)
         z = mix(zImg, figureTarget(u.formMode, ex.y, ex.z, homes[slot], ex.x).z, u.formAmt);
@@ -614,6 +652,10 @@ kernel void k_linkEmit(const device float2* positions  [[buffer(0)]],
                        constant LinkU&      u          [[buffer(8)]],
                        const device float4* extra      [[buffer(9)]],
                        const device float2* homes      [[buffer(10)]],
+                       // FUNDIDO: color, máscara y depth de la foto que ENTRA (ver u.xfade).
+                       const device float4* colorsB    [[buffer(11)]],
+                       const device float4* content2B  [[buffer(12)]],
+                       const device float4* extraB     [[buffer(13)]],
                        uint gid [[thread_position_in_grid]])
 {
     if (gid >= u.nodeCount) return;
@@ -652,8 +694,13 @@ kernel void k_linkEmit(const device float2* positions  [[buffer(0)]],
         }
     }
 
-    const float myCut = cutoutMask(content2[slot].w, u.cutoutAmt);
-    const float myZ   = linkNodeZ(slot, extra, homes, content2, u);
+    // FUNDIDO: color y máscara del nodo salen del mismo mix que las partículas (xfade < 0 = los de hoy).
+    float4 myCol = colors[slot];
+    float  myMk  = content2[slot].w;
+    if (u.xfade >= 0.0) { myCol = mix(myCol, colorsB[slot], u.xfade);
+                          myMk  = mix(myMk,  content2B[slot].w, u.xfade); }
+    const float myCut = cutoutMask(myMk, u.cutoutAmt);
+    const float myZ   = linkNodeZ(slot, extra, homes, content2, u, extraB, content2B);
     for (int i = 0; i < kLinkK; ++i)
     {
         if (bj[i] == 0xFFFFFFFFu) break;
@@ -662,13 +709,18 @@ kernel void k_linkEmit(const device float2* positions  [[buffer(0)]],
         const float a = fade * fade * u.alphaGain;
         const uint li = atomic_fetch_add_explicit(&lineCount[0], 1u, memory_order_relaxed);
         if (li >= u.maxLines) break;
-        const float aA = a * colors[slot].a * myCut;
-        const float aB = a * colors[js].a * cutoutMask(content2[js].w, u.cutoutAmt);
+        float4 jsCol = colors[js];
+        float  jsMk  = content2[js].w;
+        if (u.xfade >= 0.0) { jsCol = mix(jsCol, colorsB[js], u.xfade);
+                              jsMk  = mix(jsMk,  content2B[js].w, u.xfade); }
+        const float aA = a * myCol.a * myCut;
+        const float aB = a * jsCol.a * cutoutMask(jsMk, u.cutoutAmt);
         // _pad.x = z del extremo (3D): la constelación vive dentro del volumen y gira con él.
         LinkVert v0; v0.pos = p;             v0._pad = float2(myZ, 0.0);
-        v0.col = float4(colors[slot].rgb * aA, aA);
-        LinkVert v1; v1.pos = positions[js]; v1._pad = float2(linkNodeZ(js, extra, homes, content2, u), 0.0);
-        v1.col = float4(colors[js].rgb  * aB, aB);
+        v0.col = float4(myCol.rgb * aA, aA);
+        LinkVert v1; v1.pos = positions[js];
+        v1._pad = float2(linkNodeZ(js, extra, homes, content2, u, extraB, content2B), 0.0);
+        v1.col = float4(jsCol.rgb  * aB, aB);
         verts[li * 2]     = v0;
         verts[li * 2 + 1] = v1;
     }

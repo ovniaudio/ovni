@@ -69,6 +69,17 @@ public:
         }
     }
 
+    // Dónde cae, en beats, un mensaje MIDI que llegó `samplePosition` muestras DENTRO del bloque. El
+    // reloj trabaja en SEGUNDOS, así que lo único que depende del sample rate es este paso — y usa el sr
+    // REAL, no un 48 000 supuesto: a 44,1 kHz el mismo offset en muestras es un 8,8 % más de tiempo, y a
+    // 96 kHz la mitad. Con `sampleRate <= 0` (nunca preparado) el offset es 0, no una adivinanza.
+    static double beatAtSampleOffset (double phaseBeats, double bpm, int samplePosition,
+                                      double sampleRate) noexcept
+    {
+        if (sampleRate <= 0.0 || samplePosition <= 0) return phaseBeats;
+        return phaseBeats + (double) samplePosition / sampleRate * bpm / 60.0;
+    }
+
     // TAP TEMPO (message thread): cada golpe con su marca. Con ≥2 golpes deriva el BPM del intervalo medio;
     // descarta intervalos absurdos (>2s = tap perdido → reinicia la serie).
     void tap (double atSeconds) noexcept

@@ -47,12 +47,28 @@ private:
     SystemAudioSource src;
 };
 
+// macOS 11/12: ni taps ni ScreenCaptureKit. En vez de armar un adaptador que va a decir que no se puede,
+// se devuelve el que lo dice de entrada — y `AppAudioEngine::useSystemAudio` corta ahí (D-35), sin intentar.
+class NoCapture final : public SystemCapture
+{
+public:
+    bool start (int, int, SampleCallback) noexcept override { return false; }
+    void stop() noexcept override {}
+    SystemCaptureStatus status() const noexcept override { return SystemCaptureStatus::unsupported; }
+    bool isAuthorized() const noexcept override          { return false; }
+    bool isSupported()  const noexcept override          { return false; }
+    SystemAudioBackend backend() const noexcept override { return SystemAudioBackend::none; }
+};
+
 } // namespace
 
 std::unique_ptr<SystemCapture> makeSystemCapture()
 {
     const auto v = NSProcessInfo.processInfo.operatingSystemVersion;
     const auto choice = pickBackend ((int) v.majorVersion, (int) v.minorVersion);
+
+    if (choice == SystemAudioBackend::none)
+        return std::make_unique<NoCapture>();
 
     if (choice == SystemAudioBackend::processTap && SystemAudioTapSource::isAvailable())
         return std::make_unique<SystemAudioTapSource>();

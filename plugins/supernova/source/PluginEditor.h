@@ -14,6 +14,8 @@
 #include "presets/UndoStack.h"
 #include "video/VideoSource.h"
 #include "video/ExportPreset.h"
+#include "video/ExportAudioLoop.h"
+#include "render/Dissolve.h"
 #include <vector>
 #include <thread>
 #include <atomic>
@@ -140,6 +142,9 @@ public:
     void         setFitMode (FitMode m);
     FitMode      fitMode() const noexcept        { return fitModeV; }
     juce::Rectangle<int> visualBounds() const    { return view.getBounds(); }   // el lienzo en pantalla (tests)
+    const SupernovaView& visualView() const noexcept { return view; }           // read-only (tests del fundido)
+    // El fundido que espera al PRIMER frame de un video (read-only; tests del fundido de video).
+    double pendingVideoDissolveSeconds() const noexcept { return pendingVideoDissolve; }
 
     // CUE DE FOTOS POR MIDI (ronda 3): notas 72-87 = tiles 1..16, 88 = siguiente, 89 = anterior,
     // 90 = aleatoria. Por default el cue MIDI sigue la MISMA regla que la tira (en BEATS se arma y cae en
@@ -164,11 +169,22 @@ private:
     void ingestMedia (const juce::StringArray& files);     // el camino del drop/LOAD (1 = simple/agregar; 2+ = secuencia)
     static juce::StringArray expandFolders (const juce::StringArray& files);   // carpeta → sus fotos/videos por nombre
     void loadImageFile (const juce::File& file);           // decode en background → view.loadImage
+    // FUNDIDO AUTOMÁTICO (2026-09-07): todo cambio de foto disuelve — no hay ajuste, es el motor. La
+    // duración sale del RELOJ de la secuencia: min(0.7 s, 45% del intervalo), nunca menos de 0.1 s. Sin
+    // secuencia (foto única, drag&drop, rotar) es el tope. Los DOS cortes declarados —la restauración de
+    // una sesión al abrir (nada que fundir desde el gradiente de fábrica) y CLEAR— pasan 0 a mano.
+    double dissolveSecondsNow() const;
     void rotateCurrentImage();                             // botón ⟳: endereza la foto/video vertical
-    bool openVideo (const juce::File& file);               // abre un video como fuente de color (false = no abrió)
+    // Abre un video como fuente de color (false = no abrió). `dissolveSeconds` es cuánto tiene que durar la
+    // disolución de su PRIMER frame sobre lo que está en pantalla — 0 = CORTE. Va como argumento OBLIGATORIO
+    // porque el valor se ESTACIONA hasta que llegue ese frame: cuando lo seteaba el caller, dos caminos se
+    // olvidaban y el fundido del video anterior (uno que se cerró sin llegar a mostrar nada) se le filtraba
+    // al siguiente, que tenía que cortar (MEDIUM-1 del revisor del fundido).
+    bool openVideo (const juce::File& file, double dissolveSeconds);
     // Muestra un item (imagen o video). `onFail` corre en el MESSAGE THREAD si el decode falla o el video
     // no abre: sin eso, un archivo ilegible dejaba la sesión "cargada" con la imagen de fábrica en pantalla.
-    void showItem (const juce::File& file, int turns, std::function<void()> onFail = {});
+    void showItem (const juce::File& file, int turns, double dissolveSeconds,
+                   std::function<void()> onFail = {});
     // Decode (o giro desde el caché) en hilo de fondo; onDone SIEMPRE en el message thread. Ver PluginEditor.cpp.
     void decodeImageAsync (const juce::File& file, int quarterTurns,
                            std::function<void (std::shared_ptr<const LoadedImage>)> onDone);
@@ -184,7 +200,7 @@ private:
     // MEDIA SESSION PRO (privado)
     void  refreshMediaStrip();                             // modelo → tira (+ pide miniaturas) + visibilidad + lienzo
     void  refreshMissingFlags();                           // filesystem → marcas de faltante de la secuencia
-    void  showSequenceItem (int idx);                      // muestra el item; si no decodifica, lo marca faltante
+    void  showSequenceItem (int idx, double dissolveSeconds);   // muestra el item; si no decodifica, lo marca faltante
     void  updateMediaStripVisibility();                    // hay media && ▦ && no inmersivo
     void  unloadMedia();                                   // vuelve a la imagen de fábrica (sesión vacía)
     float sourceAspectForCanvas() const;                   // aspecto del PRIMER item (miniatura / imagen / video)
@@ -205,6 +221,9 @@ private:
 
     SupernovaProcessor& proc;
     SupernovaView view;
+    // FUNDIDO de un VIDEO: su primer frame entra por videoTick (no por decodeImageAsync), así que la
+    // duración se estaciona acá entre showItem/openVideo y ese primer frame. Se consume una sola vez.
+    double pendingVideoDissolve = 0.0;
     ControlStrip  controls;
     WorldBrowser  worldBrowser;           // grilla de mundos (Phase C)
     LfoPanel      lfoPanel;               // panel de LFOs sync (Phase B UI)
@@ -278,7 +297,9 @@ private:
     // kAnalysisRingHz, NO a los fps del clip. El export tiene que reproducirlo a ESTA tasa (si consume uno
     // por cuadro a 60 fps, la reactividad del MP4 corre al doble y se despega del audio muxeado).
     static constexpr int kAnalysisRingHz      = 30;   // = startTimerHz del editor (no deben divergir)
-    static constexpr int kAnalysisRingSeconds = 20;   // tope del anillo
+    // Tope del anillo: EL MISMO tramo que guarda el anillo de audio del processor. Si fuera más corto, el
+    // clip repetiría cada kAnalysisRingSeconds y los 30 s de sonido nunca entrarían enteros (D-42 (b)).
+    static constexpr int kAnalysisRingSeconds = kExportAudioRingSeconds;
     std::vector<AnalysisFrame>         recentFrames;   // anillo (message thread)
     std::thread                        exportThread;
     std::atomic<bool>                  exporting { false };

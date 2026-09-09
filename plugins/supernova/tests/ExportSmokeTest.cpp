@@ -14,6 +14,9 @@
 #include "video/VideoExporter.h"
 #include "video/ExportPreset.h"
 #include "image/PhotoSequence.h"
+#include "render/Dissolve.h"
+#include "video/ExportAudioLoop.h"
+#include <catch2/catch_approx.hpp>
 
 TEST_CASE ("exportsmoke: renderer + VideoExporter escriben un MP4 reproducible", "[supernova][exportsmoke][.gpu]")
 {
@@ -198,7 +201,9 @@ TEST_CASE ("exportsmoke: en BEATS, con sonido y el análisis a su tasa real (30 
     const int W = 640, H = 360, FPS = 60, SECONDS = 4, SR = 48000;
     const int FRAMES = SECONDS * FPS;                         // 240 cuadros
     const int RING_HZ = 30;                                   // = SupernovaEditor::kAnalysisRingHz
-    const double BPM = 120.0, AUDIO_SECS = 12.0;              // = SupernovaProcessor::kAudioRingSeconds
+    const double BPM = 120.0;
+    // Leído de la constante, no copiado: el 12,0 de antes se quedó viejo cuando el anillo pasó a 30 s.
+    const double AUDIO_SECS = (double) supernova::kExportAudioRingSeconds;
 
     // ---- el plan de fotos (reloj BEATS) ----
     supernova::PhotoSequence seq;
@@ -217,17 +222,17 @@ TEST_CASE ("exportsmoke: en BEATS, con sonido y el análisis a su tasa real (30 
     REQUIRE (plan[120].changed);                              // justo en el compás
     REQUIRE (supernova::framesPerPhoto (seq.intervalSeconds(), FPS) > FRAMES);   // el reloj viejo no cambiaba
 
-    // ---- la ventana de análisis: 12 s a 30 Hz, el MISMO tramo que cubre el audio ----
+    // ---- la ventana de análisis: kExportAudioRingSeconds a 30 Hz, el MISMO tramo que cubre el audio ----
     std::vector<supernova::AnalysisFrame> ring;
-    const int RING_N = (int) (AUDIO_SECS * RING_HZ);          // 360
+    const int RING_N = (int) (AUDIO_SECS * RING_HZ);          // 900 a 30 s
     for (int k = 0; k < RING_N; ++k) ring.push_back (supernova::scenarioFrame ("kick", k, RING_N));
     const auto win = supernova::exportLoopWindow ((int) ring.size(), RING_HZ, AUDIO_SECS, true);
     REQUIRE (win.first == 0);
     REQUIRE (win.count == RING_N);
     const int loopV = supernova::exportLoopFrames (win.count, FPS, RING_HZ);
-    REQUIRE (loopV == 720);                                   // 12 s de análisis = 720 cuadros a 60 fps
+    REQUIRE (loopV == (int) (AUDIO_SECS * FPS));              // los mismos segundos, en cuadros del clip
 
-    // ---- audio: 12 s de seno, loopeado con el MISMO período que el análisis ----
+    // ---- audio: el mismo tramo de seno, loopeado con el MISMO período que el análisis ----
     const size_t ringF   = (size_t) (AUDIO_SECS * SR);
     const size_t periodA = std::min (ringF, (size_t) std::llround ((double) loopV * SR / (double) FPS));
     REQUIRE (periodA == ringF);                               // análisis y audio cubren exactamente lo mismo
@@ -247,17 +252,31 @@ TEST_CASE ("exportsmoke: en BEATS, con sonido y el análisis a su tasa real (30 
 
     supernova::ParticleParams pp;
     std::vector<uint8_t> rgba ((size_t) W * H * 4);
-    std::vector<uint8_t> frameA, frameB;
+    std::vector<uint8_t> frameA, frameB, prevFrame, changeFrame;
     std::vector<float> aChunk;
     std::set<int> analysisUsed;
     double aAcc = 0.0; size_t aPos = 0;
     const double samplesPerFrame = (double) SR / FPS;
     int curSlot = -1, bursts = 0;
 
+    // FUNDIDO en el EXPORT: la MISMA duración que en pantalla, derivada del MISMO reloj con que se armó el
+    // plan (BEATS 4 @ 120 BPM = 2 s por foto → 45% son 0,9 s, que el tope corta en 0,7 s). La primera foto
+    // del clip entra con 0 (no hay desde qué disolver). renderOffscreen avanza con el paso fijo de 1/60 que
+    // come TODA la física del clip, así que el fundido se ve, respecto del resto del movimiento, igual que
+    // en pantalla. Camino idéntico al de SupernovaEditor::exportVideo.
+    const double dissolve = supernova::dissolveSecondsFor (seq.clock(), seq.intervalSeconds(),
+                                                           seq.intervalBeats(), BPM, seq.kickGapSeconds());
+    REQUIRE (dissolve == Catch::Approx (0.7));
+
     for (int f = 0; f < FRAMES; ++f)
     {
         const int slot = plan[(size_t) f].slot;
-        if (slot != curSlot) { curSlot = slot; r.uploadImage ({ (slot == 0 ? warm : cool).data(), 512, 512 }); }
+        if (slot != curSlot)
+        {
+            r.setDissolveSeconds (curSlot < 0 ? 0.0 : dissolve);   // la primera foto: corte
+            curSlot = slot;
+            r.uploadImage ({ (slot == 0 ? warm : cool).data(), 512, 512 });
+        }
 
         const int ai = supernova::analysisIndexForFrame (f, FPS, RING_HZ, win.count);
         analysisUsed.insert (ai);
@@ -283,8 +302,57 @@ TEST_CASE ("exportsmoke: en BEATS, con sonido y el análisis a su tasa real (30 
         REQUIRE (ex.pushFrame (rgba.data(), W, H));
         if (f == 60)  frameA = rgba;                          // centro de la foto A
         if (f == 180) frameB = rgba;                          // centro de la foto B
+        if (f == 119) prevFrame   = rgba;                     // el cuadro ANTES del cambio (compás 120)
+        if (f == 120) changeFrame = rgba;                     // …y el del cambio
     }
     REQUIRE (bursts == changes);                              // una explosión por cambio, ni una de más
+
+    // El MP4 ya no tiene el escalón. Se mide el delta medio entre el cuadro 120 (el del compás) y el 119,
+    // re-rindiendo el mismo tramo con las cuatro combinaciones de (corte|fundido) × (con|sin BURST), para
+    // separar dos cosas que caen en el MISMO cuadro: el cambio de foto, que es lo que este trabajo suaviza,
+    // y la explosión del BURST, que es deliberada y tiene que seguir golpeando.
+    auto deltaAt120 = [&] (double dissolveSecs, bool useBurst)
+    {
+        supernova::MetalRenderer rc;
+        rc.prepare (512, 512);
+        std::vector<uint8_t> px ((size_t) W * H * 4), prev (px.size());
+        supernova::ParticleParams cp;
+        int cs = -1;
+        for (int f = 0; f <= 120; ++f)
+        {
+            const int slot = plan[(size_t) f].slot;
+            if (slot != cs)
+            {
+                rc.setDissolveSeconds (cs < 0 ? 0.0 : dissolveSecs);   // la primera foto del clip: corte
+                cs = slot;
+                rc.uploadImage ({ (slot == 0 ? warm : cool).data(), 512, 512 });
+            }
+            const int ai = supernova::analysisIndexForFrame (f, FPS, RING_HZ, win.count);
+            cp.explode = (useBurst && plan[(size_t) f].changed) ? 1.0f : 0.0f;
+            if (f == 120) prev = px;                                   // px todavía tiene el cuadro 119
+            rc.renderOffscreen (ring[(size_t) (win.first + ai)], cp, W, H, px.data());
+        }
+        return meanAbsDiff (prev, px);
+    };
+
+    const double cutNoBurst  = deltaAt120 (0.0,      false);
+    const double fadeNoBurst = deltaAt120 (dissolve, false);
+    const double cutBurst    = deltaAt120 (0.0,      true);
+    const double fadeBurst   = deltaAt120 (dissolve, true);
+    const double realPath    = meanAbsDiff (prevFrame, changeFrame);   // el del MP4 que se acaba de escribir
+    WARN ("EXPORT cuadro 120 vs 119 — sin burst: corte " << cutNoBurst << " → fundido " << fadeNoBurst
+          << " · con burst: corte " << cutBurst << " → fundido " << fadeBurst
+          << " · el clip escrito: " << realPath);
+
+    // Aislado del BURST, que es lo que este trabajo arregla: el corte salta y el fundido no.
+    REQUIRE (cutNoBurst  > 8.0);                     // el export de siempre SÍ saltaba (el bug, en el MP4)
+    REQUIRE (fadeNoBurst < cutNoBurst / 8.0);
+    // Con BURST el cuadro del cambio sigue golpeando —la explosión es el efecto pedido— pero golpea MENOS,
+    // porque lo que estalla ya se re-arma con los colores nuevos entrando en vez de aparecer de una.
+    REQUIRE (fadeBurst < cutBurst * 0.6);
+    // Y el clip realmente escrito recorre el mismo camino que la medición con burst (el test no mide otra cosa).
+    REQUIRE (realPath == Catch::Approx (fadeBurst).epsilon (0.25));
+
     // 4 s de clip = 4 s de análisis: 120 frames del anillo, no 240 (eso era correr al doble de velocidad).
     REQUIRE ((int) analysisUsed.size() == SECONDS * RING_HZ);
     REQUIRE (ex.finish());

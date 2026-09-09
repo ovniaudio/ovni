@@ -2,6 +2,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include "render/ParticleParams.h"
+#include "render/ViewPhases.h"
 #include "analysis/TripleBuffer.h"
 #include "analysis/AnalysisFrame.h"
 #include "analysis/MidiTriggerQueue.h"
@@ -28,7 +29,10 @@ public:
     AnalysisFrame lastFrame() const noexcept;
 
     // Carga una imagen del usuario (RF1). Decode ya hecho fuera del render loop; se sube en el próximo frame.
-    void loadImage (std::shared_ptr<const LoadedImage> img) noexcept;
+    // `dissolveSeconds` = cuánto dura la disolución sobre la foto que está (0 = corte). La decide el editor
+    // con el reloj de la secuencia (ver dissolveSecondsNow); acá sólo viaja.
+    void   loadImage (std::shared_ptr<const LoadedImage> img, double dissolveSeconds = 0.0) noexcept;
+    double lastDissolveSeconds() const noexcept;   // lo último pedido (tests: hay valor aunque no haya GPU)
     unsigned activeParticles() const noexcept;
     unsigned totalParticles()  const noexcept;
 
@@ -36,6 +40,7 @@ public:
     bool isSyphonActive() const noexcept;
 
     void snapToHome() noexcept;   // CLEAR: lienzo instantáneo (partículas al hogar + acumuladores a cero)
+    ViewPhases viewPhases() const noexcept;   // ROTATE/ORBIT/HUE CYC acumulados (el export los hereda)
     void updateColors (const uint8_t* rgba, int w, int h) noexcept;   // VIDEO: recolorea el lattice
 
     void setFullscreen (bool on) noexcept;
@@ -55,6 +60,7 @@ public:
 
 private:
     std::unique_ptr<MetalViewComponent> metal;
+    double lastDissolveNoGpu = 0.0;   // fallback sin GPU (CI): la promesa sigue siendo observable
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SupernovaView)
 };

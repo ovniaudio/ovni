@@ -5,6 +5,105 @@ All notable changes to the [OVNI](https://github.com/ovniaudio/ovni) catalog are
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## [0.4.0] - 2026-09-09
+
+### Added
+
+- **SUPERNOVA — every photo change now dissolves into the next.** Up to now the picture
+  swapped in one frame: the particles were teleported back to their grid, their speed was
+  zeroed and every colour was rewritten between two frames. It was a hard cut, and it showed
+  the moment you filmed the screen. The SEQ menu even called it *"Cut — the particles travel
+  to the new photo"*, which promised a journey that never happened: the particles' home grid
+  is the same for every picture, so there was nothing to travel. Now the incoming picture
+  arrives through a second set of buffers and the two are blended, so the old one melts into
+  the new one — however the change is fired: the clock, a click, a number key, an arrow, a
+  MIDI note, a relink, a rotation, dropping a photo on top of another one, or the first frame
+  of a video. There is nothing to switch on and nothing to set. The length comes from the
+  clock itself (about 0.7 s at the usual pace, 0.11 s when photos change on every kick with
+  the minimum gap), so it always finishes before the next change and a burst of kicks never
+  trips over itself. **Burst** still explodes — what blows apart simply re-forms already
+  wearing the new picture's colours. The exported video dissolves the same way. **Undo and
+  redo dissolve too** — stepping back through a reorder that changes the picture used to cut.
+  Two things still cut, on purpose: CLEAR, and opening a session onto an empty canvas, where
+  there is no picture to melt out of.
+
+### Changed
+
+- **The clip's soundtrack is the last 30 seconds you played, not 12 — and the loop point no
+  longer clicks.** Export with sound muxes a rolling buffer of the audio that drove the
+  visuals, and a clip longer than that buffer repeats it, picture and sound together. Twelve
+  seconds was fine for a short social loop but too short for a 30–45 second piece: you heard
+  the same bar come back. It is thirty seconds now. The repeat was also a hard cut — the last
+  sample of the take followed by the first, wherever the waveform happened to be — which
+  ticked on every lap. The join is now crossfaded over 10 ms with audio the buffer keeps
+  aside for exactly that purpose, so the take stays exactly as long as the picture's loop and
+  the seam stops being a step: measured on a worst-case waveform, the jump at the join goes
+  from 150 times the material's own slope down to 0.15 times it. The longer buffer costs
+  about 7 MB more memory at 48 kHz.
+
+- **The hint bar in the standalone app no longer offers DAW automation.** It read
+  *"everything automatable from the DAW"* in both the plug-in and the app; in the app there is
+  no host to automate anything. It now points at what actually moves a control there without
+  your hands: an LFO, or a MIDI CC you learned.
+
+### Fixed
+
+- **The exported MP4 now looks like the window.** You could set up a shot you liked, press
+  EXPORT, and get back something else: the same photo and the same knobs came out as a spray
+  of dots piled against the edges of the frame, darker, with the figure gone. Four separate
+  things were wrong, and they stacked.
+
+  **The physics depended on your screen's refresh rate.** The engine fades its pulses *per
+  frame* — the kick flash, the spring that pulls the picture back together, the ray, the
+  friction on every particle, the length of the trails. On a 120 Hz screen each of those
+  lasted half as long, in seconds, as on a 60 Hz one, and the export always simulated at 60.
+  So a look tuned on a ProMotion Mac and the clip rendered from it were two different worlds:
+  the same kick pushed the particles about one and a half times further in the clip, and at
+  higher INTENSITY they never made it home between beats and stacked against the walls of the
+  frame. All of those fades are now measured in seconds, not frames, on the clock of a 120 Hz
+  display — the refresh the fifty worlds were dialled in and approved on. **This also changes
+  what you see on a 60 Hz screen, and in the clip**: both now look the way SUPERNOVA has always
+  looked on a ProMotion Mac. Pulses are shorter and the picture pulls itself back together
+  sooner than they used to at 60 Hz. Nothing was retuned; the worlds' numbers are untouched.
+
+  **4K came out darker than 1080p.** On screen the dots scale with the size of the view, so
+  the picture keeps the same brightness whether it is in a small panel or across a second
+  monitor. The export never got that: it drew 1024-sized dots over four times the pixels, and
+  the same clip in 4K came out around half as bright as in 1080p. 4K and 1080p are now exposed
+  the same.
+
+  **The clip re-read your photo the plain way.** The window analyses each picture — where the
+  subject is, where the eye goes — and uses that for the depth and for which dots react.
+  The export decoded the file again without any of it, so with DEPTH up the volume in the clip
+  was a different shape than the one on screen. It now decodes exactly the way the window does.
+
+  **Three kicks that were not in the music.** Every clip exploded on its very first frame, and
+  again each time it looped around the audio buffer; and because the
+  clip runs at twice the rate of the analysis, each real kick was fed to the engine twice in a
+  row. All three are gone. The false first explosion also happened in the window every time you
+  opened the plugin.
+
+  Two more things the clip now inherits from the screen: it starts already **in motion**
+  instead of from the still picture (the render runs a couple of seconds of the loop before it
+  begins writing, which also removes the jolt at the loop point), and it keeps the **tilt and
+  colour drift** that ORBIT and HUE CYC have accumulated, instead of starting square-on. What
+  still does not travel: the clip freezes the knob values of the moment you press EXPORT — an
+  LFO or a preset morph in flight is not baked in.
+
+- **Exporting a photo sequence is fast again.** The clip decodes each photo once, not once per
+  lap of the loop. Since 0.3.x the export reads every picture the same careful way the window
+  does — including the subject mask, which can run two Core ML models — and it was redoing that
+  work every time the sequence came back around to a photo it had already read. With two photos
+  changing on the kick, a 30-second clip meant about 120 of those instead of two: the window
+  looked frozen for far longer than the clip lasts. Nothing about the picture changed, only how
+  many times it is read.
+
+- **A video that was closed before it showed anything no longer hands its dissolve to the next
+  one.** If you cued a video and hit CLEAR before its first frame arrived, the pending
+  dissolve stayed parked; the next video you dropped — onto an empty session, which is a cut —
+  would fade in over the factory canvas instead. Same for reopening a session with a video in
+  it. Both now cut, as they say they do.
+
 ## [0.3.2] - 2026-09-06
 
 **A small SUPERNOVA-only fix release.** The app is honest about what it can do on older

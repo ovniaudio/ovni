@@ -212,7 +212,7 @@ TEST_CASE ("export: analysisIndexForFrame reproduce el anillo a su tasa (30 Hz e
 
 TEST_CASE ("export: exportLoopWindow hace que análisis y audio cubran el MISMO tramo", "[supernova][export]")
 {
-    // Con sonido: el anillo de audio guarda 12 s, así que el loop usa los ÚLTIMOS 12 s de análisis (360 a 30 Hz).
+    // Con sonido: el loop usa los ÚLTIMOS `audioSeconds` de análisis (acá 12 s = 360 frames a 30 Hz).
     const auto w = exportLoopWindow (600, 30, 12.0, true);
     REQUIRE (w.count == 360);
     REQUIRE (w.first == 240);                    // los más RECIENTES (el audio del ring es el final)

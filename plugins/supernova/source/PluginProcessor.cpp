@@ -186,7 +186,9 @@ void SupernovaProcessor::prepareEngine (const juce::dsp::ProcessSpec& spec)
 {
     monoScratch.assign ((size_t) juce::jmax (1u, spec.maximumBlockSize), 0.0f);
     audioRingSr     = spec.sampleRate > 0 ? spec.sampleRate : 48000.0;
-    audioRingFrames = (int) (audioRingSr * kAudioRingSeconds);
+    // El anillo guarda el LOOP (kAudioRingSeconds) + un colchón chico: de ese colchón sale el material
+    // del crossfade del empalme (ExportAudioLoop.h), y por eso el loop puede sonar continuo sin acortarse.
+    audioRingFrames = (int) (audioRingSr * ((double) kAudioRingSeconds + kExportAudioHeadroomSeconds));
     audioRing.assign ((size_t) audioRingFrames * 2, 0.0f);
     audioRingWriteFrame.store (0);
     audioFifo.reset();
@@ -244,9 +246,8 @@ void SupernovaProcessor::processAudio (juce::AudioBuffer<float>& buffer, juce::M
         {
             // El cue viaja con el beatPos de LA NOTA: fase del bloque (el BeatClock avanza más abajo, así que
             // acá todavía es la del comienzo) + el offset en samples del mensaje. Todo aritmética: RT-safe.
-            const double sr = getSampleRate();
-            const double atBeat = beatClock.phaseInBeats()
-                                + (sr > 0.0 ? (double) meta.samplePosition / sr * beatClock.bpm() / 60.0 : 0.0);
+            const double atBeat = BeatClock::beatAtSampleOffset (beatClock.phaseInBeats(), beatClock.bpm(),
+                                                                 meta.samplePosition, getSampleRate());
             cueQueue.push ({ ev.cue, ev.photo, m.getVelocity(), atBeat });
         }
         else if (ev.isValid())                         midiTriggerQueue.push (ev);

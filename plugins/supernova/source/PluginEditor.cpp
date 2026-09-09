@@ -15,6 +15,8 @@
 #include "render/metal/MetalRenderer.h"
 #include "render/metal/AutoreleasePool.h"
 #include "video/VideoExporter.h"
+#include "video/ExportOnsets.h"
+#include "video/ExportWarmup.h"
 #include "presets/PresetTypes.h"
 #include "ui/WorldCards.h"
 #include <cstring>
@@ -307,7 +309,9 @@ void SupernovaEditor::ingestMedia (const juce::StringArray& files)
                 if (seq.size() > 0) { seq.setFiles ({}); imageCache.clear(); syncSequenceIfCurrent(); }
                 currentSingleFile = juce::File();
                 singleRot = 0;
-                if (openVideo (f))          // sesión de 1 item SOLO si el video abrió de verdad (review: sin GPU no)
+                // CORTE: montar media sobre una sesión vacía no disuelve desde nada (mismo criterio que
+                // `unloadMedia`, que vuelve a la fábrica por corte).
+                if (openVideo (f, 0.0))     // sesión de 1 item SOLO si el video abrió de verdad (review: sin GPU no)
                 {
                     currentSingleFile = f;  // la tira lo muestra; el ⟳ va por videoSource
                     markShown (f, 0);
@@ -329,41 +333,57 @@ void SupernovaEditor::ingestMedia (const juce::StringArray& files)
     currentSingleFile = juce::File();   // ya no es "uno solo": el ⟳ opera sobre el item actual
     singleRot = 0;
     syncSingleToState();
-    showItem (juce::File (seq.currentPath()), seq.currentRotation());
+    showItem (juce::File (seq.currentPath()), seq.currentRotation(), dissolveSecondsNow());
     syncSequenceIfCurrent();
     mediaCanRotate = view.gpuAvailable();   // la TopBar pollea y enciende el ⟳ + el cluster SEQ
 }
 
 // Muestra un item de la secuencia: video (abre la fuente viva) o imagen (decode async). Cierra el video
 // previo al pasar a una imagen.
-void SupernovaEditor::showItem (const juce::File& file, int turns, std::function<void()> onFail)
+void SupernovaEditor::showItem (const juce::File& file, int turns, double dissolveSeconds,
+                               std::function<void()> onFail)
 {
     markShown (file, turns);
     if (VideoSource::looksLikeVideo (file))
     {
-        if (! openVideo (file) && onFail) onFail();   // sin GPU, o el archivo no abre
+        // El video hereda la duración: su PRIMER frame entra por loadImage (videoTick) y también funde.
+        if (! openVideo (file, dissolveSeconds) && onFail) onFail();   // sin GPU, o el archivo no abre
         return;
     }
     videoSource.close();
     videoGeomReady = false;
     juce::Component::SafePointer<SupernovaEditor> safe (this);
-    decodeImageAsync (file, turns, [safe, onFail = std::move (onFail)] (std::shared_ptr<const LoadedImage> loaded)
+    decodeImageAsync (file, turns, [safe, dissolveSeconds, onFail = std::move (onFail)]
+                      (std::shared_ptr<const LoadedImage> loaded)
     {
         if (safe == nullptr) return;
-        if (loaded->valid()) { safe->currentImage = loaded; safe->view.loadImage (loaded); safe->userImageLoaded = true; }
+        if (loaded->valid()) { safe->currentImage = loaded; safe->view.loadImage (loaded, dissolveSeconds);
+                               safe->userImageLoaded = true; }
         else if (onFail)     onFail();
     });
 }
 
+// La duración del fundido AHORA: sale del reloj vivo de la secuencia (el mismo que decide cuándo cambia la
+// foto), así con SECONDS 8 s funde 0,7 s y con KICK a 0,25 s de gap funde 0,1125 s — siempre cierra antes
+// del próximo cambio. Sin secuencia (foto única, drop, rotar, relink de un item solo) no hay intervalo del
+// que derivar: el tope, 0,7 s.
+double SupernovaEditor::dissolveSecondsNow() const
+{
+    const auto& seq = proc.photoSequence();
+    if (! seq.active()) return dissolveSecondsDefault();
+    return dissolveSecondsFor (seq.clock(), seq.intervalSeconds(), seq.intervalBeats(),
+                               proc.tempoBpm(), seq.kickGapSeconds());
+}
+
 // El item ACTUAL de la secuencia. Si no decodifica (archivo corrupto, o borrado entre el listado y el
 // decode) NO se poda: se marca FALTANTE, como cualquier otro que no está — el tile se queda y se relinkea.
-void SupernovaEditor::showSequenceItem (int idx)
+void SupernovaEditor::showSequenceItem (int idx, double dissolveSeconds)
 {
     auto& seq = proc.photoSequence();
     if (! juce::isPositiveAndBelow (idx, seq.size())) return;
     const juce::String path = seq.pathAt (idx);
     juce::Component::SafePointer<SupernovaEditor> safe (this);
-    showItem (juce::File (path), seq.rotationAt (idx), [safe, path]
+    showItem (juce::File (path), seq.rotationAt (idx), dissolveSeconds, [safe, path]
     {
         if (safe == nullptr) return;
         safe->decodeFailed.addIfNotAlreadyThere (path);
@@ -375,12 +395,16 @@ void SupernovaEditor::showSequenceItem (int idx)
 
 // Abre un video como fuente de color. La geometría se fija con el PRIMER frame (videoTick), los siguientes
 // solo recolorean. Cierra cualquier video previo.
-bool SupernovaEditor::openVideo (const juce::File& file)
+bool SupernovaEditor::openVideo (const juce::File& file, double dissolveSeconds)
 {
     videoGeomReady = false;
+    // El fundido viaja ACÁ, con la apertura: entre este momento y el primer frame decodificado (videoTick)
+    // no puede quedar parado el valor de otro video. Si no abre, tampoco queda nada.
+    pendingVideoDissolve = 0.0;
     if (! view.gpuAvailable()) return false;   // sin GPU no hay lattice que colorear
     if (videoSource.open (file))
     {
+        pendingVideoDissolve = juce::jmax (0.0, dissolveSeconds);
         userImageLoaded = true;
         mediaCanRotate  = true;
         return true;
@@ -415,7 +439,8 @@ void SupernovaEditor::videoTick()
     {
         auto li = std::make_shared<LoadedImage>();
         li->rgba = videoBuf; li->width = videoW; li->height = videoH;
-        view.loadImage (li);          // fija homes/flow/peso una vez (sin Vision: física por luma)
+        view.loadImage (li, pendingVideoDissolve);   // fija homes/flow/peso una vez (sin Vision: por luma)
+        pendingVideoDissolve = 0.0;                  // el resto del video recolorea, no vuelve a fundir
         videoGeomReady = true;
     }
     else
@@ -468,11 +493,12 @@ void SupernovaEditor::loadImageFile (const juce::File& chosen)
     markShown (chosen, 0);
     syncSingleToState();          // la foto viaja con el proyecto / el preset (y con el undo)
     juce::Component::SafePointer<SupernovaEditor> safe (this);
-    decodeImageAsync (chosen, 0, [safe] (std::shared_ptr<const LoadedImage> loaded)
+    const double dissolve = dissolveSecondsNow();   // soltar una foto SOBRE otra también disuelve
+    decodeImageAsync (chosen, 0, [safe, dissolve] (std::shared_ptr<const LoadedImage> loaded)
     {
         if (safe != nullptr && loaded->valid())
         {
-            safe->currentImage = loaded; safe->view.loadImage (loaded);
+            safe->currentImage = loaded; safe->view.loadImage (loaded, dissolve);
             safe->userImageLoaded = true;   // el knob CUTOUT actúa sobre la máscara del sujeto
         }
     });
@@ -524,10 +550,12 @@ void SupernovaEditor::rotateCurrentImage()
         syncSequenceIfCurrent();
         const auto file = juce::File (seq.currentPath());
         const int turns = seq.currentRotation();
+        const double dissolve = dissolveSecondsNow();   // girar la foto también es un cambio: disuelve
         markShown (file, turns);
-        decodeImageAsync (file, turns, [safe] (std::shared_ptr<const LoadedImage> loaded)
+        decodeImageAsync (file, turns, [safe, dissolve] (std::shared_ptr<const LoadedImage> loaded)
         {
-            if (safe != nullptr && loaded->valid()) { safe->currentImage = loaded; safe->view.loadImage (loaded); }
+            if (safe != nullptr && loaded->valid()) { safe->currentImage = loaded;
+                                                     safe->view.loadImage (loaded, dissolve); }
         });
     }
     else if (currentSingleFile.existsAsFile())
@@ -535,11 +563,13 @@ void SupernovaEditor::rotateCurrentImage()
         singleRot = (singleRot + 1) % 4;
         const auto file = currentSingleFile;
         const int turns = singleRot;
+        const double dissolve = dissolveSecondsNow();
         markShown (file, turns);
         syncSingleToState();
-        decodeImageAsync (file, turns, [safe] (std::shared_ptr<const LoadedImage> loaded)
+        decodeImageAsync (file, turns, [safe, dissolve] (std::shared_ptr<const LoadedImage> loaded)
         {
-            if (safe != nullptr && loaded->valid()) { safe->currentImage = loaded; safe->view.loadImage (loaded); }
+            if (safe != nullptr && loaded->valid()) { safe->currentImage = loaded;
+                                                     safe->view.loadImage (loaded, dissolve); }
         });
     }
 }
@@ -662,15 +692,20 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
 
     // VENTANA del análisis (ronda 2b): el anillo corre a kAnalysisRingHz, no a los fps del clip. Con sonido,
     // análisis y audio tienen que cubrir el MISMO tramo — el ring de audio guarda kAudioRingSeconds — o el
-    // MP4 muestra 20 s de reactividad sobre 12 s de sonido. Sin sonido, el anillo entero.
+    // MP4 mostraría más reactividad que sonido. Los dos anillos salen hoy de la MISMA constante
+    // (kAnalysisRingSeconds = kExportAudioRingSeconds), así que la ventana es el anillo entero mientras
+    // el editor lleve suficiente tiempo abierto. Sin sonido, el anillo entero siempre.
     const int ringHz = kAnalysisRingHz;
     const ExportWindow win = exportLoopWindow ((int) recentFrames.size(), ringHz,
                                                (double) SupernovaProcessor::kAudioRingSeconds, wantAudio);
     std::vector<AnalysisFrame> frames (recentFrames.begin() + win.first,
                                        recentFrames.begin() + win.first + win.count);
     const ExportDims dims = exportDims (fmt);
+    // FASES DEL MUNDO: el renderer del export nace en cero y el MP4 salía frontal y en el tono base mientras
+    // la ventana estaba inclinada por ORBIT y corrida por HUE CYC. Se leen ACÁ (message thread, donde vive la
+    // vista) y viajan al hilo por valor.
+    const ViewPhases phases = view.viewPhases();
     const int totalFrames = juce::jmax (1, seconds) * fps;
-    const bool cutout = pp.cutoutAmt > 0.0f;
     const int  fitM   = (int) fitModeV;   // FIT/FILL del lienzo → el mismo encuadre en el MP4
 
     // Snapshot de la SECUENCIA de fotos (si hay ≥2) → el export CICLA las fotos COMO SE VEN: el reloj
@@ -686,6 +721,12 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
 
     std::vector<ExportSlot> plan;
     const bool burst = seq.burst();
+    // FUNDIDO: la MISMA duración que en pantalla, del MISMO reloj con que se arma el plan de más abajo. Se
+    // resuelve acá (message thread, donde vive la secuencia) y viaja al hilo por valor.
+    const double dissolve = seq.active()
+                                ? dissolveSecondsFor (seq.clock(), seq.intervalSeconds(), seq.intervalBeats(),
+                                                      proc.tempoBpm(), seq.kickGapSeconds())
+                                : dissolveSecondsDefault();
     if (seqPaths.size() >= 2)
     {
         // KICK: los cambios salen de los onsets del MISMO anillo de análisis que reproduce el clip, con el
@@ -725,14 +766,21 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
     // destructor la prende ANTES del join() → el puntero sigue vivo mientras el hilo corre.
     std::atomic<bool>* cancel = &exportCancel;
     exportThread = std::thread ([safe, cancel, img, pp, frames, dims, totalFrames, fps, ringHz, path, seqPaths, seqRots,
-                                 plan, burst, cutout, fitM, wantAudio, audio = std::move (audio), asr]() mutable
+                                 plan, burst, dissolve, fitM, phases, wantAudio, audio = std::move (audio), asr]() mutable
     {
         // Audio en sync con el LOOP del análisis: el video repite la ventana de análisis cada loopV CUADROS
         // (frames·fps/ringHz, no frames), y el audio repite el TRAMO FINAL del ring con ese mismo período.
+        // El empalme lleva un crossfade corto (D-42 (b)): sin él, la vuelta era un corte seco y se oía un
+        // tic en cada repetición. El material del fundido sale del colchón que el anillo guarda ANTES del
+        // tramo, así que el período no se acorta — y de todas formas el que manda es `loop.frames`, no el
+        // pedido, para que audio y video no puedan desincronizarse en silencio.
         const size_t ringF = audio.size() / 2;
         const int    loopV = frames.empty() ? totalFrames : exportLoopFrames ((int) frames.size(), fps, ringHz);
-        const size_t periodA   = wantAudio ? juce::jmin (ringF, (size_t) std::llround ((double) loopV * asr / (double) fps)) : 0;
-        const size_t baseA     = ringF - periodA;
+        const size_t wantA = wantAudio ? juce::jmin (ringF, (size_t) std::llround ((double) loopV * asr / (double) fps)) : 0;
+        const AudioLoop aLoop = makeSeamlessAudioLoop (audio.data(), ringF, ringF - wantA, wantA,
+                                                       (size_t) std::llround (kExportAudioCrossfadeSeconds * asr));
+        audio = std::vector<float> {};                 // el loop ya tiene su copia: soltamos el snapshot
+        const size_t periodA = aLoop.frames;
         const double samplesPerFrame = asr / (double) fps;
 
         VideoExporter::Config cfg;
@@ -753,25 +801,69 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
                 MetalRenderer r;                               // renderer FRESCO (patrón de los golden tests)
                 r.prepare (kParticleGrid, kParticleGrid);
                 r.setFitMode (fitM);
+                // INVARIANCIA AL TAMAÑO, como en pantalla: sin esto el 4K dibuja el glifo a tamaño de 1024
+                // sobre 4× más píxeles y el MISMO clip sale ~2,7× más oscuro que en 1080p. Los goldens y
+                // --render-frames no la piden (default apagado) → su camino byte-exacto no se mueve.
+                r.setOffscreenSizeInvariance (true);
+                r.setViewPhases (phases);                      // el clip arranca con el encuadre de la ventana
 
                 const bool  cycle   = seqPaths.size() >= 2 && ! plan.empty();   // secuencia → ciclar las fotos
                 int         curSlot = -1;
-                auto uploadSlot = [&] (int slot)
+                // Caché del decode LOCAL a este hilo: la secuencia cicla, así que la misma foto vuelve
+                // muchas veces en un clip largo y `decodeBaseImage` corre Vision (cientos de ms por foto
+                // sin fondo plano). Sin esto, dos fotos con gap corto en un clip de 30 s son ~120 decodes
+                // en vez de 2. Muere con el hilo; no se comparte con el caché del editor.
+                DecodedImageCache slotCache;
+                auto uploadSlot = [&] (int slot, bool first)
                 {
-                    auto li = ImageLoader::fromFile (juce::File (seqPaths[slot]));   // decodifica + endereza EXIF
-                    if (seqRots[slot] != 0) ImageLoader::rotate90 (li, seqRots[slot]);
-                    if (li.valid()) r.uploadImage (li.source (cutout));
+                    // COMO EN VIVO: decode base (EXIF + saliencia Vision + máscara del sujeto) y la rotación
+                    // DERIVADA de esa base — el mismo camino que `decodeImageAsync`/`DecodedImageCache` del
+                    // editor. Antes era `ImageLoader::fromFile` pelado y el MP4 salía sin saliencia (pesos
+                    // por luma) y sin máscara (depth de "modo foto" en vez de la almohada del sujeto).
+                    auto li = exportSlotImage (slotCache, juce::File (seqPaths[slot]), seqRots[slot]);
+                    // FUNDIDO: igual que en pantalla. La PRIMERA foto del clip entra por corte (no hay
+                    // desde qué disolver). renderOffscreen avanza con el paso fijo de 1/60 que come TODA la
+                    // física del clip, así que el fundido se ve, respecto del resto del movimiento, igual
+                    // que en el editor.
+                    r.setDissolveSeconds (first ? 0.0 : dissolve);
+                    // La máscara SIEMPRE viaja (como en MetalViewComponent::tick); el knob CUTOUT decide
+                    // cuánto fondo borra, y ya está en `pp`.
+                    if (li.valid()) r.uploadImage (li.source (true));
                 };
 
                 if (! cycle)   // una sola imagen (o la factory) para el clip entero
                 {
+                    // `source (true)`, no `source (cutout)`: la máscara viaja siempre y CUTOUT (que ya está
+                    // en `pp`) decide en el shader — exactamente como en la ventana.
                     if (img && img->valid())
-                        r.uploadImage (img->source (cutout));
+                        r.uploadImage (img->source (true));
                     else
                     { auto f = makeFactoryImage (kParticleGrid, kParticleGrid); r.uploadImage ({ f.data(), kParticleGrid, kParticleGrid }); }
                 }
 
                 std::vector<uint8_t> rgba ((size_t) dims.width * dims.height * 4);
+                ExportOnsetState onsetState;                   // un golpe por frame de análisis, no dos
+
+                // CALENTAMIENTO: el renderer fresco tiene las partículas en su hogar y `time` en cero — el
+                // cuadro 0 del MP4 era la imagen QUIETA. Corremos los cuadros que PRECEDEN al 0 dentro del
+                // loop (ExportWarmup.h) para que el clip arranque en el mismo régimen con el que va a cerrar.
+                // No se escriben al muxer: sólo dejan la simulación donde tiene que estar.
+                if (! frames.empty())
+                {
+                    if (cycle && ! plan.empty())               // la foto del cuadro 0, ya montada (corte)
+                    { curSlot = plan[0].slot; uploadSlot (curSlot, true); }
+                    ParticleParams warm = pp;
+                    warm.explode = 0.0f;                       // el calentamiento no dispara BURST
+                    for (int k = 0; k < kExportWarmupFrames && ok && ! cancel->load(); ++k)
+                    {
+                        const int vi   = exportWarmupVideoFrame (k, kExportWarmupFrames, loopV);
+                        const int aIdx = analysisIndexForFrame (vi, fps, ringHz, (int) frames.size());
+                        AnalysisFrame af = frames[(size_t) aIdx];
+                        if (! exportOnsetStep (onsetState, aIdx).keepOnset) af.onset = false;
+                        r.renderOffscreen (af, warm, dims.width, dims.height, rgba.data());
+                    }
+                }
+
                 std::vector<float> aChunk;                     // scratch del push de audio por cuadro
                 double aAcc = 0.0; size_t aPos = 0;            // acumulador fraccional + cursor modular
                 for (int i = 0; i < totalFrames && ok && ! cancel->load(); ++i)   // cancelable (close)
@@ -780,12 +872,16 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
                     if (cycle && i < (int) plan.size())
                     {
                         const int slot = plan[(size_t) i].slot;   // reloj + orden ya resueltos (ExportPreset.h)
-                        if (slot != curSlot) { curSlot = slot; uploadSlot (slot); }
+                        if (slot != curSlot) { const bool first = (curSlot < 0); curSlot = slot; uploadSlot (slot, first); }
                     }
-                    // El anillo se reproduce a SU tasa: a 60 fps / 30 Hz, cada frame de análisis dura dos cuadros.
-                    AnalysisFrame af = frames.empty()
-                                           ? AnalysisFrame {}
-                                           : frames[(size_t) analysisIndexForFrame (i, fps, ringHz, (int) frames.size())];
+                    // El anillo se reproduce a SU tasa: a 60 fps / 30 Hz, cada frame de análisis dura dos
+                    // cuadros. El golpe entra en el PRIMERO de los dos y nada más (ExportOnsets.h): antes el
+                    // bool `onset` viajaba en los dos y el pulso arrancaba clavado en 1,0 el doble de tiempo.
+                    const int aIdx = frames.empty()
+                                         ? -1
+                                         : analysisIndexForFrame (i, fps, ringHz, (int) frames.size());
+                    AnalysisFrame af = (aIdx < 0) ? AnalysisFrame {} : frames[(size_t) aIdx];
+                    if (aIdx >= 0 && ! exportOnsetStep (onsetState, aIdx).keepOnset) af.onset = false;
                     // BURST: la explosión dura UN cuadro, el del cambio (igual que en vivo, MetalViewComponent);
                     // el resto del clip va sin explosión (no exportar el loop entero explotado).
                     pp.explode = (burst && switched) ? 1.0f : 0.0f;
@@ -802,9 +898,9 @@ void SupernovaEditor::exportVideo (ExportFormat fmt, int seconds, int fps, bool 
                             aChunk.resize ((size_t) nA * 2);
                             for (int k = 0; k < nA; ++k)
                             {
-                                const size_t src = (baseA + ((aPos + (size_t) k) % periodA)) * 2;
-                                aChunk[(size_t) k * 2 + 0] = audio[src + 0];
-                                aChunk[(size_t) k * 2 + 1] = audio[src + 1];
+                                const size_t src = ((aPos + (size_t) k) % periodA) * 2;
+                                aChunk[(size_t) k * 2 + 0] = aLoop.samples[src + 0];
+                                aChunk[(size_t) k * 2 + 1] = aLoop.samples[src + 1];
                             }
                             aPos = (aPos + (size_t) nA) % periodA;
                             ok = exporter.pushAudio (aChunk.data(), nA);
@@ -1157,6 +1253,12 @@ void SupernovaEditor::hydrateSequence()
         refreshMediaStrip();
         return;
     }
+    // FUNDIDO del cambio que viene del state. Deshacer/rehacer pasa por acá igual que un restore, pero no
+    // es lo mismo: en un Cmd+Z YA hay una foto en pantalla, y "todo cambio es suave" (prompt 44) vale
+    // también para eso — antes cortaba en seco. Si el lienzo todavía muestra el gradiente de fábrica (abrir
+    // un proyecto con el editor recién nacido) no hay desde qué disolver: corte. Se lee ACÁ, antes de que
+    // las ramas de abajo pongan `userImageLoaded` en true.
+    const double hydrateDissolve = userImageLoaded ? dissolveSecondsNow() : 0.0;
     // Sin child "sequence" (un undo/restore hacia un estado SIN secuencia) la secuencia viva también se
     // vacía: si no, quedaría una sesión fantasma que el state ya no tiene.
     seq = vt.isValid() ? PhotoSequence::fromValueTree (vt) : PhotoSequence {};
@@ -1180,7 +1282,7 @@ void SupernovaEditor::hydrateSequence()
         // Sólo se re-muestra si CAMBIÓ lo que está en pantalla (deshacer un reordenamiento deja la misma
         // foto a la vista: re-decodificarla sería un hipo gratis).
         if (alive >= 0 && (shownPath != seq.currentPath() || shownRot != seq.currentRotation()))
-            showSequenceItem (seq.currentIndex());   // imagen o video
+            showSequenceItem (seq.currentIndex(), hydrateDissolve);   // imagen o video
         mediaCanRotate = view.gpuAvailable();
     }
     else if (single.existsAsFile())
@@ -1203,7 +1305,7 @@ void SupernovaEditor::hydrateSequence()
             }
             // Si el video no abre (sin GPU, archivo ilegible), la sesión NO puede quedar "cargada" con la
             // fábrica en pantalla: mismo guard que ingestMedia.
-            else if (! openVideo (single)) { unloadMedia(); return; }
+            else if (! openVideo (single, hydrateDissolve)) { unloadMedia(); return; }
             else
             {
                 // openVideo no lleva la rotación adentro (el ⟳ del video gira la salida viva): se re-aplica.
@@ -1215,7 +1317,7 @@ void SupernovaEditor::hydrateSequence()
         {
             // Un decode que falla tampoco puede dejar una foto fantasma en la sesión.
             juce::Component::SafePointer<SupernovaEditor> safe (this);
-            showItem (single, singleTurns, [safe] { if (safe != nullptr) safe->unloadMedia(); });
+            showItem (single, singleTurns, hydrateDissolve, [safe] { if (safe != nullptr) safe->unloadMedia(); });
         }
         mediaCanRotate = view.gpuAvailable();
         userImageLoaded = true;
@@ -1305,13 +1407,14 @@ void SupernovaEditor::sequenceTick (double nowMs)
         if (seq.burst()) view.triggerBurst();   // BURST: la foto vieja estalla y se re-arma como la nueva
         if (nextIsVideo)
         {
-            openVideo (juce::File (seq.currentPath()));
+            // su primer frame entra fundiendo, como una foto
+            openVideo (juce::File (seq.currentPath()), dissolveSecondsNow());
         }
         else
         {
             videoSource.close();           // el item previo pudo ser un video
             videoGeomReady = false;
-            view.loadImage (seqNextReady);
+            view.loadImage (seqNextReady, dissolveSecondsNow());   // FUNDIDO: la duración la fija el reloj
             seqNextReady.reset();
         }
         userImageLoaded = true;

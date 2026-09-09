@@ -34,3 +34,23 @@ TEST_CASE ("system capture backend: el panel de Ajustes es el del permiso que pi
     REQUIRE (supernova::settingsPaneUrl (SystemAudioBackend::screenCapture)
              == juce::String ("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"));
 }
+
+// Backlog 0.3.3: "no soportado" tiene que DISTINGUIRSE de "usá ScreenCaptureKit". Antes pickBackend devolvía
+// screenCapture para macOS 11/12 — donde SCK ni existe — y la verdad sólo aparecía después, preguntándole al
+// adaptador. Ahora la decisión pura ya lo dice, y la fábrica devuelve un backend que responde que no.
+TEST_CASE ("system capture backend: en macOS 11 y 12 no hay NINGÚN backend", "[supernova][app]")
+{
+    REQUIRE (pickBackend (11, 0) == SystemAudioBackend::none);
+    REQUIRE (pickBackend (12, 3) == SystemAudioBackend::none);
+    REQUIRE (pickBackend (12, 7) == SystemAudioBackend::none);
+    REQUIRE (pickBackend (13, 0) == SystemAudioBackend::screenCapture);   // la frontera, del lado que sí
+
+    // Sin backend no hay panel de Ajustes que abrir: cadena vacía, no el de pantalla "por las dudas".
+    REQUIRE (supernova::settingsPaneUrl (SystemAudioBackend::none).isEmpty());
+    REQUIRE (supernova::settingsPaneUrl (SystemAudioBackend::screenCapture).isNotEmpty());
+
+    REQUIRE (juce::String (supernova::backendName (SystemAudioBackend::none))          == "none");
+    REQUIRE (juce::String (supernova::backendName (SystemAudioBackend::processTap))     == "process-tap");
+    REQUIRE (juce::String (supernova::backendName (SystemAudioBackend::screenCapture)) == "screencapturekit");
+}
+

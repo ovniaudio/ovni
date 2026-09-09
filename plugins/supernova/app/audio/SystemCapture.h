@@ -17,23 +17,48 @@
 
 namespace supernova {
 
-enum class SystemAudioBackend { processTap, screenCapture };
+// `none` = en esta máquina no existe NINGUNO de los dos caminos (macOS 11/12, o una plataforma sin backend
+// todavía). No es lo mismo que "screenCapture y ya fallará": antes esta función devolvía screenCapture para
+// macOS 11/12 y el "no se puede" sólo aparecía después, al preguntarle al adaptador.
+enum class SystemAudioBackend { none, processTap, screenCapture };
 
 enum class SystemCaptureStatus { idle, capturing, permissionDenied, unsupported, error };
 
-// macOS 14.2 es la primera versión con AudioHardwareCreateProcessTap (API_AVAILABLE(macos(14.2))).
+// macOS 14.2 es la primera versión con AudioHardwareCreateProcessTap (API_AVAILABLE(macos(14.2))); macOS 13
+// la primera con ScreenCaptureKit capturando audio. Debajo de eso no hay camino sin drivers: `none`.
 constexpr SystemAudioBackend pickBackend (int osMajor, int osMinor) noexcept
 {
-    const bool hasProcessTaps = osMajor > 14 || (osMajor == 14 && osMinor >= 2);
-    return hasProcessTaps ? SystemAudioBackend::processTap : SystemAudioBackend::screenCapture;
+    if (osMajor > 14 || (osMajor == 14 && osMinor >= 2)) return SystemAudioBackend::processTap;
+    if (osMajor >= 13)                                   return SystemAudioBackend::screenCapture;
+    return SystemAudioBackend::none;
 }
 
-// El panel de Ajustes que hay que abrirle al usuario es el del permiso que pide SU backend.
+// El panel de Ajustes que hay que abrirle al usuario es el del permiso que pide SU backend. Sin backend no
+// hay permiso que dar: cadena vacía, y el que llama no abre nada (no existe un panel que arregle un macOS 12).
 inline juce::String settingsPaneUrl (SystemAudioBackend backend)
 {
-    return backend == SystemAudioBackend::processTap
-             ? juce::String ("x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")
-             : juce::String ("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+    switch (backend)
+    {
+        case SystemAudioBackend::processTap:
+            return "x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture";
+        case SystemAudioBackend::screenCapture:
+            return "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+        case SystemAudioBackend::none:
+            break;
+    }
+    return {};
+}
+
+// Nombre corto para los logs y la telemetría.
+inline const char* backendName (SystemAudioBackend b) noexcept
+{
+    switch (b)
+    {
+        case SystemAudioBackend::processTap:    return "process-tap";
+        case SystemAudioBackend::screenCapture: return "screencapturekit";
+        case SystemAudioBackend::none:          break;
+    }
+    return "none";
 }
 
 // Fachada común: lo único que AppAudioEngine necesita de CUALQUIER backend.

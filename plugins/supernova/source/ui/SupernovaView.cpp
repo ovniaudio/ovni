@@ -33,14 +33,22 @@ AnalysisFrame SupernovaView::lastFrame() const noexcept
 {
     return metal != nullptr ? metal->lastFrame() : AnalysisFrame {};
 }
-void SupernovaView::loadImage (std::shared_ptr<const LoadedImage> img) noexcept
+void SupernovaView::loadImage (std::shared_ptr<const LoadedImage> img, double dissolveSeconds) noexcept
 {
-    if (metal != nullptr) metal->loadImage (std::move (img));
+    if (metal != nullptr) metal->loadImage (std::move (img), dissolveSeconds);
+    else                  lastDissolveNoGpu = dissolveSeconds;   // sin GPU no hay vista: se recuerda igual
+}
+double SupernovaView::lastDissolveSeconds() const noexcept
+{
+    return metal != nullptr ? metal->lastDissolveSeconds() : lastDissolveNoGpu;
 }
 unsigned SupernovaView::activeParticles() const noexcept { return metal != nullptr ? metal->activeParticles() : 0; }
 unsigned SupernovaView::totalParticles()  const noexcept { return metal != nullptr ? metal->totalParticles()  : 0; }
 void SupernovaView::setSyphonEnabled (bool on) noexcept { if (metal != nullptr) metal->setSyphonEnabled (on); }
 void SupernovaView::snapToHome() noexcept { if (metal != nullptr) metal->snapToHome(); }
+// Fases acumuladas del mundo — el export las hereda (sin GPU no hay mundo: las tres en cero).
+ViewPhases SupernovaView::viewPhases() const noexcept
+{ return metal != nullptr ? metal->viewPhases() : ViewPhases {}; }
 void SupernovaView::updateColors (const uint8_t* rgba, int w, int h) noexcept { if (metal != nullptr) metal->updateColors (rgba, w, h); }
 bool SupernovaView::isSyphonActive() const noexcept { return metal != nullptr && metal->isSyphonActive(); }
 void SupernovaView::setFullscreen (bool on) noexcept { if (metal != nullptr) metal->setFullscreen (on); }

@@ -93,7 +93,7 @@ protected:
 
     juce::Rectangle<int> meterRect;
     float meterSmoothed = 0.0f;
-    bool  exportWithSound = true;   // el export muxea los últimos ~12s de audio vivo (toggle en el menú)
+    bool  exportWithSound = true;   // el export muxea los últimos ~30s de audio vivo (toggle en el menú)
     bool  dragHover = false;        // el editor lo prende al arrastrar media sobre el visual
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TopBar)

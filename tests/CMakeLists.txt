@@ -540,6 +540,9 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/StillCanvasTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/CanvasStateTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/PhotoSequenceTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/DissolveTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/DissolveRenderTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/DissolveFpsSmoke.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/CanvasFormatTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MediaThumbsTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/DecodedImageCacheTest.cpp
@@ -564,6 +567,9 @@ if(APPLE)
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/UndoStackTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportPresetTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportSmokeTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportParityTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportAudioLoopTest.cpp
+        ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ExportParityLiveSmoke.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiCcQueueTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/MidiCueQueueTest.cpp
         ${CMAKE_SOURCE_DIR}/plugins/supernova/tests/ThumbnailSmokeTest.cpp
