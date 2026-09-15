@@ -60,7 +60,7 @@ void PresetManager::applyFactory (int index)
         if (auto* p = apvts.getParameter (pp.id))
             p->setValueNotifyingHost (p->convertTo0to1 (pp.value));
 
-    cur = { all[(size_t) index].name, all[(size_t) index].category, false, false };
+    cur = { juce::String::fromUTF8 (all[(size_t) index].name), all[(size_t) index].category, false, false };   // UTF-8 crudo, no Latin-1
     globalIndex = index;
     snapshot();
     sendChangeMessage();

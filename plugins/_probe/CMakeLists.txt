@@ -15,7 +15,7 @@ juce_add_plugin(_probe
                                                        # NEEDS_MIDI_INPUT haría 'aumf' por defecto; forzamos
                                                        # 'aufx' (como ÓRBITA) y la MIDI/Program-Change igual llega.
     VST3_CATEGORIES          Fx Spatial
-    COPY_PLUGIN_AFTER_BUILD  TRUE)             # copia el .component a ~/Library/Audio/Plug-Ins → auval lo ve
+    COPY_PLUGIN_AFTER_BUILD  ${OVNI_COPY_PLUGIN_AFTER_BUILD})   # ON sólo en macOS (raíz): copia el .component a ~/Library/Audio/Plug-Ins → auval lo ve
 
 file(GLOB_RECURSE PLUGIN_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp"

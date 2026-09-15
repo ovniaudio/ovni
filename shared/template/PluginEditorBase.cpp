@@ -369,7 +369,7 @@ void PluginEditorBase::showPresetMenu()
     for (int i = 0; i < (int) all.size(); ++i)
     {
         auto& sub = (all[(size_t) i].category == presets::Category::Production) ? prod : sd;
-        sub.addItem (i + 1, all[(size_t) i].name);
+        sub.addItem (i + 1, juce::String::fromUTF8 (all[(size_t) i].name));   // la tabla es UTF-8 crudo: nunca String (const char*)
     }
     int uid = 10001;
     for (auto& f : processor.presets().userPresets())

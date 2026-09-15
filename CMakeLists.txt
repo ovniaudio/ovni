@@ -52,6 +52,21 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(OVNI_WITH_SOFA  "Compilar SofaLoader (requiere libmysofa: target mysofa-static)" ON)
 option(OVNI_BUILD_TESTS "Compilar el runner de tests unificado [s1]+[s2]+[s3]+[gain]"     ON)
 
+# COPY_PLUGIN_AFTER_BUILD de todos los plugins (plugins/*/CMakeLists.txt, shared/template/CMakeLists.txt.in).
+# ON en macOS: cada build copia los bundles a ~/Library/Audio/Plug-Ins (el flujo de la casa; pisa lo que
+# esté instalado, el firmado también). OFF en el resto: en Windows JUCE copiaría a la carpeta del SISTEMA
+# (C:\Program Files\Common Files\VST3) y el CI de Windows sólo quiere el bundle del build tree.
+# Variable y no genex, a propósito: JUCE la evalúa con if() al CONFIGURAR (JUCEUtils.cmake,
+# get_target_property(wants_copy ...) + if(wants_copy)), y "$<IF:$<PLATFORM_ID:Darwin>,TRUE,FALSE>" es un
+# string no vacío: verdadero para if() en TODAS las plataformas.
+# -DOVNI_COPY_PLUGIN_AFTER_BUILD=OFF también vale en macOS: compila sin escribir en ~/Library.
+if (APPLE)
+    set(_ovni_copy_default ON)
+else ()
+    set(_ovni_copy_default OFF)
+endif ()
+option(OVNI_COPY_PLUGIN_AFTER_BUILD "Copiar los plugins a las carpetas de plug-ins del usuario al compilar (default: sólo macOS)" ${_ovni_copy_default})
+
 include(FetchContent)
 
 # ---------------------------------------------------------------------------------------------

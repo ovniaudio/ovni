@@ -44,10 +44,20 @@
 #
 # Uso:
 #   packaging/make-per-plugin.sh --version 0.1.1 --bundles <dir> --outdir <dir> \
-#       [--winzip OVNI-v0.1.1-Windows.zip] [--license <file>] [--notice <file>]
+#       [--winzip OVNI-v0.1.1-Windows.zip] [--license <file>] [--notice <file>] \
+#       [--source-line "<texto>"]... [--no-full]
 #
-#   --bundles: carpeta plana con <NAME>.vst3 y <NAME>.component (p.ej. extraídos del DMG del
-#              release, o juntados del build). Se detectan los plugins por los pares presentes.
+#   --bundles:     carpeta plana con <NAME>.vst3 y <NAME>.component (p.ej. extraídos del DMG del
+#                  release, o juntados del build). Se detectan los plugins por los pares presentes.
+#   --source-line: agrega una línea al bloque de repos del SOURCE.txt que se instala en
+#                  /Library/Audio/Plug-Ins/OVNI Audio/. Repetible. Existe porque el bloque estaba
+#                  ESCRITO A MANO en este script: cada plugin nuevo salía con un SOURCE.txt que no
+#                  lo nombraba, y el AGPLv3 §6 pide decirle al usuario dónde está el fuente
+#                  CORRESPONDIENTE de lo que acaba de instalar. Un plugin que no figura ahí es un
+#                  incumplimiento silencioso.
+#   --no-full:     NO emitir el instalador "completo" OVNI-v<X>.pkg. Con un solo plugin en
+#                  --bundles ese archivo sale titulado "OVNI Audio — 1 Plugins" y no es el
+#                  catálogo: es el mismo plugin con otro nombre. Se publica sólo el individual.
 #
 # Firma: igual que make-installer.sh, INSTALLER_SIGN_ID opcional (vacío → sin firmar, camino
 # gratis; NO falla). Exit 0 si emite todo · 1 ante cualquier falta/fallo.
@@ -82,7 +92,8 @@ PKG_ID="com.ovni.plugins"
 # Arte del instalador (opcional). Si la carpeta no está, se emite igual que siempre, sin branding.
 ART_DIR="${ART_DIR:-$ROOT/packaging/installer-resources}"
 
-VERSION=""; BUNDLES=""; OUTDIR=""; WINZIP=""
+VERSION=""; BUNDLES=""; OUTDIR=""; WINZIP=""; NO_FULL=0
+SOURCE_LINES=()
 # COMMIT del árbol que produjo estos bundles. Va al SOURCE.txt para que la oferta de fuente del AGPL §6
 # apunte a algo EXACTO: el tag `v<version>` se mueve/renombra, el hash no. Se DERIVA del repo (nunca a
 # mano); `--commit` existe sólo para el caso de empaquetar bundles de otro árbol.
@@ -91,13 +102,15 @@ LICENSE_FILE="${LICENSE_FILE:-$ROOT/LICENSE}"
 NOTICE_FILE="${NOTICE_FILE:-$ROOT/NOTICE.md}"
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --version) VERSION="${2:-}"; shift 2 ;;
-    --bundles) BUNDLES="${2:-}"; shift 2 ;;
-    --outdir)  OUTDIR="${2:-}"; shift 2 ;;
-    --winzip)  WINZIP="${2:-}"; shift 2 ;;
-    --license) LICENSE_FILE="${2:-}"; shift 2 ;;
-    --notice)  NOTICE_FILE="${2:-}"; shift 2 ;;
-    --commit)  COMMIT="${2:-}"; shift 2 ;;
+    --version)     VERSION="${2:-}"; shift 2 ;;
+    --bundles)     BUNDLES="${2:-}"; shift 2 ;;
+    --outdir)      OUTDIR="${2:-}"; shift 2 ;;
+    --winzip)      WINZIP="${2:-}"; shift 2 ;;
+    --license)     LICENSE_FILE="${2:-}"; shift 2 ;;
+    --notice)      NOTICE_FILE="${2:-}"; shift 2 ;;
+    --commit)      COMMIT="${2:-}"; shift 2 ;;
+    --source-line) [ -n "${2:-}" ] || fail "--source-line sin texto"; SOURCE_LINES+=("$2"); shift 2 ;;
+    --no-full)     NO_FULL=1; shift ;;
     *) fail "argumento desconocido: $1" ;;
   esac
 done
@@ -148,6 +161,7 @@ desc_of() {
     HORIZON) echo "Spectral freeze with a pulse — eternal pad to rhythmic stutter." ;;
     AURORA)  echo "Spectral panning — every frequency to its own place in the field." ;;
     SUPERNOVA) echo "Audio-reactive visual synth — drag an image, the particles live with your sound." ;;
+    TELESCOPE) echo "Audio analyser that also concludes — thirteen lenses and a rules engine that writes findings in plain words. Bit-exact pass-through: it never touches your audio." ;;
     *)       echo "OVNI Audio spatial FX module." ;;
   esac
 }
@@ -158,6 +172,34 @@ LIC_ROOT="$WORK/root-license/Library/Audio/Plug-Ins/OVNI Audio"
 mkdir -p "$LIC_ROOT"
 cp "$LICENSE_FILE" "$LIC_ROOT/LICENSE.txt"
 [ -f "$NOTICE_FILE" ] && cp "$NOTICE_FILE" "$LIC_ROOT/NOTICE.txt"
+# Las líneas extra del bloque de repos (--source-line), con la misma sangría que las fijas. Sin
+# --source-line queda vacío. Byte-idéntico al de siempre CUANDO SUPERNOVA va en el paquete; para los demás
+# paquetes individuales la línea de SUPERNOVA cambia a propósito (ver el fix de abajo).
+# LA LÍNEA DE SUPERNOVA SÓLO LLEVA VERSIÓN SI SUPERNOVA VA ADENTRO (bug encontrado al empaquetar
+# TELESCOPE 0.1.0). Estaba escrita como `tree/v$VERSION (branch feat/supernova · tag v$VERSION)` con el
+# $VERSION del PAQUETE, así que el .pkg de TELESCOPE 0.1.0 le decía al usuario que el fuente de SUPERNOVA
+# está en el tag v0.1.0 — un tag que en SUPERNOVA no es esa versión. El SOURCE.txt es el archivo con el
+# que se cumple el AGPLv3 §6: mandar a alguien a un tag equivocado no es un detalle de redacción.
+# Cuando SUPERNOVA sí está en el paquete, la línea sale EXACTAMENTE como antes.
+SUPERNOVA_IN_PKG=0
+for _n in "${NAMES[@]}"; do [ "$_n" = "SUPERNOVA" ] && SUPERNOVA_IN_PKG=1; done
+if [ "$SUPERNOVA_IN_PKG" = "1" ]; then
+  SUPERNOVA_SRC="    · SUPERNOVA (visual synth, macOS):
+        https://github.com/ovniaudio/ovni/tree/v$VERSION   (branch feat/supernova · tag v$VERSION)"
+else
+  SUPERNOVA_SRC="    · SUPERNOVA (visual synth, macOS):
+        https://github.com/ovniaudio/ovni   (branch feat/supernova · un tag v<X.Y.Z> por versión)"
+fi
+
+EXTRA_SOURCE=""
+if [ "${#SOURCE_LINES[@]}" -gt 0 ]; then
+  # Cada línea con su salto: el heredoc pone $EXTRA_SOURCE donde antes había una línea en blanco,
+  # así que con el salto final el bloque queda separado del pie igual que siempre, y sin
+  # --source-line el bloque queda como antes de esta bandera.
+  for _sl in "${SOURCE_LINES[@]}"; do EXTRA_SOURCE="$EXTRA_SOURCE    $_sl
+"; done
+  log "SOURCE.txt: ${#SOURCE_LINES[@]} línea(s) extra"
+fi
 cat > "$LIC_ROOT/SOURCE.txt" <<SOURCE
 ============================================================
   OVNI Audio — Código fuente / Source code (AGPLv3)
@@ -172,9 +214,8 @@ complete corresponding source of this version:
         https://github.com/ovniaudio/ovni
     · ORBIT (el flagship):
         https://github.com/ovniaudio/orbita
-    · SUPERNOVA (visual synth, macOS):
-        https://github.com/ovniaudio/ovni/tree/v$VERSION   (branch feat/supernova · tag v$VERSION)
-
+$SUPERNOVA_SRC
+$EXTRA_SOURCE
 (source available per AGPLv3 §6)
 
 Versión de este paquete / package version: $VERSION
@@ -425,6 +466,11 @@ XML
 done
 
 # --- Instalador COMPLETO (los 7; deseleccionables en "Personalizar"). ---
+# Con --no-full no se emite: un solo plugin en --bundles daría un "OVNI Audio — 1 Plugins" que no es
+# el catálogo, es el mismo .pkg individual con otro nombre y otro sha. Publicarlo confunde.
+if [ "$NO_FULL" = "1" ]; then
+  log "--no-full: no se emite el instalador completo OVNI-v$VERSION.pkg"
+else
 res="$WORK/res-all"
 make_resources "$res" \
   "The complete OVNI catalog — all ${#NAMES[@]} plugins (VST3 + AU each)." \
@@ -473,6 +519,7 @@ XML
 out="$OUTDIR/OVNI-v$VERSION.pkg"
 product "$WORK/dist-all.xml" "$res" "$out"
 log "✓ $out (completo)"
+fi
 
 # --- ZIPs de Windows por plugin (desde el ZIP completo del release). ---
 if [ -n "$WINZIP" ]; then

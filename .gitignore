@@ -12,3 +12,5 @@ cmake-build-*/
 /docs/qa-sessions/renders/
 build-universal/
 build-uni/
+# instaladores del release-prep (11 MB de .pkg): nunca se commitean
+dist/

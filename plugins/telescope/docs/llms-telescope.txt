@@ -1,0 +1,40 @@
+NOTA PARA QUIEN PEGA ESTO (no forma parte del bloque)
+=====================================================
+Bloque para el llms.txt del sitio (sello/web/llms.txt). Lo pega la auditora cuando TELESCOPE esté
+publicado — no antes: las tres URLs de abajo (la página /telescope, el .pkg y el release) recién existen
+después del prompt 59 y del release con GO.
+
+Una cosa a decidir al pegarlo:
+  1. El llms.txt del sitio está en CASTELLANO; este bloque está en inglés porque así se pidió. O se
+     traduce al pegarlo, o el archivo queda mezclado (hoy ya tiene un par ES/EN en "Ventana de
+     lanzamiento", así que mezclar no sería nuevo).
+
+Nada de acá afirma una fecha ni un precio: eso lo maneja el bloque "Ventana de lanzamiento" que ya está
+en el llms.txt.
+
+--- 8< --- pegar desde acá --- 8< ---
+
+## TELESCOPE v0.1.0 (analyzer)
+
+- [TELESCOPE](https://ovniaudio.com/telescope): a free, open-source audio analyser that also concludes — one analysis engine, thirteen lenses, and a deterministic rules engine that writes findings in plain words, each carrying the number that produced it and the id of the rule that fired.
+- It does not touch your audio: **0 samples of latency, 0 tail, bit-exact pass-through**, verified with deterministic noise through every lens, with bypass on and off, and in blocks of 1 / 7 / 64 / 4096 samples.
+- LOUDNESS: integrated, short-term and momentary LUFS, LRA and true peak. ITU-R BS.1770 gating, EBU Tech 3342 for LRA, the literal polyphase FIR table of BS.1770-5 Annex 2 §3 for true peak. Passes EBU Tech 3341 tests 1-5 and 15-19 and Tech 3342 tests 1-4.
+- DYNAMICS: PSR, PLR (AES TD1004), a 61-bin loudness histogram and clip events with a 10-minute timeline.
+- SPECTRUM, SPECTROGRAM and WATERFALL: FFT from 1024 to 32768 with three windows, ISO 266 third-octave and Bark bands; the sonogram over 10/30/60 s; and the same data in depth with level as height.
+- CQT and SPIRAL: constant-Q by note (Brown & Puckette 1992), chromagram, and a key estimate by correlation against the Krumhansl & Kessler (1982) profiles — always shown with its confidence and its share of time, never on its own.
+- SCOPE, with a POLAR LEVEL view for mixing (one ray per degree, averaged in time and peak-held): correlation, width, balance and mono loss over a 100/300/1000 ms window, plus goniometer, polar sample and oscilloscope.
+- BAND CORRELATION and STEREO SPECTROGRAM: those same stereo figures per third-octave band, and the sonogram with phase as colour and level as brightness.
+- FIELD: energy by pan direction and frequency, with decay and trail.
+- TONAL BALANCE: your mix against a reference track you load, both normalised by their own integrated LUFS, so the comparison is of tilt at equal loudness.
+- VERDICT: 21 deterministic rules over a per-second history. It opens with what is within range, each line with its number and the rule's limit, then how it will feel, where it translates, and what to check and where. A dip that spans several bands is one finding.
+- What it does NOT do — it does not localise sources: FIELD and POLAR LEVEL show energy panning L/R, not localisation. There is no HRTF, no ITD and no azimuth, because recovering source positions from a finished stereo mix has no unique solution.
+- Stereo only: no surround, no Ambisonics, and no speech-intelligibility or dialogue metric.
+- No AI, no network, no telemetry. VERDICT is a threshold table with a source for every number; the same signal gives the same report, word for word.
+- The per-device checks (phone, headphones, laptop, car, club, hi-fi) are generic definitions of each class of system, not measured speaker curves. They are printed as a forecast.
+- When the rules find nothing, it says exactly that: "nothing outside the ranges of these rules — they measure; what they can't hear is yours". It never says "ready".
+- Six languages, English by default, with `pt`, `fr`, `de` and `it` translated with the industry's terms but pending native review.
+- Formats: macOS 11.0+, universal binary (Apple Silicon + Intel), VST3 + AU (the 0.1.0 installer ships VST3 + AU only; the standalone app builds from source but is not distributed). Windows VST3 x64 (Windows 10+): unsigned ZIP in the same release.
+- Licence: AGPLv3, like the rest of the catalog. Source and release: [github.com/ovniaudio/ovni](https://github.com/ovniaudio/ovni) · [telescope-v0.1.0](https://github.com/ovniaudio/ovni/releases/tag/telescope-v0.1.0).
+- Download (macOS, double-click .pkg installer, VST3 + AU universal): [OVNI-TELESCOPE-v0.1.0.pkg](https://ovniaudio.com/download/OVNI-TELESCOPE-v0.1.0.pkg). Checksums in the release.
+
+--- 8< --- hasta acá --- 8< ---

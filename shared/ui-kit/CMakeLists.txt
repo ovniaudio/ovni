@@ -43,6 +43,10 @@ endforeach ()
 # Fonts.cpp necesita OvniUikitData.h en compile-time (su símbolo se resuelve al linkear en el final).
 target_include_directories(ovni_uikit PRIVATE
     $<TARGET_PROPERTY:ovni_uikit_assets,INTERFACE_INCLUDE_DIRECTORIES>)
+# …y el header lo GENERA el target ovni_uikit_assets (juceaide, custom command). Tomar sólo su include dir no crea
+# la dependencia de orden: con el generador de Visual Studio (CI de Windows, prompt 67, run 35022704583) MSBuild
+# compiló Fonts.cpp antes de generar OvniUikitData.h → C1083. Ninja en macOS lo ordenaba de casualidad.
+add_dependencies(ovni_uikit ovni_uikit_assets)
 
 # El target final linkea JUCE (compila su unity una vez) + las fonts embebidas.
 target_link_libraries(ovni_uikit INTERFACE

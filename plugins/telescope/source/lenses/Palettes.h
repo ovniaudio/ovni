@@ -1,0 +1,243 @@
+#pragma once
+#include <array>
+#include <cmath>
+#include <juce_graphics/juce_graphics.h>
+#include "ui-kit/Theme.h"
+
+// ========================================================================================================
+// Palettes — LAS CUATRO RAMPAS DE COLOR de los mapas de TELESCOPE, y de dónde salen.
+//
+// Las usan las cuatro lentes en las que el color CODIFICA NIVEL: SPECTROGRAM, STEREO SPECTROGRAM (sólo su
+// eje de nivel; la fase sigue bipolar), WATERFALL y FIELD. La API vive en Look.h —que es el sistema
+// visual— y los DATOS acá, porque son de otra naturaleza: tres de las cuatro son tablas publicadas o
+// derivadas de puntos de control, no tokens del sello.
+//
+// ======================================== POR QUÉ HAY CUATRO ============================================
+//
+// Hasta el 57 había UNA (la rampa verde del sello) y las tres lentes la compartían. Joaquín, mirando
+// TELESCOPE contra iZotope Insight: «Spectrograma no se entiende, todo el mismo color». Tenía razón y el
+// motivo es medible: una rampa de UN SOLO TONO (fondo → verde oscuro → verde → texto) sólo puede
+// codificar el nivel con el BRILLO, y el ojo distingue muchos menos escalones de brillo que de tono. Los
+// analizadores que se leen de un vistazo —Ozone, Insight, SPAN— usan rampas que además cambian de TONO.
+//
+//   · ovni      la rampa del sello. Se calcula desde el Theme (NO está tabulada) para que siga valiendo
+//               la regla de Look.h: si el sello cambia el verde, cambia con él.
+//   · inferno   negro → púrpura → naranja → amarillo. Monótona en luminancia Y en tono: es la que más
+//               escalones deja ver, y por eso es el default.
+//   · viridis   azul oscuro → verde azulado → amarillo. La misma familia, legible con daltonismo rojo-verde.
+//   · spectrum  azul oscuro → cian → verde → amarillo → rojo → blanco. El look de Insight/Ozone. NO es
+//               monótona en luminancia y NO debe serlo (ver abajo).
+//
+// ==================================== ATRIBUCIÓN (va en NOTICE.md) ======================================
+//
+// `inferno` y `viridis` son de Nathaniel Smith y Stéfan van der Walt (2015), liberadas bajo CC0 y
+// distribuidas con matplotlib. Las tablas de abajo son las 256 entradas EXACTAS de matplotlib 3.10.9,
+// volcadas a sRGB de 8 bits — no una aproximación a ojo entre unos pocos puntos, que era justamente el
+// modo de arruinar una rampa cuya gracia es ser perceptualmente uniforme.
+//
+// ============================ LA MONOTONÍA, Y LA EXCEPCIÓN QUE SE DECLARA ===============================
+//
+// En un mapa de calor el color ES el dB, así que entre dos celdas cualesquiera la más clara tiene que ser
+// la más fuerte: si la rampa se cruza en brillo, hay dos niveles distintos que se ven igual y el mapa deja
+// de poder leerse. `ovni`, `inferno` y `viridis` lo cumplen y [visual] lo verifica.
+//
+// `spectrum` NO lo cumple, a propósito y declarado: su amarillo (luma ≈ 210) es más claro que su rojo
+// (luma ≈ 110), que está más arriba en la escala. Lo que ordena el nivel ahí es el TONO —azul, cian,
+// verde, amarillo, rojo, blanco, en ese orden y sin volver— que es una secuencia que el ojo también lee
+// sin rótulo, y es exactamente la convención que ya aprendió cualquiera que haya usado un analizador. Se
+// ofrece porque es la que pidió el productor; el test la exime NOMBRÁNDOLA, que es distinto de no mirarla.
+//
+// ================================= POR QUÉ TABULADAS Y NO INTERPOLADAS ==================================
+//
+// Una rampa interpolada en el camino de pintado es una multiplicación y dos sumas por canal POR PÍXEL, y
+// estas cuatro lentes escriben millones de píxeles por frame. Tabuladas, es una lectura indexada. Además
+// —y esto pesa más— una tabla es lo único que se puede COMPARAR: un test puede verificar las 256 entradas
+// de `inferno` contra las publicadas; una interpolación sólo se puede mirar.
+// ========================================================================================================
+namespace telescope::look
+{
+namespace th = ovni::ui::theme;
+
+// Los tres mapas TABULADOS, en 0x00RRGGBB. Generados con matplotlib 3.10.9 (ver el encabezado).
+namespace palettes
+{
+inline constexpr juce::uint32 kInfernoRgb[256] = {
+    0x000004, 0x010005, 0x010106, 0x010108, 0x02010a, 0x02020c, 0x02020e, 0x030210,
+    0x040312, 0x040314, 0x050417, 0x060419, 0x07051b, 0x08051d, 0x09061f, 0x0a0722,
+    0x0b0724, 0x0c0826, 0x0d0829, 0x0e092b, 0x10092d, 0x110a30, 0x120a32, 0x140b34,
+    0x150b37, 0x160b39, 0x180c3c, 0x190c3e, 0x1b0c41, 0x1c0c43, 0x1e0c45, 0x1f0c48,
+    0x210c4a, 0x230c4c, 0x240c4f, 0x260c51, 0x280b53, 0x290b55, 0x2b0b57, 0x2d0b59,
+    0x2f0a5b, 0x310a5c, 0x320a5e, 0x340a5f, 0x360961, 0x380962, 0x390963, 0x3b0964,
+    0x3d0965, 0x3e0966, 0x400a67, 0x420a68, 0x440a68, 0x450a69, 0x470b6a, 0x490b6a,
+    0x4a0c6b, 0x4c0c6b, 0x4d0d6c, 0x4f0d6c, 0x510e6c, 0x520e6d, 0x540f6d, 0x550f6d,
+    0x57106e, 0x59106e, 0x5a116e, 0x5c126e, 0x5d126e, 0x5f136e, 0x61136e, 0x62146e,
+    0x64156e, 0x65156e, 0x67166e, 0x69166e, 0x6a176e, 0x6c186e, 0x6d186e, 0x6f196e,
+    0x71196e, 0x721a6e, 0x741a6e, 0x751b6e, 0x771c6d, 0x781c6d, 0x7a1d6d, 0x7c1d6d,
+    0x7d1e6d, 0x7f1e6c, 0x801f6c, 0x82206c, 0x84206b, 0x85216b, 0x87216b, 0x88226a,
+    0x8a226a, 0x8c2369, 0x8d2369, 0x8f2469, 0x902568, 0x922568, 0x932667, 0x952667,
+    0x972766, 0x982766, 0x9a2865, 0x9b2964, 0x9d2964, 0x9f2a63, 0xa02a63, 0xa22b62,
+    0xa32c61, 0xa52c60, 0xa62d60, 0xa82e5f, 0xa92e5e, 0xab2f5e, 0xad305d, 0xae305c,
+    0xb0315b, 0xb1325a, 0xb3325a, 0xb43359, 0xb63458, 0xb73557, 0xb93556, 0xba3655,
+    0xbc3754, 0xbd3853, 0xbf3952, 0xc03a51, 0xc13a50, 0xc33b4f, 0xc43c4e, 0xc63d4d,
+    0xc73e4c, 0xc83f4b, 0xca404a, 0xcb4149, 0xcc4248, 0xce4347, 0xcf4446, 0xd04545,
+    0xd24644, 0xd34743, 0xd44842, 0xd54a41, 0xd74b3f, 0xd84c3e, 0xd94d3d, 0xda4e3c,
+    0xdb503b, 0xdd513a, 0xde5238, 0xdf5337, 0xe05536, 0xe15635, 0xe25734, 0xe35933,
+    0xe45a31, 0xe55c30, 0xe65d2f, 0xe75e2e, 0xe8602d, 0xe9612b, 0xea632a, 0xeb6429,
+    0xeb6628, 0xec6726, 0xed6925, 0xee6a24, 0xef6c23, 0xef6e21, 0xf06f20, 0xf1711f,
+    0xf1731d, 0xf2741c, 0xf3761b, 0xf37819, 0xf47918, 0xf57b17, 0xf57d15, 0xf67e14,
+    0xf68013, 0xf78212, 0xf78410, 0xf8850f, 0xf8870e, 0xf8890c, 0xf98b0b, 0xf98c0a,
+    0xf98e09, 0xfa9008, 0xfa9207, 0xfa9407, 0xfb9606, 0xfb9706, 0xfb9906, 0xfb9b06,
+    0xfb9d07, 0xfc9f07, 0xfca108, 0xfca309, 0xfca50a, 0xfca60c, 0xfca80d, 0xfcaa0f,
+    0xfcac11, 0xfcae12, 0xfcb014, 0xfcb216, 0xfcb418, 0xfbb61a, 0xfbb81d, 0xfbba1f,
+    0xfbbc21, 0xfbbe23, 0xfac026, 0xfac228, 0xfac42a, 0xfac62d, 0xf9c72f, 0xf9c932,
+    0xf9cb35, 0xf8cd37, 0xf8cf3a, 0xf7d13d, 0xf7d340, 0xf6d543, 0xf6d746, 0xf5d949,
+    0xf5db4c, 0xf4dd4f, 0xf4df53, 0xf4e156, 0xf3e35a, 0xf3e55d, 0xf2e661, 0xf2e865,
+    0xf2ea69, 0xf1ec6d, 0xf1ed71, 0xf1ef75, 0xf1f179, 0xf2f27d, 0xf2f482, 0xf3f586,
+    0xf3f68a, 0xf4f88e, 0xf5f992, 0xf6fa96, 0xf8fb9a, 0xf9fc9d, 0xfafda1, 0xfcffa4,
+};
+
+inline constexpr juce::uint32 kViridisRgb[256] = {
+    0x440154, 0x440256, 0x450457, 0x450559, 0x46075a, 0x46085c, 0x460a5d, 0x460b5e,
+    0x470d60, 0x470e61, 0x471063, 0x471164, 0x471365, 0x481467, 0x481668, 0x481769,
+    0x48186a, 0x481a6c, 0x481b6d, 0x481c6e, 0x481d6f, 0x481f70, 0x482071, 0x482173,
+    0x482374, 0x482475, 0x482576, 0x482677, 0x482878, 0x482979, 0x472a7a, 0x472c7a,
+    0x472d7b, 0x472e7c, 0x472f7d, 0x46307e, 0x46327e, 0x46337f, 0x463480, 0x453581,
+    0x453781, 0x453882, 0x443983, 0x443a83, 0x443b84, 0x433d84, 0x433e85, 0x423f85,
+    0x424086, 0x424186, 0x414287, 0x414487, 0x404588, 0x404688, 0x3f4788, 0x3f4889,
+    0x3e4989, 0x3e4a89, 0x3e4c8a, 0x3d4d8a, 0x3d4e8a, 0x3c4f8a, 0x3c508b, 0x3b518b,
+    0x3b528b, 0x3a538b, 0x3a548c, 0x39558c, 0x39568c, 0x38588c, 0x38598c, 0x375a8c,
+    0x375b8d, 0x365c8d, 0x365d8d, 0x355e8d, 0x355f8d, 0x34608d, 0x34618d, 0x33628d,
+    0x33638d, 0x32648e, 0x32658e, 0x31668e, 0x31678e, 0x31688e, 0x30698e, 0x306a8e,
+    0x2f6b8e, 0x2f6c8e, 0x2e6d8e, 0x2e6e8e, 0x2e6f8e, 0x2d708e, 0x2d718e, 0x2c718e,
+    0x2c728e, 0x2c738e, 0x2b748e, 0x2b758e, 0x2a768e, 0x2a778e, 0x2a788e, 0x29798e,
+    0x297a8e, 0x297b8e, 0x287c8e, 0x287d8e, 0x277e8e, 0x277f8e, 0x27808e, 0x26818e,
+    0x26828e, 0x26828e, 0x25838e, 0x25848e, 0x25858e, 0x24868e, 0x24878e, 0x23888e,
+    0x23898e, 0x238a8d, 0x228b8d, 0x228c8d, 0x228d8d, 0x218e8d, 0x218f8d, 0x21908d,
+    0x21918c, 0x20928c, 0x20928c, 0x20938c, 0x1f948c, 0x1f958b, 0x1f968b, 0x1f978b,
+    0x1f988b, 0x1f998a, 0x1f9a8a, 0x1e9b8a, 0x1e9c89, 0x1e9d89, 0x1f9e89, 0x1f9f88,
+    0x1fa088, 0x1fa188, 0x1fa187, 0x1fa287, 0x20a386, 0x20a486, 0x21a585, 0x21a685,
+    0x22a785, 0x22a884, 0x23a983, 0x24aa83, 0x25ab82, 0x25ac82, 0x26ad81, 0x27ad81,
+    0x28ae80, 0x29af7f, 0x2ab07f, 0x2cb17e, 0x2db27d, 0x2eb37c, 0x2fb47c, 0x31b57b,
+    0x32b67a, 0x34b679, 0x35b779, 0x37b878, 0x38b977, 0x3aba76, 0x3bbb75, 0x3dbc74,
+    0x3fbc73, 0x40bd72, 0x42be71, 0x44bf70, 0x46c06f, 0x48c16e, 0x4ac16d, 0x4cc26c,
+    0x4ec36b, 0x50c46a, 0x52c569, 0x54c568, 0x56c667, 0x58c765, 0x5ac864, 0x5cc863,
+    0x5ec962, 0x60ca60, 0x63cb5f, 0x65cb5e, 0x67cc5c, 0x69cd5b, 0x6ccd5a, 0x6ece58,
+    0x70cf57, 0x73d056, 0x75d054, 0x77d153, 0x7ad151, 0x7cd250, 0x7fd34e, 0x81d34d,
+    0x84d44b, 0x86d549, 0x89d548, 0x8bd646, 0x8ed645, 0x90d743, 0x93d741, 0x95d840,
+    0x98d83e, 0x9bd93c, 0x9dd93b, 0xa0da39, 0xa2da37, 0xa5db36, 0xa8db34, 0xaadc32,
+    0xaddc30, 0xb0dd2f, 0xb2dd2d, 0xb5de2b, 0xb8de29, 0xbade28, 0xbddf26, 0xc0df25,
+    0xc2df23, 0xc5e021, 0xc8e020, 0xcae11f, 0xcde11d, 0xd0e11c, 0xd2e21b, 0xd5e21a,
+    0xd8e219, 0xdae319, 0xdde318, 0xdfe318, 0xe2e418, 0xe5e419, 0xe7e419, 0xeae51a,
+    0xece51b, 0xefe51c, 0xf1e51d, 0xf4e61e, 0xf6e620, 0xf8e621, 0xfbe723, 0xfde725,
+};
+
+inline constexpr juce::uint32 kSpectrumRgb[256] = {
+    0x060a30, 0x061038, 0x061540, 0x061946, 0x051c4c, 0x051f51, 0x052256, 0x05255b,
+    0x05275f, 0x052963, 0x052b67, 0x052e6b, 0x042f6e, 0x043172, 0x043375, 0x043578,
+    0x04377b, 0x04387e, 0x043a81, 0x043b84, 0x033d87, 0x033e89, 0x03408c, 0x03418f,
+    0x034291, 0x034493, 0x034596, 0x024698, 0x02479b, 0x02499d, 0x024a9f, 0x024ba1,
+    0x024ca3, 0x024da5, 0x024ea8, 0x014faa, 0x0150ac, 0x0151ae, 0x0152af, 0x0153b1,
+    0x0154b3, 0x0155b5, 0x0156b7, 0x0057b9, 0x0058bb, 0x0059bc, 0x005abe, 0x005fbf,
+    0x0064c0, 0x0068c0, 0x006cc1, 0x0070c2, 0x0074c3, 0x0077c4, 0x007bc4, 0x007ec5,
+    0x0081c6, 0x0084c7, 0x0087c8, 0x008ac8, 0x008dc9, 0x0090ca, 0x0093cb, 0x0095cb,
+    0x0098cc, 0x009acd, 0x009dcd, 0x009fce, 0x00a2cf, 0x00a4d0, 0x00a6d0, 0x00a9d1,
+    0x00abd2, 0x00add3, 0x00afd3, 0x00b1d4, 0x00b3d5, 0x00b5d5, 0x00b7d6, 0x00b9d7,
+    0x00bbd7, 0x00bdd8, 0x00bfd9, 0x00c1da, 0x00c3da, 0x00c5db, 0x00c7dc, 0x00c8db,
+    0x00c9da, 0x00c9d8, 0x00cad6, 0x00cad4, 0x00cbd2, 0x00cbd0, 0x00ccce, 0x00cccc,
+    0x00cdca, 0x00cdc8, 0x00cec5, 0x00cec3, 0x00cfc1, 0x00cfbf, 0x00d0bc, 0x00d0ba,
+    0x00d1b8, 0x00d1b5, 0x00d2b3, 0x00d2b1, 0x00d3ae, 0x00d3ab, 0x00d4a9, 0x00d4a6,
+    0x00d5a3, 0x00d5a1, 0x00d69e, 0x00d69b, 0x00d798, 0x00d795, 0x00d892, 0x00d88e,
+    0x00d98b, 0x00d988, 0x00d984, 0x00da80, 0x00da7d, 0x00db79, 0x00db75, 0x00dc70,
+    0x19dc6d, 0x30dc6c, 0x3edc6b, 0x4adc6a, 0x53dc69, 0x5cdc68, 0x63dc67, 0x6adc65,
+    0x71dc64, 0x77dc63, 0x7ddc62, 0x82dc60, 0x87dc5f, 0x8cdc5e, 0x91dc5c, 0x95dc5b,
+    0x99dc5a, 0x9ddc58, 0xa1dc57, 0xa5dc55, 0xa9dc54, 0xaddc52, 0xb0dc51, 0xb4dc4f,
+    0xb7dc4d, 0xbbdc4c, 0xbedc4a, 0xc1dc48, 0xc4dc46, 0xc7dc44, 0xcadc42, 0xcddc40,
+    0xd0dc3e, 0xd3dc3c, 0xd6dc3a, 0xd8dc37, 0xdbdc35, 0xdedc32, 0xe0dc2f, 0xe3dc2c,
+    0xe5dc29, 0xe6db28, 0xe6d928, 0xe7d728, 0xe7d528, 0xe7d328, 0xe7d128, 0xe7ce28,
+    0xe8cc28, 0xe8ca28, 0xe8c828, 0xe8c628, 0xe9c428, 0xe9c128, 0xe9bf28, 0xe9bd28,
+    0xe9ba28, 0xeab828, 0xeab528, 0xeab328, 0xeab028, 0xebad28, 0xebab28, 0xeba828,
+    0xeba528, 0xeba228, 0xeca028, 0xec9d28, 0xec9928, 0xec9628, 0xed9328, 0xed9028,
+    0xed8c28, 0xed8928, 0xed8528, 0xee8128, 0xee7d28, 0xee7928, 0xee7528, 0xee7128,
+    0xef6c28, 0xef6728, 0xef6228, 0xef5c28, 0xf05628, 0xf04f28, 0xf04828, 0xf05039,
+    0xf15a48, 0xf16354, 0xf16c5e, 0xf27367, 0xf27a6f, 0xf38177, 0xf3877e, 0xf38c84,
+    0xf4928b, 0xf49790, 0xf49c96, 0xf5a19b, 0xf5a5a0, 0xf6aaa5, 0xf6aeaa, 0xf6b2ae,
+    0xf7b7b3, 0xf7bab7, 0xf7bebb, 0xf8c2bf, 0xf8c6c3, 0xf9c9c7, 0xf9cdca, 0xf9d0ce,
+    0xfad3d1, 0xfad7d5, 0xfadad8, 0xfbdddc, 0xfbe0df, 0xfbe3e2, 0xfce6e5, 0xfce9e8,
+    0xfdeceb, 0xfdefee, 0xfdf2f1, 0xfef4f4, 0xfef7f7, 0xfefafa, 0xfffcfc, 0xffffff,
+};
+}
+
+// ==== LA API ============================================================================================
+enum class PaletteId { ovni = 0, inferno, viridis, spectrum };
+inline constexpr int kNumPalettes = 4;
+
+// El NOMBRE de la rampa. No pasa por Strings.h a propósito: son nombres propios (dos de ellos, de mapas
+// publicados con ese nombre), y traducirlos sería inventarles otro.
+inline const char* paletteName (PaletteId p) noexcept
+{
+    switch (p)
+    {
+        case PaletteId::inferno:  return "INFERNO";
+        case PaletteId::viridis:  return "VIRIDIS";
+        case PaletteId::spectrum: return "SPECTRUM";
+        case PaletteId::ovni:
+        default:                  return "OVNI";
+    }
+}
+
+inline PaletteId paletteFromIndex (int i) noexcept
+{
+    return (PaletteId) juce::jlimit (0, kNumPalettes - 1, i);
+}
+
+// La rampa del SELLO, calculada desde el Theme (ver el encabezado: es la única que NO está tabulada).
+// Los cuatro tramos son los que estaban en `look::sequential()` desde el 56, sin tocar un número: el
+// espectrograma de quien ya eligió `ovni` tiene que seguir viéndose exactamente igual.
+inline const std::array<juce::uint32, 256>& ovniRamp()
+{
+    static const std::array<juce::uint32, 256> p = []
+    {
+        std::array<juce::uint32, 256> a {};
+        for (int i = 0; i < 256; ++i)
+        {
+            const float t = (float) i / 255.0f;
+            juce::Colour c;
+            if (t < 0.45f)      c = th::bg1.interpolatedWith (th::greenD, t / 0.45f);
+            else if (t < 0.80f) c = th::greenD.interpolatedWith (th::green, (t - 0.45f) / 0.35f);
+            else                c = th::green.interpolatedWith (th::txt, (t - 0.80f) / 0.20f);
+            a[(size_t) i] = c.withAlpha (1.0f).getARGB();
+        }
+        return a;
+    }();
+    return p;
+}
+
+// Una tabla de 0x00RRGGBB pasada a ARGB opaco, una sola vez.
+inline std::array<juce::uint32, 256> opaqueFrom (const juce::uint32* rgb)
+{
+    std::array<juce::uint32, 256> a {};
+    for (int i = 0; i < 256; ++i) a[(size_t) i] = 0xff000000u | rgb[i];
+    return a;
+}
+
+inline const std::array<juce::uint32, 256>& palette (PaletteId p)
+{
+    static const std::array<juce::uint32, 256> inf  = opaqueFrom (palettes::kInfernoRgb);
+    static const std::array<juce::uint32, 256> vir  = opaqueFrom (palettes::kViridisRgb);
+    static const std::array<juce::uint32, 256> spec = opaqueFrom (palettes::kSpectrumRgb);
+
+    switch (p)
+    {
+        case PaletteId::inferno:  return inf;
+        case PaletteId::viridis:  return vir;
+        case PaletteId::spectrum: return spec;
+        case PaletteId::ovni:
+        default:                  return ovniRamp();
+    }
+}
+
+inline juce::Colour paletteAt (PaletteId p, float t) noexcept
+{
+    return juce::Colour (palette (p)[(size_t) juce::jlimit (0, 255, (int) std::lround (t * 255.0f))]);
+}
+}

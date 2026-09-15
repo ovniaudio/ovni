@@ -160,6 +160,80 @@ por red), pero las cumplimos al publicar el código completo del repo en el rele
 
 ---
 
+## TELESCOPE
+
+Sección por plugin: **qué linkea TELESCOPE de verdad**, verificado sobre el binario que se
+distribuye (`otool -L` + `nm` sobre `TELESCOPE.vst3/Contents/MacOS/TELESCOPE`) y sobre el
+`target_link_libraries` de `plugins/telescope/CMakeLists.txt`. Lo que no está en esta lista, no
+viaja adentro de TELESCOPE.
+
+### Software que TELESCOPE incorpora
+
+- **JUCE 8.0.13** — AGPLv3 (edición gratuita). Framework de audio/UI: `juce_audio_utils`,
+  `juce_dsp`, `juce_gui_basics`, `juce_audio_processors`. Ver la sección "JUCE" arriba.
+- **Catch2 v3.8.1** — BSL-1.0. **Sólo** al compilar `OvniTelescopeTests`; **no** se enlaza en el
+  VST3/AU/Standalone que se publican.
+- **Fuentes embebidas del sello** (`shared/ui-kit/assets/fonts/`, vía `ovni_uikit_assets`;
+  presentes en el binario de TELESCOPE — 12 símbolos `OvniUikitData`):
+  - **Clash Grotesk Semibold** y **General Sans** (Regular + Medium) — *Copyright 2017-2021
+    Indian Type Foundry. All rights reserved.* Términos: <https://fontshare.com/terms>. La
+    licencia pide identificar las fuentes por su nombre y acreditar la titularidad de ITF sobre
+    sus marcas y derechos — que es lo que hace este párrafo.
+  - **JetBrains Mono Regular** — *Copyright 2020 The JetBrains Mono Project Authors*
+    (<https://github.com/JetBrains/JetBrainsMono>), **SIL Open Font License 1.1**
+    (<https://openfontlicense.org>).
+
+  Estas fuentes las embebe el UI-kit compartido, así que viajan en **todo** el catálogo, no sólo
+  en TELESCOPE; se listan acá porque acá es donde se verificó que están en el binario.
+
+- **Mapas de color `viridis` e `inferno`** (`plugins/telescope/source/lenses/Palettes.h`) —
+  creados por **Nathaniel J. Smith y Stéfan van der Walt** (2015) y liberados al dominio público
+  bajo **CC0 1.0** (<https://creativecommons.org/publicdomain/zero/1.0/>). Las 256 entradas de
+  cada tabla se volcaron de **matplotlib 3.10.9**, que los distribuye con la misma licencia
+  (<https://github.com/matplotlib/matplotlib/blob/main/lib/matplotlib/_cm_listed.py>). CC0 no
+  exige atribución; se acredita igual porque corresponde. Las otras dos rampas de TELESCOPE
+  (`ovni`, derivada del tema del sello, y `spectrum`) son propias.
+
+### Lo que TELESCOPE NO usa (dicho explícitamente, porque el resto del repo sí)
+
+- **Ningún dataset HRIR/HRTF.** No hay SADIE II, ni CIPIC, ni MIT KEMAR horneados: TELESCOPE no
+  hace binaural. `nm | grep -ci hrir` = **0**.
+- **libmysofa.** `mysofa-static` aparece en la línea de enlace por ser dependencia PÚBLICA de
+  `ovni_dsp`, pero es una librería estática y ningún objeto suyo entra: `nm | grep -ci mysofa` =
+  **0** sobre el binario distribuido.
+- **Syphon-Framework.** Es sólo de SUPERNOVA (`ovni_syphon`); no aparece en `otool -L`.
+- Fuera de eso, `otool -L` sólo lista frameworks del sistema de macOS más `libSystem`, `libz` y
+  `libc++`, que son del sistema operativo y no se redistribuyen.
+
+### Normas y trabajos citados
+
+TELESCOPE **implementa** normas públicas y métodos publicados. No incorpora código ni datos de
+terceros por esto; se citan porque los números que el plugin dibuja significan lo que estos
+documentos definen, y porque los vectores de prueba de la EBU son los que verifican el medidor.
+
+- **Rec. ITU-R BS.1770** — *Algorithms to measure audio programme loudness and true-peak audio
+  level*. K-weighting (Anexo 1; la tabla publicada a 48 kHz de **BS.1770-4** es la referencia
+  contra la que se verifica el recálculo por sample rate) y true-peak (Anexo 2 §3 de
+  **BS.1770-5**: los 48 coeficientes del FIR polifásico están transcritos **literalmente**).
+- **EBU R 128** — *Loudness normalisation and permitted maximum level of audio signals*.
+- **EBU Tech 3341** — *Loudness Metering: EBU Mode metering to supplement EBU R 128*. Los
+  vectores de la Tabla 1 (tests 1–5 y 15–19) se corren como tests.
+- **EBU Tech 3342** — *Loudness Range: A measure to supplement EBU R 128*. Vectores 1–4.
+- **ISO 266** — frecuencias centrales normalizadas de las bandas de ⅓ de octava.
+- **AES TD1004** (AES Technical Document, *Recommendation for Loudness of Audio Streaming and
+  Network File Playback*) — definición del PLR (peak-to-loudness ratio).
+- **J. C. Brown**, *"Calculation of a constant Q spectral transform"*, J. Acoust. Soc. Am.
+  89(1):425-434, 1991 — la transformada de Q constante.
+- **J. C. Brown & M. S. Puckette**, *"An efficient algorithm for the calculation of a constant Q
+  transform"*, J. Acoust. Soc. Am. 92(5):2698-2701, 1992 — los kernels espectrales podados con
+  los que TELESCOPE la calcula.
+- **C. L. Krumhansl & E. J. Kessler**, *"Tracing the dynamic changes in perceived tonal
+  organization in a spatial representation of musical keys"*, Psychological Review 89(4):334-368,
+  1982 — los 24 perfiles de tonalidad contra los que se correlaciona el cromagrama
+  (método Krumhansl-Schmuckler).
+
+---
+
 ## Notas de cumplimiento
 
 - **SAF (Spatial Audio Framework):** si en el futuro se incorpora, usar solo módulos

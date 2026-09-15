@@ -2,7 +2,7 @@
 # OVNI — CI (integración continua). En cada push/PR a main:
 #   configura CMake (universal arm64+x86_64) → buildea las libs + plugins + runners de test →
 #   corre ctest → corre tools/validate.sh por cada plugin del catálogo
-#   (aurora/dust/halo/horizon/nebula/pulsar).
+#   (aurora/dust/halo/horizon/nebula/pulsar/supernova/telescope).
 #
 # Honestidad verificable (doctrina del sello): el CI NO es decorativo. Cada claim que publicamos
 # (universal, pluginval lvl8, auval, anti-clip, mediciones house H7/H8/H9) lo re-mide acá en limpio.
@@ -40,8 +40,8 @@ jobs:
     env:
       BUILD_DIR: ${{ github.workspace }}/build
       CONFIG: Release
-      # Catálogo real (los 7 plugins con CMakeLists, sin contar el _probe que no se distribuye).
-      PLUGINS: "aurora dust halo horizon nebula pulsar supernova"
+      # Catálogo real (los plugins con CMakeLists, sin contar el _probe que no se distribuye).
+      PLUGINS: "aurora dust halo horizon nebula pulsar supernova telescope"
 
     steps:
       - name: Checkout
@@ -79,7 +79,7 @@ jobs:
       # --- validate.sh por cada plugin del catálogo. Re-mide TODAS las puertas en limpio
       #     (build→universal(lipo)→pluginval lvl8→auval→tests→anti-clip→H7/H8/H9) y emite el
       #     validate-report.json. Guardamos cada reporte y hacemos fallar el job si alguno NO está ok. ---
-      - name: validate (aurora / dust / halo / horizon / nebula / pulsar)
+      - name: validate (cada plugin de PLUGINS)
         run: |
           set -uo pipefail
           mkdir -p reports
@@ -106,4 +106,121 @@ jobs:
           name: validate-reports
           path: reports/*.json
           if-no-files-found: warn
+          retention-days: 30
+  windows-telescope:
+    name: Windows · TELESCOPE build + pluginval (VST3 x64)
+    # windows-2022, NO windows-latest: el label `latest` ya rodó a una imagen sin VS 2022 (v17)
+    # y el generador "Visual Studio 17 2022" no encuentra instancia. Es el mismo motivo por el que
+    # el CI de orbita lo fija.
+    runs-on: windows-2022
+    # Tope: el job de Windows de ORBIT tardó 5 min 32 s en el repo público (run 34179852286, 8-sep).
+    # En un repo privado los minutos de Windows salen del plan; si algo se cuelga (pluginval, el
+    # clone de JUCE), que corte a la hora y no a las 6 h que da GitHub por defecto.
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash          # los pasos de abajo son bash; los de PowerShell lo declaran aparte
+
+    env:
+      BUILD_TYPE: Release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # sin `submodules`: este repo no tiene ninguno (JUCE entra por FetchContent).
+
+      # --- Cache del clone de JUCE. Es lo más caro del job. ---
+      - name: Cache FetchContent deps
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-windows-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            deps-windows-
+
+      # --- Configurar. Dos apagados a propósito:
+      #     OVNI_BUILD_TESTS=OFF  → no se clona Catch2 ni se configuran los runners (no se corren acá).
+      #     OVNI_WITH_SOFA=OFF    → no se clona ni compila libmysofa. TELESCOPE no hace binaural: no
+      #                             usa SofaLoader, y `nm` sobre el binario de macOS da 0 símbolos
+      #                             mysofa. Apagarlo saca una dependencia entera del camino de Windows
+      #                             sin cambiar una sola línea de lo que TELESCOPE hace.
+      - name: Configurar (Visual Studio 2022, x64)
+        run: >
+          cmake -B build -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+          -DOVNI_BUILD_TESTS=OFF
+          -DOVNI_WITH_SOFA=OFF
+          .
+
+      - name: Compilar TELESCOPE (sólo el VST3)
+        run: cmake --build build --config $BUILD_TYPE --target telescope_VST3
+
+      # --- El binario tiene que ser PE x64 de verdad, no lo que diga el generador. ---
+      - name: Verificar PE x64 (COFF machine = AMD64)
+        shell: pwsh
+        run: |
+          # El PE vive DENTRO del bundle, en Contents\x86_64-win\TELESCOPE.vst3.
+          $bin = Get-ChildItem -Recurse -File -Path build -Filter TELESCOPE.vst3 |
+                 Where-Object { $_.FullName -match 'x86_64-win' -and $_.FullName -match 'Release' } | Select-Object -First 1
+          if (-not $bin) { Write-Error "No encontré el binario TELESCOPE.vst3 (x86_64-win)"; exit 1 }
+          Write-Host "VST3 binary: $($bin.FullName)"
+          $bytes   = [System.IO.File]::ReadAllBytes($bin.FullName)
+          $peOff   = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOff + 4)
+          Write-Host ("COFF machine: 0x{0:X4}" -f $machine)
+          if ($machine -ne 0x8664) { Write-Error "No es x64 (esperaba 0x8664)"; exit 1 }
+          Write-Host "OK: PE x64 (AMD64)"
+
+      # --- La versión que declara el bundle == plugins/telescope/VERSION (el equivalente de Windows
+      #     al test `telescope-version` de ctest, que acá no corre porque no hay tests).
+      #     moduleinfo.json NO es JSON estricto: el SDK de VST3 lo escribe con comas finales (mirá el
+      #     del bundle de macOS, Contents/Resources/moduleinfo.json), así que no se apuesta a que
+      #     ConvertFrom-Json lo trague: los campos "Version" se leen como texto y tienen que coincidir
+      #     TODOS (el del módulo y el de cada clase). ---
+      - name: Verificar la versión del bundle
+        shell: pwsh
+        run: |
+          $want = (Get-Content plugins/telescope/VERSION -Raw).Trim()
+          $mi   = Get-ChildItem -Recurse -File -Path build -Filter moduleinfo.json |
+                  Where-Object { $_.FullName -match 'telescope_artefacts' -and $_.FullName -match 'Release' } | Select-Object -First 1
+          if (-not $mi) { Write-Error "No encontré moduleinfo.json"; exit 1 }
+          $raw  = Get-Content $mi.FullName -Raw
+          $vers = @([regex]::Matches($raw, '"Version"\s*:\s*"([^"]*)"') | ForEach-Object { $_.Groups[1].Value })
+          Write-Host "VERSION=$want  ·  moduleinfo Version=$($vers -join ', ')"
+          if ($vers.Count -eq 0) { Write-Error "moduleinfo.json no trae ningún campo Version"; exit 1 }
+          $bad = @($vers | Where-Object { $_ -ne $want })
+          if ($bad.Count -gt 0) { Write-Error "El bundle declara $($bad -join ', '), no $want"; exit 1 }
+          Write-Host "OK: el bundle declara $want ($($vers.Count) campos Version)"
+
+      # --- pluginval strictness 10 (el mismo nivel que ORBIT en Windows; el CI de macOS usa 8).
+      #     Pineado a v1.0.4 (no releases/latest): una versión nueva de pluginval no puede romper el job sola. ---
+      - name: Pluginval (strictness 10)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip"
+          unzip -oq pluginval.zip
+          # SÓLO el bundle Release: el generador de VS crea además un scaffold vacío en Debug/VST3
+          # que haría fallar pluginval con "Num plugins found: 0".
+          bundle=$(find build -type d -path '*telescope_artefacts/Release/VST3/*.vst3' | head -1)
+          [ -n "$bundle" ] || { echo "no encontré el bundle VST3"; exit 1; }
+          echo "pluginval → $bundle"
+          ./pluginval.exe --strictness-level 10 --validate "$bundle"
+
+      # --- Resolver la ruta del bundle para el upload (el monorepo la mete bajo plugins/telescope/). ---
+      - name: Resolver la ruta del bundle
+        run: |
+          set -euo pipefail
+          bundle=$(find build -type d -path '*telescope_artefacts/Release/VST3/*.vst3' | head -1)
+          [ -n "$bundle" ] || { echo "no encontré el bundle VST3"; exit 1; }
+          echo "VST3_BUNDLE=$bundle" >> "$GITHUB_ENV"
+          echo "bundle: $bundle"
+
+      # --- El artefacto. upload-artifact sube el CONTENIDO del directorio, así que al descomprimirlo
+      #     queda Contents/x86_64-win/TELESCOPE.vst3 — el layout que espera orbit-winzip.sh. ---
+      - name: Subir artefacto (TELESCOPE VST3 Windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: TELESCOPE-windows-vst3
+          path: ${{ env.VST3_BUNDLE }}
+          if-no-files-found: error
           retention-days: 30

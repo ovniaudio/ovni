@@ -5,6 +5,56 @@ All notable changes to the [OVNI](https://github.com/ovniaudio/ovni) catalog are
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## TELESCOPE 0.1.0 — 2026-09-15
+
+**A new, ninth plugin: TELESCOPE 🔭, a free audio analyser that also concludes.** One analysis
+engine and thirteen lenses, plus a deterministic rules engine that writes findings in plain
+words with the number and the rule id beside each one. Full notes:
+[`plugins/telescope/CHANGELOG.md`](plugins/telescope/CHANGELOG.md).
+
+It **does not touch your audio**: 0 samples of latency, 0 tail, bit-exact output, verified with
+deterministic noise through every lens and every block size (`[telescope][null]`).
+
+- **LOUDNESS** — integrated / short-term / momentary LUFS, LRA and true peak. ITU-R BS.1770
+  gating, LRA per EBU Tech 3342, K-weighting recalculated per sample rate and checked against
+  the published 48 kHz table, true peak with the **literal** FIR table of BS.1770-5 Annex 2 §3.
+  Passes EBU Tech 3341 tests 1–5 and 15–19 and Tech 3342 tests 1–4.
+- **DYNAMICS** — PSR and PLR (AES TD1004), short-term histogram, clip events with a timeline.
+- **SPECTRUM · SPECTROGRAM · WATERFALL** — FFT 1 024–32 768 with exact coherent-gain
+  correction, ⅓-octave (ISO 266) and Bark bands; the sonogram over 10/30/60 s; and the same
+  data in depth with level as height.
+- **BAND CORRELATION · STEREO SPECTROGRAM** — correlation, width, balance and mono loss **per
+  ⅓-octave band**, and the sonogram with phase as colour and level as brightness.
+- **CQT · SPIRAL** — constant-Q by note (Brown & Puckette 1992), chromagram, and a key estimate
+  by correlation against the Krumhansl & Kessler (1982) profiles — always shown with its
+  confidence and its share of time, never on its own.
+- **SCOPE** (Lissajous, polar sample, **POLAR LEVEL** — one ray per degree, averaged in time
+  and peak-held) and **FIELD** — energy by pan
+  direction × frequency. Both are labelled **energy panning L/R, not localisation**: there is
+  no HRTF and no azimuth here, and the label cannot be switched off.
+- **TONAL BALANCE** — your programme against a reference track you load, both normalised by
+  their own integrated LUFS, so the comparison is of tilt at equal loudness and the delta sums
+  to zero.
+- **VERDICT** — 21 rules over a per-second history. It opens with the count of what was
+  measured and what is within range, and a dip that spans several bands is one finding, not
+  one per band. Measurement, not taste; the device checks are generic and say so; and **"no
+  findings" is not "it's finished"**.
+- **File analysis is bit-identical to live analysis** (same classes, not a second
+  implementation), and a loaded reference stores the path, not the numbers.
+- **Six languages**, English by default, per-key fallback. `pt`, `fr`, `de` and `it` are
+  translated with the industry's terms but **pending native review**.
+
+Every lens is drawn at the screen's **physical** resolution — no cache is baked in logical
+pixels, so nothing is a stretched half-resolution image on a Retina panel — and the four
+level maps share **four selectable colour ramps** (`ovni`, `inferno`, `viridis`, `spectrum`).
+LOUDNESS meters **L and R in dBTP** beside momentary and short-term, and shows the partial value
+while a window is still filling instead of `--.-`; TONAL BALANCE takes band power by fractional
+overlap with the FFT grid, so no ⅓-octave band comes out empty at any sample rate.
+
+Stereo only — no surround, no Ambisonics, no speech-intelligibility metric, no AI, no network.
+macOS 11.0+, universal `arm64 + x86_64`, VST3 + AU; Windows 10+, VST3 x64 as an unsigned ZIP in
+the same release. AGPLv3, like the rest of the catalog.
+
 ## [0.4.0] - 2026-09-09
 
 ### Added

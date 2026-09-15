@@ -22,7 +22,7 @@ juce_add_plugin(horizon
                                                        # UX equivocada: aparece bajo instrumentos). Forzamos
                                                        # 'aufx' (como ÓRBITA); la Program-Change igual llega.
     VST3_CATEGORIES          Fx Spatial
-    COPY_PLUGIN_AFTER_BUILD  TRUE)            # se copia a ~/Library/Audio/Plug-Ins (recargar con Cmd+Q)
+    COPY_PLUGIN_AFTER_BUILD  ${OVNI_COPY_PLUGIN_AFTER_BUILD})   # ON sólo en macOS (raíz): se copia a ~/Library/Audio/Plug-Ins (recargar con Cmd+Q)
 
 # Fuentes del plugin + las fuentes BASE del template (el chasis processor/editor se compila EN el plugin,
 # así JUCE se compila una sola vez acá; no hay lib intermedia que duplique JUCE).

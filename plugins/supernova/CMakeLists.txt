@@ -20,7 +20,7 @@ juce_add_plugin(supernova
     NEEDS_MIDI_INPUT         TRUE                     # triggers MIDI (RF5) + Program-Change → preset
     AU_MAIN_TYPE             "kAudioUnitType_Effect"  # aufx (D2 del roadmap; revisar en M3 vs Logic note-MIDI)
     VST3_CATEGORIES          Fx Analyzer              # visual/analyzer, no 'Fx Spatial'
-    COPY_PLUGIN_AFTER_BUILD  TRUE)
+    COPY_PLUGIN_AFTER_BUILD  ${OVNI_COPY_PLUGIN_AFTER_BUILD})   # ON sólo en macOS (raíz)
 
 # Fuentes del plugin + las bases del chasis (se compilan EN el plugin: JUCE una sola vez).
 # .mm (Obj-C++, backend Metal) se suma en la Task de Metal — el glob ya lo prevé.
@@ -28,6 +28,12 @@ file(GLOB_RECURSE PLUGIN_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.mm"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h")
+# Los .mm (Obj-C++: Metal, AVFoundation, Vision, Syphon) son sólo de Apple: fuera de macOS se sacan del glob.
+# El configure del monorepo en Windows (CI de TELESCOPE) recorre también este plugin aunque no lo compile,
+# y ni MSVC ni el generador de Visual Studio saben qué hacer con un .mm. En macOS la lista queda igual.
+if (NOT APPLE)
+    list(FILTER PLUGIN_SOURCES EXCLUDE REGEX "\\.mm$")
+endif ()
 
 target_sources(supernova PRIVATE
     ${PLUGIN_SOURCES}
