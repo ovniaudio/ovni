@@ -13,6 +13,10 @@ pasos (Introducción · Licencia · Destino · …). Por eso:
 Emite un par light/dark por módulo. La variante dark NO es opcional: el instalador respeta la
 apariencia del sistema y un texto oscuro sobre el panel oscuro desaparece.
 
+El ícono sale de `sello/brand/ovni-icon-1024.png`: desde el 2026-09-15 es el kit de marca v2
+(anillo blanco plano sobre grafito, sin satélite, sin degradado ni glow). Al cambiar la marca hay
+que RE-CORRER este script — el arte queda congelado en PNG y no se entera solo.
+
 Uso:
     make-installer-art.py [--outdir packaging/installer-resources]
 """
@@ -54,7 +58,8 @@ MENLO = "/System/Library/Fonts/Menlo.ttc"
 MENLO_REGULAR, MENLO_BOLD = 0, 1
 
 # Todo el catálogo, para que agregar un plugin no deje su instalador sin arte.
-MODULES = ["ORBIT", "PULSAR", "NEBULA", "DUST", "HALO", "HORIZON", "AURORA", "SUPERNOVA"]
+MODULES = ["ORBIT", "PULSAR", "NEBULA", "DUST", "HALO", "HORIZON", "AURORA", "SUPERNOVA",
+           "TELESCOPE"]
 EYEBROW = "OVNI AUDIO"
 
 

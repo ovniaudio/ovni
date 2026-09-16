@@ -188,7 +188,7 @@ if [ "$SUPERNOVA_IN_PKG" = "1" ]; then
         https://github.com/ovniaudio/ovni/tree/v$VERSION   (branch feat/supernova · tag v$VERSION)"
 else
   SUPERNOVA_SRC="    · SUPERNOVA (visual synth, macOS):
-        https://github.com/ovniaudio/ovni   (branch feat/supernova · un tag v<X.Y.Z> por versión)"
+        https://github.com/ovniaudio/ovni   (branch feat/supernova · one tag v<X.Y.Z> per version)"
 fi
 
 EXTRA_SOURCE=""
@@ -202,26 +202,26 @@ if [ "${#SOURCE_LINES[@]}" -gt 0 ]; then
 fi
 cat > "$LIC_ROOT/SOURCE.txt" <<SOURCE
 ============================================================
-  OVNI Audio — Código fuente / Source code (AGPLv3)
+  OVNI Audio — Source code / Código fuente (AGPLv3)
 ============================================================
 
-Estos plugins son software libre bajo AGPLv3 (texto completo
-en LICENSE.txt). Tenés derecho al código fuente completo y
-correspondiente de esta versión / You are entitled to the
-complete corresponding source of this version:
+These plug-ins are free software under the AGPLv3 (full text
+in LICENSE.txt). You are entitled to the complete corresponding
+source of this version / Tenés derecho al código fuente
+completo y correspondiente de esta versión:
 
-    · Catálogo — PULSAR, NEBULA, DUST, HALO, HORIZON, AURORA:
+    · Catalog — PULSAR, NEBULA, DUST, HALO, HORIZON, AURORA:
         https://github.com/ovniaudio/ovni
-    · ORBIT (el flagship):
+    · ORBIT (the flagship):
         https://github.com/ovniaudio/orbita
 $SUPERNOVA_SRC
 $EXTRA_SOURCE
 (source available per AGPLv3 §6)
 
-Versión de este paquete / package version: $VERSION
-Commit exacto de este build / exact build commit: ${COMMIT:-(desconocido)}
+Package version / versión del paquete: $VERSION
+Exact build commit / commit exacto de este build: ${COMMIT:-(unknown)}
 
-¿Dudas? https://ovniaudio.com  ·  hello@ovniaudio.com
+Questions? https://ovniaudio.com  ·  hello@ovniaudio.com
 ============================================================
 SOURCE
 xattr -cr "$WORK/root-license" 2>/dev/null || true
