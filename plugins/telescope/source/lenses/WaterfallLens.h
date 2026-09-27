@@ -4,6 +4,7 @@
 #include "analysis/SpectrogramRing.h"
 #include "analysis/modules/Spectrum.h"
 #include "lenses/Lens.h"
+#include "lenses/QuietTail.h"
 #include "lenses/Look.h"
 #include "lenses/Projection2p5.h"
 #include "lenses/Raster.h"
@@ -232,6 +233,8 @@ private:
 
     int   hovered = -1;
     juce::Point<int> cursor { -1, -1 };
+
+    QuietTail quiet;   // ¿la ventana visible es toda la misma columna? (ver advanceFrame)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaterfallLens)
 };

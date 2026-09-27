@@ -3,7 +3,9 @@
 #include <memory>
 #include "lenses/Lens.h"
 #include "template/PluginEditorBase.h"
+#include "ui/EyepieceIntro.h"
 #include "ui/LensStrip.h"
+#include "ui/ThemePreference.h"
 
 namespace telescope
 {
@@ -38,6 +40,22 @@ public:
     // Lo que la TIRA está mostrando (no lo que dice el árbol): son dos cosas distintas justamente cuando
     // el listener no llega, que es el bug que este flag persigue.
     juce::String stripLanguage() const { return strip.language(); }
+    // La lente a la vista, para los tests de presupuesto del EDITOR ([editorbudget]): hace falta su
+    // rectángulo para pintar el editor con el clip que deja un repaint de la lente, y su tick.
+    Lens* activeLens() const noexcept { return lens.get(); }
+
+    // ================== EL TEMA (F2 de la 0.2) ==================
+    // Aplica el tema vigente (look::theme) a TODO: el marco del sello (FrameInk), el hue de familia, la tira
+    // y la lente, que se vuelve a construir porque sus capas horneadas tienen los colores del tema anterior.
+    void applyTheme();
+    // Lo que hace el clic en la fila del tema: alterna, guarda la preferencia y avisa a las otras ventanas.
+    void toggleTheme();
+
+   #if TELESCOPE_HAS_EYEPIECE_INTRO
+    // ================== T8 (F4 de la 0.2): la tarjeta que presenta a EYEPIECE, sólo en la Mac ==================
+    // nullptr si no se mostró al abrir (ya se había visto, o el runner la tiene apagada). Ver ui/EyepieceIntro.h.
+    EyepieceIntroCard* eyepieceIntro() const noexcept { return intro.get(); }
+   #endif
 
 protected:
     void layoutBody (juce::Rectangle<int> body) override;
@@ -56,6 +74,7 @@ private:
     void applyLanguageSafely();
     void applyLanguage();
     void showLens (int index);
+    void rebuildLens();
     std::unique_ptr<Lens> makeLens (LensId id);
 
     TelescopeProcessor&   proc;
@@ -63,6 +82,18 @@ private:
     std::unique_ptr<Lens> lens;
     int                   currentLens = -1;
     juce::Rectangle<int>  lensArea;
+   #if TELESCOPE_HAS_EYEPIECE_INTRO
+    std::unique_ptr<EyepieceIntroCard> intro;   // T8: arriba de la lente, abajo a la derecha
+    void placeIntro();
+   #endif
+
+    // El aviso de cambio de tema (ThemePreference::changed) llega por un objeto aparte y no heredando
+    // ChangeListener: la base ya lo hereda para los presets, y un segundo override los pisaría.
+    struct ThemeListener : juce::ChangeListener
+    {
+        std::function<void()> fn;
+        void changeListenerCallback (juce::ChangeBroadcaster*) override { if (fn) fn(); }
+    } themeListener;
 
     std::atomic<bool> appliedOnMessageThread { true };
     std::atomic<int>  applyCount { 0 };

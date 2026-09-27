@@ -5,6 +5,7 @@
 #include "analysis/modules/Spectrum.h"
 #include "analysis/modules/StereoBands.h"
 #include "lenses/Lens.h"
+#include "lenses/QuietTail.h"
 #include "lenses/Raster.h"
 #include "lenses/SpectrogramScroll.h"
 
@@ -143,6 +144,8 @@ private:
     int   hovered = -1;
     juce::Point<int> cursor { -1, -1 };
     int   lastRangeDb = 0;
+
+    QuietTail quiet;   // ¿la ventana visible es toda la misma columna? (ver advanceFrame)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StereoSpectrogramLens)
 };

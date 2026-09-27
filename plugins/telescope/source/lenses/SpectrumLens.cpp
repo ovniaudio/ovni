@@ -11,7 +11,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 // Las etiquetas de frecuencia que sí se leen. La rejilla tiene los 30 centros de ⅓ de octava; rotularlos
 // todos sería una pared de números.
@@ -163,13 +163,13 @@ void SpectrumLens::renderStatic (juce::Graphics& g, int width, int height)
         look::fillSnapped (g, { (float) (juce::roundToInt (xForFreq (hz))), (float) (zones.plot.getY()), 1.0f, (float) (zones.plot.getHeight()) });
     }
 
-    g.setFont (ovni::ui::fonts::mono (9.0f));
-    g.setColour (th::fnt);
+    g.setFont (look::mono (9.0f));
+    g.setColour (look::txtTertiary);
     for (const double hz : kLabelledHz)
     {
         const int x = juce::roundToInt (xForFreq (hz));
         g.drawText (shortHz (hz), x - 20, zones.freqAxis.getY() + 1, 40, 12,
-                    juce::Justification::centred, false);
+                    juce::Justification::centred, true);
     }
 
     // ---- rejilla de dB: 0 arriba, hacia abajo el rango elegido ----
@@ -179,15 +179,15 @@ void SpectrumLens::renderStatic (juce::Graphics& g, int width, int height)
         const int y = juce::roundToInt (yForDb ((float) db));
         g.setColour (db == 0 ? th::line : th::lineSoft);
         look::fillSnapped (g, { (float) (zones.plot.getX()), (float) (y), (float) (zones.plot.getWidth()), 1.0f });
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (juce::String (db), zones.dbScale.getX(), y - 6, kScaleW - 8, 12,
-                    juce::Justification::centredRight, false);
+                    juce::Justification::centredRight, true);
     }
 
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText ("dBFS", zones.dbScale.getX(), zones.plot.getY() + 2, kScaleW - 8, 12,
-                juce::Justification::centredRight, false);
+    g.setFont (look::label (10.0f));
+    g.drawText ("dBFS", zones.dbScale.getX(), zones.plot.getY() + 8, kScaleW - 8, 12,
+                juce::Justification::centredRight, true);
 }
 
 //======================================================================================== datos
@@ -250,14 +250,32 @@ void SpectrumLens::rebuildColumns (const SpectrumFrame& f)
     }
 }
 
+// EL PISO DE SILENCIO. El plot va de 0 dB a −rango; por debajo, la curva queda clavada en el borde. En
+// silencio la curva y el hold siguen bajando —medido: entre −217 y −187 dB, con el piso del plot en −90— y
+// ese movimiento no se ve, pero contaba como cambio y la lente no paraba. Cuenta si alguno de los dos
+// valores está por encima del piso menos un margen: los 20 dB cubren el suavizado por fracción de octava,
+// que promedia en dB antes de recortar al plot (un vecino hundido arrastra un poco a uno visible).
+bool SpectrumLens::visiblyMoved (float now, float before) const noexcept
+{
+    const float floorDb = -(float) sets.rangeDb() - 20.0f;
+    return std::abs (now - before) > 0.01f && juce::jmax (now, before) > floorDb;
+}
+
 bool SpectrumLens::advanceFrame()
 {
+    // Los ajustes que cambian el dibujo pueden cambiar sin un click en esta lente (un preset, el estado que
+    // restaura el host): con la lente en pausa también tienen que verse.
+    const auto prevSets = sets;
     sets = processor.spectrumSettings();
+    const int  smooth = processor.spectrumSmoothIndex();
+    const bool settingsChanged = ! (sets == prevSets) || smooth != lastSmoothIdx;
+    lastSmoothIdx = smooth;
 
     // Referencia, no copia: el SpectrumFrame son ~260 KB y sólo hace falta hasta el final de esta función.
     const auto& f = processor.spectrum().read();
-    const bool  fresh = f.frameIndex != lastFrameIndex || f.fftSize != fftSizeSeen
-                                                       || f.channelMode != channelSeen;
+    const bool  geometry = f.fftSize != fftSizeSeen || f.channelMode != channelSeen;
+    const bool  fresh = f.frameIndex != lastFrameIndex || geometry;
+    bool holdMoved = false;
     if (fresh)
     {
         lastFrameIndex = f.frameIndex;
@@ -265,7 +283,16 @@ bool SpectrumLens::advanceFrame()
         numBinsSeen = f.numBins;
         channelSeen = f.channelMode;
         srSeen      = f.sr;
+        for (int s = 0; s < SpectrumFrame::kMaxSpectra; ++s) holdBefore[s] = colHold[s];
         rebuildColumns (f);
+
+        // El HOLD se dibuja tal cual (no se suaviza): se mueve cuando el motor lo baja — si se ve.
+        for (int s = 0; s < SpectrumFrame::kMaxSpectra && ! holdMoved; ++s)
+        {
+            if (holdBefore[s].size() != colHold[s].size()) { holdMoved = true; break; }
+            for (size_t x = 0; x < colHold[s].size(); ++x)
+                if (visiblyMoved (colHold[s][x], holdBefore[s][x])) { holdMoved = true; break; }
+        }
     }
 
     // Si cambió el rango de dB hay que rehornear la rejilla: es capa estática.
@@ -281,10 +308,13 @@ bool SpectrumLens::advanceFrame()
             const float target = colDb[s][x];
             const float before = dispDb[s][x];
             dispDb[s][x] = (reduced || target > before) ? target : before + (target - before) * kRelease;
-            moved = moved || std::abs (dispDb[s][x] - before) > 0.01f;
+            moved = moved || visiblyMoved (dispDb[s][x], before);
         }
 
-    return fresh || moved;
+    // Antes era `fresh || moved`: con el transporte parado el motor sigue publicando una FFT por hop —de
+    // silencio, idéntica a la anterior— y la lente repintaba 30 veces por segundo para siempre (prompt 96).
+    // Ahora cuenta lo que SE VE: la curva, el hold, la geometría del cuadro y los ajustes.
+    return moved || holdMoved || geometry || settingsChanged;
 }
 
 //======================================================================================== capa viva
@@ -689,7 +719,7 @@ void SpectrumLens::paintBars (juce::Graphics& g, int slot, juce::Colour hue) con
         // distinto de una barra en cero — dibujar cero sería decir "no hay nada", que no es lo mismo.
         if (binHz > 0.0 && std::ceil (hi / binHz) <= std::ceil (lo / binHz))
         {
-            g.setColour (th::fnt.withAlpha (0.55f));
+            g.setColour (look::tick.withAlpha (0.55f));
             g.fillRect (juce::Rectangle<float> (x, (float) zones.plot.getBottom() - 3.0f, w, 3.0f));
             continue;
         }
@@ -791,12 +821,8 @@ void SpectrumLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, co
     }
 
     auto inner = area.reduced (7, 0);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.0f));
-    g.drawText (label, inner.removeFromLeft (inner.getWidth() * 2 / 5), juce::Justification::centredLeft, false);
-    g.setColour (hue);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (value, inner, juce::Justification::centredRight, false);
+    look::drawLabelValue (g, inner, label, look::label (9.0f), look::txtTertiary,
+                         value, look::mono (11.0f), hue);
 }
 
 //======================================================================================== interacción

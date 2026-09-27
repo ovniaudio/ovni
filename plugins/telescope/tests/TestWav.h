@@ -7,11 +7,14 @@
 // ========================================================================================================
 // TestWav — escribe los WAV que necesitan los tests del análisis de archivo, y los vuelve a leer.
 //
-// DÓNDE VAN LOS ARCHIVOS. En `build/tests-tmp/` del worktree, NUNCA en /tmp ni en ~/Downloads: /tmp lo
-// comparten todas las obreras que corran a la vez, y dos tests escribiendo "pink.wav" al mismo tiempo se
-// pisan sin que ninguno se entere. La carpeta se busca subiendo desde el ejecutable hasta encontrar
-// `build/`; si no aparece (alguien movió el exe), se cae al directorio temporal del sistema con un nombre
-// propio. La ruta se imprime, así que nunca hay que adivinar dónde quedó.
+// DÓNDE VAN LOS ARCHIVOS. En `<carpeta de build>/tests-tmp/` del worktree, NUNCA en /tmp ni en ~/Downloads:
+// /tmp lo comparten todas las obreras que corran a la vez, y dos tests escribiendo "pink.wav" al mismo tiempo
+// se pisan sin que ninguno se entere. La carpeta de build se busca subiendo desde el ejecutable hasta la
+// primera que tenga un `CMakeCache.txt` (F4 de la 0.2: antes se buscaba una que se llamara `build`, y con
+// `cmake-build-02/` o `cmake-build-f3/` los WAV caían en el temporal compartido del usuario — lo vio la F3).
+// Una carpeta llamada `build` sigue valiendo aunque no tenga la caché. Si no aparece ninguna (alguien movió el
+// exe), se cae al directorio temporal del sistema con un nombre propio. La ruta se imprime, así que nunca hay
+// que adivinar dónde quedó.
 //
 // 24 BITS, no float. Es el formato en el que llega un archivo de verdad, y —lo que importa acá— NO cambia
 // nada de la prueba de identidad: el test empuja por processBlock las MISMAS muestras decodificadas que
@@ -20,14 +23,14 @@
 // ========================================================================================================
 namespace telescope::test
 {
-// build/tests-tmp/ del worktree (ver el encabezado).
+// <carpeta de build>/tests-tmp/ del worktree (ver el encabezado).
 inline juce::File tempDir()
 {
     auto d = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
     for (int i = 0; i < 10 && d.getFullPathName().isNotEmpty(); ++i)
     {
         d = d.getParentDirectory();
-        if (d.getFileName() == "build")
+        if (d.getChildFile ("CMakeCache.txt").existsAsFile() || d.getFileName() == "build")
         {
             auto t = d.getChildFile ("tests-tmp");
             t.createDirectory();

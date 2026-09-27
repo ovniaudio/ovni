@@ -29,19 +29,28 @@ public:
         if (h.getARGB() != hue.getARGB()) { hue = h; img = juce::Image(); }
     }
 
+    // La escala se compara YA clampeada a ≥ 1, que es la que guarda render(): comparada cruda, una escala
+    // física < 1 (tamaño S = zoom 0.8 en una pantalla 1×) no coincidía nunca con la guardada y el fondo
+    // se rehacía en cada cuadro aunque nada hubiera cambiado.
     bool needsRender (int w, int h, float scale) const
     {
-        return img.isNull() || rw != w || rh != h || std::abs (rs - scale) > 0.01f;
+        return img.isNull() || rw != w || rh != h || std::abs (rs - juce::jmax (1.0f, scale)) > 0.01f;
     }
 
+    // Hornea SÓLO si hace falta (needsRender): la guarda vive acá adentro y no sólo en quien llama, así
+    // ningún editor del catálogo puede volver a rehacer el fondo en cada cuadro por olvidársela. Pasó
+    // (prompt 96): el editor base la llamaba sin guarda, y como la lente no es opaca, cada repaint de la
+    // lente —30 por segundo— rehacía una imagen del tamaño de la ventana en el hilo del host.
     void render (int w, int h, float scale)
     {
         if (w <= 0 || h <= 0) return;
+        if (! needsRender (w, h, scale)) return;
         rw = w; rh = h; rs = juce::jmax (1.0f, scale);
         const int pw = juce::jmax (1, juce::roundToInt ((float) w * rs));
         const int ph = juce::jmax (1, juce::roundToInt ((float) h * rs));
 
         img = juce::Image (juce::Image::ARGB, pw, ph, true);
+        ++renders;
         juce::Graphics g (img);
 
         {
@@ -126,6 +135,11 @@ public:
         g.fillRect (0, 0, pw, ph);
     }
 
+    // Cuántas veces se horneó la imagen desde que existe el Panel. Instrumentación para los tests de
+    // presupuesto del editor ([telescope][editorbudget]): con tamaño y escala quietos tiene que quedarse
+    // quieto, y es lo único que distingue desde afuera un fondo cacheado de uno rehecho en cada cuadro.
+    int renderCount() const noexcept { return renders; }
+
     // Blit de la capa cacheada con la transformación inversa (1/escala) -> nítida en Retina.
     void paint (juce::Graphics& g) const
     {
@@ -200,5 +214,6 @@ private:
     juce::Colour hue = theme::cyan;   // hue de familia (lo setea el editor)
     int   rw = 0, rh = 0;
     float rs = 0.0f;
+    int   renders = 0;
 };
 }

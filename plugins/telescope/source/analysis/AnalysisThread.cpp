@@ -423,8 +423,10 @@ void AnalysisThread::processHop()
         f.psrValid    = r.psrValid;
         f.plrValid    = r.plrValid;
         f.clipEvents  = r.clipEvents;
+        // F4 (T4, D-113): la lente dibuja el histograma SIN el silencio (los short-term bajo −70 LUFS no
+        // entran). Ver Loudness::Result::histogramGated.
         for (int i = 0; i < Loudness::kHistogramBins; ++i)
-            f.histogram[i] = r.histogram[(size_t) i];
+            f.histogram[i] = r.histogramGated[(size_t) i];
 
         // ===== 55: lo que la fila del segundo necesita del medidor y no viaja en el AnalysisFrame.
         lastHopClips = r.clipEventsHop;

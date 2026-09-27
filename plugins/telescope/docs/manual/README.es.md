@@ -715,16 +715,16 @@ del editor escalan el lienzo entero, así que ahí la lente mide lo mismo en los
 desplegada).
 
 **Cómo se lee un hallazgo.** El número primero, el término de mezcla entre paréntesis y, al final, dónde
-mirar — nunca qué hacer: *"630 Hz cae 26.0 dB bajo su propia media (la banda mas honda de un tramo de
-400-1000 Hz que cae entre 0:20 y 0:35). Revisa que suena en ese rango ahi."* Un pozo que atraviesa varias
+mirar — nunca qué hacer: *"630 Hz cae 26.0 dB bajo su propia media (la banda más honda de un tramo de
+400-1000 Hz que cae entre 0:20 y 0:35). Revisá qué suena en ese rango ahí."* Un pozo que atraviesa varias
 bandas contiguas al mismo tiempo es **un** hallazgo, no uno por banda: el número es el de la banda más honda y
 la ventana de tiempo es la del tramo entero (desde la primera banda que cae hasta la última que vuelve). Un
 pozo medido es ⚠: el ● queda para lo objetivamente roto (ráfagas de clips, continua, bandas que se cancelan en
 mono). La línea gris de evidencia
 suma los umbrales de la regla al número medido: `hole · -25.96 dB / 15 s · rule 6 dB / 10 s`.
 
-(Las frases de VERDICT se escriben sin tildes en las seis tablas, igual que desde el prompt 55: es la
-convención de `Rules.h`, y el pie que no se toca también la usa.)
+(Desde la 0.2 las frases de VERDICT llevan sus tildes (y en alemán, las diéresis y la ß); hasta la 0.1
+salían sin ellas, por una convención de `Rules.h` que no tenía motivo técnico.)
 
 **Contra qué compara.** Las reglas de la sección 1 preguntan si una región sobra o falta. Sobra *respecto
 de qué*, y la frase dice siempre cuál usó:

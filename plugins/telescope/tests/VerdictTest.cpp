@@ -186,8 +186,21 @@ bool digitBeforeFirstPeriod (const std::string& s)
 
 // Las palabras de una frase, en minúsculas. Los bytes ≥ 0x80 cuentan como letra: una palabra con tilde no
 // se parte en dos, y "normal" sigue siendo UNA palabra (la lista prohibida tiene "mal", que no es "normal").
-std::vector<std::string> wordsOf (const std::string& text)
+//
+// F2b de la 0.2: las frases llevan tildes, y el tolower de C sólo baja el ASCII («Écrasé» quedaba con su É). Ni
+// juce::String::toLowerCase alcanza: usa towlower, que con el locale "C" del runner tampoco las baja (medido: la
+// mutación «Áspero: PSR…» sobrevivía). Las mayúsculas de Latin-1 (À..Þ, salvo ×) están a 0x20 de su minúscula.
+std::vector<std::string> wordsOf (const std::string& textIn)
 {
+    const auto src = juce::String::fromUTF8 (textIn.c_str());   // vive mientras se la recorre
+    juce::String lowered;
+    for (auto p = src.getCharPointer(); ! p.isEmpty();)
+    {
+        auto ch = p.getAndAdvance();
+        if ((ch >= 'A' && ch <= 'Z') || (ch >= 0xC0 && ch <= 0xDE && ch != 0xD7)) ch += 0x20;
+        lowered += juce::String::charToString (ch);
+    }
+    const std::string text = lowered.toStdString();
     std::vector<std::string> out;
     std::string cur;
     for (const unsigned char c : text)
@@ -1328,14 +1341,17 @@ TEST_CASE ("telescope: VERDICT mide sin opinar - el numero primero y donde mirar
     const Lang kLangs[] = {
         { "en", "Check ",    {},
           { "crushed", "thin", "muddy", "harsh", "no", "hollow", "hole", "quiet", "loud", "peak" } },
-        { "es", "Revisa",    {},
-          { "aplastado", "delgado", "turbio", "aspero", "sin", "centro", "hueco", "seccion", "rafaga" } },
+        // F2b de la 0.2: las frases llevan tildes (Rules.h), así que el verbo y las palabras también. Escritas
+        // sin tilde, «aspero» o «gache» dejarían de coincidir con nada y la guarda quedaría ciega en silencio.
+        // En castellano, la raíz: el voseo es «Revisá», y con pronombre «Revisalo» / «Revisalos» (sin tilde).
+        { "es", "Revis",     {},
+          { "aplastado", "delgado", "turbio", "áspero", "sin", "centro", "hueco", "sección", "ráfaga" } },
         { "pt", "Verifique", { "profissional", "pronto", "ruim", "amador", "estraga" },
-          { "achatado", "fino", "embolado", "aspero", "sem", "centro", "buraco", "trecho", "rajada" } },
-        { "fr", "Verifiez",  { "professionnel", "pret", "mauvais", "gache", "rate" },
-          { "ecrase", "maigre", "boueux", "agressif", "sans", "centre", "trou", "passage", "rafale" } },
-        { "de", "Pruefe",    { "professionell", "fertig", "schlecht", "amateurhaft", "ruiniert" },
-          { "plattgedrueckt", "duenn", "matschig", "hart", "keine", "hohle", "loch", "leise", "laute", "peak" } },
+          { "achatado", "fino", "embolado", "áspero", "sem", "centro", "buraco", "trecho", "rajada" } },
+        { "fr", "Vérifiez",  { "professionnel", "prêt", "mauvais", "gâché", "raté" },
+          { "écrasé", "maigre", "boueux", "agressif", "sans", "centre", "trou", "passage", "rafale" } },
+        { "de", "Prüfe",     { "professionell", "fertig", "schlecht", "amateurhaft", "ruiniert" },
+          { "plattgedrückt", "dünn", "matschig", "hart", "keine", "hohle", "loch", "leise", "laute", "peak" } },
         { "it", "Controlla", { "professionale", "pronto", "cattivo", "brutto", "amatoriale", "rovina" },
           { "schiacciato", "sottile", "impastato", "aspro", "senza", "centro", "buco", "sezione", "raffica" } },
     };
@@ -1471,4 +1487,140 @@ TEST_CASE ("telescope: un hueco fusionado dice la ventana de todo el tramo", "[t
     REQUIRE (hole->text.find ("0:10") != std::string::npos);
     REQUIRE (hole->text.find ("0:32") != std::string::npos);
     REQUIRE (rep.summary.firstAt == 10);
+}
+
+// ========================================================================================================
+// F4 de la 0.2 (T9, el MEDIUM del revisor del 57d): LA FUSIÓN NO ES TRANSITIVA
+//
+// Tres bandas contiguas: 400 Hz abajo de 0:10 a 0:22, 500 Hz de 0:18 a 0:32 y 630 Hz de 0:28 a 0:40. 400 y 500
+// comparten 0:18-0:22; 500 y 630 comparten 0:28-0:32; pero 400 y 630 no comparten ni un segundo. Con la cadena
+// de a pares salían como UN pozo de 0:10 a 0:40. Ahora son dos: 400-500 (de 0:10 a 0:32) y 630 solo (de 0:28 a
+// 0:40). El caso de dos bandas corridas de arriba sigue siendo uno.
+// ========================================================================================================
+TEST_CASE ("telescope: la fusion de huecos pide un momento en comun con todo el grupo", "[telescope][verdict]")
+{
+    auto rows = healthyRows();
+    addDb (rows, 12, 12,  -8.0f, 10, 22);    // 400 Hz
+    addDb (rows, 13, 13, -12.0f, 18, 32);    // 500 Hz
+    addDb (rows, 14, 14, -10.0f, 28, 40);    // 630 Hz
+    const auto rep = Verdict::evaluate (inputsFor (rows, healthyAggregates()));
+
+    std::vector<const telescope::VerdictFinding*> holes;
+    for (const auto& f : rep.findings)
+        if (f.ruleId == RuleId::hole)
+        {
+            holes.push_back (&f);
+            std::printf ("VERDICT[hueco] tres corridas: %.0f Hz (tramo %.0f-%.0f Hz)  ·  %d s -> %d s  ·  %s\n",
+                         (double) telescope::kThirdOctaveHz[f.band], f.values[1], f.values[2], f.t0, f.t1, f.text.c_str());
+        }
+    std::printf ("VERDICT[hueco] tres corridas: %d hallazgo(s) (de a pares: 1, de 0:10 a 0:40)\n", (int) holes.size());
+    REQUIRE (holes.size() == 2);
+    std::sort (holes.begin(), holes.end(), [] (auto* a, auto* b) { return a->values[1] < b->values[1]; });
+    REQUIRE (std::abs (holes[0]->values[1] - 400.0f) < 1.0f);
+    REQUIRE (std::abs (holes[0]->values[2] - 500.0f) < 1.0f);
+    REQUIRE (holes[0]->t0 == 10);
+    REQUIRE (holes[0]->t1 == 32);
+    REQUIRE (std::abs (holes[1]->values[1] - 630.0f) < 1.0f);
+    REQUIRE (std::abs (holes[1]->values[2] - 630.0f) < 1.0f);
+    REQUIRE (holes[1]->t0 == 28);
+    REQUIRE (holes[1]->t1 == 40);
+}
+
+// ========================================================================================================
+// F4 de la 0.2 (T9): M-2 del revisor del 57c — LOS GRAVES, POR EL CAMINO DE VERDAD
+//
+// El 57c cambió los niveles de las bandas graves (el solapamiento fraccionario) y VerdictTest sólo probaba reglas
+// con bandas fabricadas a mano: ningún test llevaba audio grave de verdad por audio → filas por segundo → VERDICT.
+// Acá: 20 s de rosa con un 45 Hz fuerte entre 0:05 y 0:15, por el archivo (FileAnalyzer) y en vivo (processor).
+//   · las filas de las bandas graves (25 a 100 Hz) son IGUALES AL BIT en vivo y por archivo;
+//   · el grave se ve donde está: la banda de 50 Hz sube más de 10 dB entre 0:05 y 0:15;
+//   · los hallazgos de VERDICT son los mismos en los dos caminos (la misma lista de reglas);
+//   · y queda impreso qué bandas graves dan piso en las filas (la historia por segundo todavía cuenta bins
+//     enteros: con 4096 a 48 k las de 25 y 40 Hz no tienen ninguno —SecondHistory.h, «bins enteros», que la F4
+//     no cambia porque mueve las filas del camino de archivo, ver su reporte—). Si alguien lo arregla, esto cambia
+//     y lo dice.
+// ========================================================================================================
+TEST_CASE ("telescope: los graves de verdad llegan igual a VERDICT en vivo y por archivo", "[telescope][verdict][graves]")
+{
+    constexpr double kSr = 48000.0;
+    constexpr int kSeconds = 20;
+    juce::AudioBuffer<float> sig (2, kSeconds * (int) kSr);
+    {
+        telescope::test::Pink a { telescope::test::kPinkSeedA }, b { telescope::test::kPinkSeedB };
+        for (int i = 0; i < sig.getNumSamples(); ++i)
+        {
+            const double t = (double) i / kSr;
+            const double bass = (t >= 5.0 && t < 15.0) ? 0.35 * std::sin (2.0 * juce::MathConstants<double>::pi * 45.0 * t) : 0.0;
+            sig.setSample (0, i, (float) (0.12 * a.next() + bass));
+            sig.setSample (1, i, (float) (0.12 * b.next() + bass));
+        }
+    }
+    const auto wav = telescope::test::writeWav ("verdict_graves_20s.wav", kSr, 2, (juce::int64) sig.getNumSamples(),
+                                                [&] (juce::int64 i) { return std::pair<float, float> { sig.getSample (0, (int) i), sig.getSample (1, (int) i) }; });
+    double srRead = 0.0;
+    const auto audio = telescope::test::readWavStereo (wav, srRead);   // lo mismo que lee el analizador (24 bits)
+
+    telescope::FileAnalyzer fa;
+    fa.start (wav);
+    REQUIRE (telescope::test::waitUntil ([&] { return ! fa.busy(); }, 120000));
+    const auto off = fa.result();
+    REQUIRE (off.valid);
+
+    std::vector<SecondRow> liveRows;
+    {
+        telescope::TelescopeProcessor proc;
+        proc.prepareToPlay (kSr, 512);
+        proc.setEnabledModules (telescope::kLoudness | telescope::kReference | telescope::kCqt);
+        long long pos = 0;
+        const auto pushed = telescope::test::pushExact (proc, audio.getNumSamples(), kSr, [&] (juce::AudioBuffer<float>& buf, int k)
+        {
+            for (int i = 0; i < k; ++i, ++pos) { buf.setSample (0, i, audio.getSample (0, (int) pos)); buf.setSample (1, i, audio.getSample (1, (int) pos)); }
+        });
+        telescope::test::waitDigested (proc, pushed, kSr);
+        proc.secondHistory().copyLatest (liveRows, telescope::SecondHistory::kCapacity);
+        proc.releaseResources();
+    }
+
+    const int n = std::min ((int) off.secondRows.size(), (int) liveRows.size());
+    REQUIRE (n == kSeconds);
+    int same = 0, compared = 0;
+    for (int r = 0; r < n; ++r)
+        for (int bnd = 0; bnd < 8; ++bnd)   // 25 … 100 Hz
+        {
+            ++compared;
+            same += (off.secondRows[(size_t) r].bandsDb[bnd] == liveRows[(size_t) r].bandsDb[bnd]) ? 1 : 0;
+        }
+
+    const auto meanBand = [&] (int bnd, int r0, int r1)
+    {
+        double s = 0.0;
+        for (int r = r0; r < r1; ++r) s += off.secondRows[(size_t) r].bandsDb[bnd];
+        return s / (double) (r1 - r0);
+    };
+    const int b50 = 3;   // 25, 31.5, 40, 50 Hz
+    const double inside = meanBand (b50, 6, 14), outside = meanBand (b50, 16, 20);
+    juce::String floors;
+    for (int bnd = 0; bnd < 8; ++bnd)
+        if (! off.secondRows[10].bandMeasured (bnd)) floors << juce::String (telescope::kThirdOctaveHz[bnd], 1) << " Hz ";
+
+    Verdict::Inputs fin;
+    fin.aggregates = Verdict::aggregatesFrom (off);
+    fin.rows = off.secondRows.data();
+    fin.n = (int) off.secondRows.size();
+    Verdict::Inputs lin = fin;
+    lin.rows = liveRows.data();
+    lin.n = (int) liveRows.size();
+    const auto repF = Verdict::evaluate (fin), repL = Verdict::evaluate (lin);
+    std::vector<int> idsF, idsL;
+    for (const auto& f : repF.findings) idsF.push_back ((int) f.ruleId);
+    for (const auto& f : repL.findings) idsL.push_back ((int) f.ruleId);
+
+    std::printf ("VERDICT[graves] filas graves (25-100 Hz) iguales al bit, vivo contra archivo: %d de %d · 50 Hz con el "
+                 "grave %.1f dB, sin él %.1f dB (sube %.1f) · bandas graves en el piso en la fila 10: %s· hallazgos: "
+                 "archivo %d, vivo %d\n", same, compared, inside, outside, inside - outside,
+                 floors.isEmpty() ? "ninguna " : floors.toRawUTF8(), (int) idsF.size(), (int) idsL.size());
+    for (const auto& f : repF.findings) std::printf ("VERDICT[graves]   · %s\n", f.text.c_str());
+    REQUIRE (same == compared);
+    REQUIRE (inside - outside > 10.0);
+    REQUIRE (idsF == idsL);
 }

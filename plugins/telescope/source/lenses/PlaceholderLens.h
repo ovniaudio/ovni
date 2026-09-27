@@ -22,7 +22,7 @@ public:
 protected:
     void renderStatic (juce::Graphics& g, int width, int height) override
     {
-        namespace th = ovni::ui::theme;
+        namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
         const auto r = juce::Rectangle<int> (0, 0, width, height).reduced (ovni::ui::theme::padIn);
 
         g.setColour (th::surf.withAlpha (0.45f));
@@ -30,9 +30,9 @@ protected:
         g.setColour (th::lineSoft);
         g.drawRoundedRectangle (r.toFloat().reduced (0.5f), 3.0f, 1.0f);
 
-        g.setColour (th::fnt);
-        g.setFont (ovni::ui::fonts::label (12.0f));
-        g.drawText (name(), r, juce::Justification::centred, false);
+        g.setColour (look::txtTertiary);
+        g.setFont (look::label (12.0f));
+        g.drawText (name(), r, juce::Justification::centred, true);
     }
 
     void paintLive (juce::Graphics&) override {}

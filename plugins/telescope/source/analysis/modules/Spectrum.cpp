@@ -357,6 +357,7 @@ void Spectrum::computeFrame()
         info.rangeDb   = current.rangeDb();
         info.emitted   = emit;
         info.streamPos = samplesSinceReset;   // ver FrameInfo::streamPos
+        info.meanSquareNorm = 1.0 / ((double) size * (double) size * std::max (1.0e-12, npg));   // F4 (T4)
         sink->spectrumFrameComputed (info);
     }
 

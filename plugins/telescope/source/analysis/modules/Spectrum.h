@@ -122,6 +122,12 @@ public:
         // ahora" las haría depender del tamaño del bloque, que es justo lo que el motor evita en todo
         // el resto.
         long long streamPos = 0;
+        // ===== F4 de la 0.2 (T4) · la MEDIA CUADRÁTICA del cuadro, por Parseval con la ventana =====
+        //
+        // (|X₀|² + |X_N/2|² + 2·Σ|X_k|²) · meanSquareNorm = la media cuadrática de las muestras de la ventana,
+        // con 1/(N²·npg) (npg = media de w²). La usa el lado vivo de TONAL BALANCE para saber si un cuadro
+        // pasa la compuerta de −70 LUFS (Reference). Sumarla no cambia ningún número de nadie.
+        double meanSquareNorm = 0.0;
     };
 
     struct FrameSink

@@ -95,6 +95,12 @@ struct VerdictSummary
     int         firstAt      = -1;  // el t0 del primer hallazgo que tiene tiempo; −1 = ninguno lo tiene
     std::string headline;           // la línea ya renderizada; vacía si no se analizó ni un segundo
     std::string headlineEvidence;   // "headline · n/m"
+
+    // ---- F5 de la 0.2 (D-122, append-only) ----
+    // ¿Hubo AUDIO en las filas? Una fila cuenta si su momentary máximo pasa la compuerta absoluta de EBU R128
+    // (Verdict::kAbsGateLufs). Sin ninguna, el informe sale VACÍO: ni hallazgos, ni "dentro de rango", ni
+    // cajas, ni titular, y `seconds` en 0 — sólo el pie. Ver Verdict::evaluate.
+    bool heard = false;
 };
 
 struct VerdictReport
@@ -134,6 +140,12 @@ public:
     };
 
     static VerdictReport evaluate (const Inputs& in);
+
+    // F5 de la 0.2 (D-122): la compuerta con la que VERDICT decide si hubo audio. Es la absoluta de EBU R128
+    // (−70 LUFS, la del integrado), aplicada al momentary máximo de cada fila; justo en −70 no pasa. La usan
+    // el motor (en vivo y por archivo: es el mismo evaluate) y la lente, para la línea de estado.
+    static constexpr float kAbsGateLufs = -70.0f;
+    static bool heardAudio (const SecondRow* rows, int n) noexcept;
 
     // Expuestas para el test y para la lente (que muestra el pie y los rótulos con el mismo idioma).
     static std::string translate (const char* key, const char* language);

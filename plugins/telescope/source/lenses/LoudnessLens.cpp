@@ -10,7 +10,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 constexpr float kSmoothing = 0.25f;      // por frame; con reduced-motion se salta
 constexpr float kNoReading = -100.0f;    // por debajo de esto no hay medición que mostrar
@@ -111,7 +111,7 @@ void LoudnessLens::renderStatic (juce::Graphics& g, int width, int height)
     // por ser la primera (i == 0), no por `v == kScaleTop` — comparar floats con == es exactamente el
     // tipo de igualdad que deja de ser cierta cuando alguien cambia el paso a 6.5 (-Wfloat-equal, nit del
     // revisor del 49).
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     const int marks = (int) ((kScaleTop - kScaleBottom) / kScaleStep);
     for (int i = 0; i <= marks; ++i)
     {
@@ -119,9 +119,9 @@ void LoudnessLens::renderStatic (juce::Graphics& g, int width, int height)
         const float t = toScale01 (v);
         const int   y = scaleCol.getBottom() - juce::roundToInt (t * (float) scaleCol.getHeight());
 
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (juce::String ((int) v), scaleCol.getX(), y - 6, labelW - 6, 12,
-                    juce::Justification::centredRight, false);
+                    juce::Justification::centredRight, true);
 
         g.setColour (i == 0 ? th::line : th::lineSoft);
         look::fillSnapped (g, { (float) (meters.getX()), (float) (y), (float) (meters.getWidth()), 1.0f });
@@ -148,50 +148,50 @@ void LoudnessLens::renderStatic (juce::Graphics& g, int width, int height)
         g.setColour (th::lineSoft);
         g.drawRect (r, 1);
 
-        g.setColour (hue.withAlpha (0.75f));
-        g.setFont (ovni::ui::fonts::label (cols.labelFontSize));
+        g.setColour (hue);   // F2: al 75 % daba 2.8:1 nominal en el tema claro
+        g.setFont (look::label (cols.labelFontSize));
         g.drawText (tr (barNames[i]), r.getX(), cols.names.getY(), r.getWidth(), cols.names.getHeight(),
-                    juce::Justification::centred, false);
+                    juce::Justification::centred, true);
     }
 
     // La unidad, UNA vez por par: repetirla cuatro veces es ruido.
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (juce::jmax (8.0f, cols.labelFontSize - 1.5f)));
+    g.setFont (look::label (juce::jmax (8.0f, cols.labelFontSize - 1.5f)));
     const auto lufsSpan = cols.bar[0].getUnion (cols.bar[1]);
     const auto tpSpan   = cols.bar[2].getUnion (cols.bar[3]);
     g.drawText ("LUFS", lufsSpan.getX(), cols.units.getY(), lufsSpan.getWidth(), cols.units.getHeight(),
-                juce::Justification::centred, false);
+                juce::Justification::centred, true);
     g.drawText ("dBTP", tpSpan.getX(), cols.units.getY(), tpSpan.getWidth(), cols.units.getHeight(),
-                juce::Justification::centred, false);
+                juce::Justification::centred, true);
 
     // ---- grilla de la historia: líneas cada 6 LU y marcas de minuto ----
     auto hist = zones.history.reduced (th::padIn / 2);
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     for (float v = kScaleTop; v >= kScaleBottom; v -= kScaleStep * 2.0f)
     {
         const int y = hist.getBottom() - juce::roundToInt (toScale01 (v) * (float) hist.getHeight());
         g.setColour (th::lineSoft);
         look::fillSnapped (g, { (float) (hist.getX()), (float) (y), (float) (hist.getWidth()), 1.0f });
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (juce::String ((int) v), hist.getRight() - 26, y - 6, 24, 12,
-                    juce::Justification::centredRight, false);
+                    juce::Justification::centredRight, true);
     }
     for (int min = 1; min <= 3; ++min)
     {
         const int x = hist.getRight() - juce::roundToInt ((float) min / 3.0f * (float) hist.getWidth());
         g.setColour (th::lineSoft);
         look::fillSnapped (g, { (float) (x), (float) (hist.getY()), 1.0f, (float) (hist.getHeight()) });
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         // Al PIE del gráfico: arriba chocaban con el título de la sección.
         g.drawText ("-" + juce::String (min) + " min", x + 4, hist.getBottom() - 13, 48, 12,
-                    juce::Justification::left, false);
+                    juce::Justification::left, true);
     }
 
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
+    g.setFont (look::label (10.0f));
     g.drawText (tr (strings::Key::shortTerm) + juce::String::fromUTF8 (" \xc2\xb7 ")
                     + tr (strings::Key::lastMinutes3),
-                hist.getX(), hist.getY() + 2, hist.getWidth(), 14, juce::Justification::left, false);
+                hist.getX(), hist.getY() + 2, hist.getWidth(), 14, juce::Justification::left, true);
 }
 
 //======================================================================================== capa viva
@@ -221,12 +221,12 @@ void LoudnessLens::paintLive (juce::Graphics& g)
 
     // 3) el objetivo de plataforma con su delta: el diferencial de la lente, no una nota al pie.
     auto tcol = head;
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText (tr (strings::Key::target), tcol.getX(), tcol.getY(), tcol.getWidth(), 12, juce::Justification::left, false);
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (10.0f));
+    g.drawText (tr (strings::Key::target), tcol.getX(), tcol.getY(), tcol.getWidth(), 12, juce::Justification::left, true);
 
     g.setColour (hue);
-    g.setFont (ovni::ui::fonts::body (15.0f));
+    g.setFont (look::body (15.0f));
     g.drawFittedText (targetLine(), tcol.getX(), tcol.getY() + 16, tcol.getWidth(),
                       tcol.getHeight() - 20, juce::Justification::topLeft, 3);
 
@@ -323,14 +323,14 @@ void LoudnessLens::paintLive (juce::Graphics& g)
         g.setColour (th::bg0.withAlpha (0.85f));
         g.fillRoundedRectangle (box.toFloat(), 2.0f);
         g.setColour (th::amber);
-        g.drawText (tag, box, juce::Justification::centred, false);
+        g.drawText (tag, box, juce::Justification::centred, true);
     }
 
     // ---------------- pie: lectura fina + botones ----------------
     auto foot = zones.footer.reduced (th::padIn / 2, 0);
     auto readouts = foot.withTrimmedRight (foot.getWidth() * 2 / 5);   // las celdas no se pisan
 
-    g.setFont (ovni::ui::fonts::mono (10.0f));
+    g.setFont (look::mono (10.0f));
     const juce::String cells[] = {
         "LRA "     + fmtLu (latest.lra) + " LU",
         "TP MAX "  + fmt1 (latest.truePeakMax) + " dBTP",
@@ -342,7 +342,7 @@ void LoudnessLens::paintLive (juce::Graphics& g)
     {
         g.setColour (th::mut);
         g.drawText (cells[i], readouts.getX() + i * cellW, readouts.getY(), cellW, readouts.getHeight(),
-                    juce::Justification::centredLeft, false);
+                    juce::Justification::centredLeft, true);
     }
 
     paintButton (g, zones.resetBtn, tr (strings::Key::reset), false, hovered == 0);
@@ -353,33 +353,33 @@ void LoudnessLens::paintLive (juce::Graphics& g)
     if (dropped > 0)
     {
         g.setColour (th::amber);
-        g.setFont (ovni::ui::fonts::label (10.0f));
+        g.setFont (look::label (10.0f));
         g.drawText (juce::String::fromUTF8 ("\xe2\x9a\xa0 ") + tr (strings::Key::analysisBehind),
-                    zones.footer.getX(), zones.footer.getY() - 14, 200, 12, juce::Justification::left, false);
+                    zones.footer.getX(), zones.footer.getY() - 14, 200, 12, juce::Justification::left, true);
     }
 }
 
 void LoudnessLens::paintReadout (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& label,
                                  float value, const juce::String& unit, float heroSize, bool valid) const
 {
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText (label, area.getX(), area.getY(), area.getWidth(), 12, juce::Justification::left, false);
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (10.0f));
+    g.drawText (label, area.getX(), area.getY(), area.getWidth(), 12, juce::Justification::left, true);
 
     // 57c — `valid` decide el ESTILO, no si hay número: un valor parcial es una medición honesta de menos
     // audio, y esconderlo detrás de "--.-" durante tres segundos es lo que Joaquín llamó "el retraso al
     // cargar el medidor". Sólo se escribe "--.-" cuando de verdad no hay nada que leer.
     const auto text = hasReading (value) ? fmt1 (value) : juce::String ("--.-");
     g.setColour (valid ? th::txt : th::mut);
-    g.setFont (ovni::ui::fonts::mono (heroSize));
+    g.setFont (look::mono (heroSize));
     const int textY = area.getY() + 14;
     const int textH = juce::roundToInt (heroSize * 1.2f);
     const auto textW = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text)) + 4;
-    g.drawText (text, area.getX(), textY, textW, textH, juce::Justification::left, false);
+    g.drawText (text, area.getX(), textY, textW, textH, juce::Justification::left, true);
 
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (juce::jmax (9.0f, heroSize * 0.28f)));
-    g.drawText (unit, area.getX() + textW + 6, textY + textH - 16, 60, 14, juce::Justification::left, false);
+    g.setFont (look::label (juce::jmax (9.0f, heroSize * 0.28f)));
+    g.drawText (unit, area.getX() + textW + 6, textY + textH - 16, 60, 14, juce::Justification::left, true);
 }
 
 void LoudnessLens::paintBar (juce::Graphics& g, juce::Rectangle<int> area, float value, float peakHold,
@@ -481,8 +481,8 @@ void LoudnessLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, co
     }
 
     g.setColour (active ? hue : th::txt);
-    g.setFont (ovni::ui::fonts::label (11.0f));
-    g.drawText (text, area, juce::Justification::centred, false);
+    g.setFont (look::label (11.0f));
+    g.drawText (text, area, juce::Justification::centred, true);
 }
 
 juce::String LoudnessLens::targetLine() const

@@ -1,0 +1,15 @@
+{"id":"f01-entero","file":"f01-noise-48k-stereo.wav"}
+{"id":"f01-tramo","file":"f01-noise-48k-stereo.wav","from_s":2.5,"to_s":12.75}
+{"id":"f01-recorte","file":"f01-noise-48k-stereo.wav","from_s":-1,"to_s":25}
+{"id":"f02-mono","file":"f02-tone1k-44k-mono16.wav"}
+{"id":"f03-96k","file":"f03-tone100-noise-96k-stereo.wav"}
+{"id":"f04-silencio","file":"f04-silence-48k-stereo.wav"}
+{"id":"f05-corto","file":"f05-short300ms-48k-stereo.wav"}
+{"id":"f06-float","file":"f06-over0-float-48k-stereo.wav"}
+{"id":"f07-antifase","file":"f07-antiphase-44k-stereo.wav"}
+{"id":"f08-bajo","file":"f08-quiet-48k-stereo.wav"}
+{"id":"f09-6ch","file":"f09-six-channels-48k.wav"}
+{"id":"f10-entero","file":"f10-dynamic-48k-stereo.wav"}
+{"id":"f10-estribillo","file":"f10-dynamic-48k-stereo.wav","from_s":17.5,"to_s":41.25}
+{"id":"f10-vacio","file":"f10-dynamic-48k-stereo.wav","from_s":30,"to_s":30}
+{"id":"no-existe","file":"f99-no-existe.wav"}

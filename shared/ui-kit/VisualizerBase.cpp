@@ -4,7 +4,8 @@ namespace ovni::ui
 {
 VisualizerBase::VisualizerBase (int fps)
 {
-    startTimerHz (juce::jlimit (1, 120, fps));
+    timerFps = juce::jlimit (1, 120, fps);
+    startTimerHz (timerFps);
 }
 VisualizerBase::~VisualizerBase() { stopTimer(); }
 
@@ -46,7 +47,11 @@ void VisualizerBase::paint (juce::Graphics& g)
 void VisualizerBase::timerCallback()
 {
     if (! isShowing()) return;                  // CPU: no animar con la ventana cerrada
+    if (animationTick()) repaint();
+}
 
+bool VisualizerBase::animationTick()
+{
     // REDUCED MOTION (accesibilidad): si el sistema/usuario pide menos animación, NO animamos. Avanzamos un
     // único frame coherente (estado actual de las macros) y pausamos el repaint → el visualizador queda quieto
     // pero legible, sin movimiento que maree. Reanuda si se reactiva la animación.
@@ -54,14 +59,13 @@ void VisualizerBase::timerCallback()
     {
         const bool wasReduced = reducedMotion;
         reducedMotion = true;
-        if (! wasReduced) { advanceFrame(); repaint(); }   // un frame estático coherente, una sola vez
-        return;
+        if (! wasReduced) { advanceFrame(); return true; }   // un frame estático coherente, una sola vez
+        return false;
     }
     if (reducedMotion) { reducedMotion = false; settleFrames = 0; }   // se reactivó la animación
 
     const bool changed = advanceFrame();
     settleFrames = changed ? 0 : (settleFrames + 1);
-    if (settleFrames > settleHold) return;      // todo quieto y la cola ya colapsó -> sin repaint
-    repaint();
+    return settleFrames <= settleHold;          // todo quieto y la cola ya colapsó -> sin repaint
 }
 }

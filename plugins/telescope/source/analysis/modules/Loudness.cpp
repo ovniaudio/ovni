@@ -199,6 +199,13 @@ void Loudness::finishHop()
         ++current.histogram[(size_t) bin];
         ++current.shortTermHops;
 
+        // F4 (T4): el de la lente, sólo sobre la compuerta absoluta. El mismo bin; lo que cambia es quién entra.
+        if ((double) current.shortTerm > kAbsGate)
+        {
+            ++current.histogramGated[(size_t) bin];
+            ++current.shortTermHopsGated;
+        }
+
         // PSR — TP máximo de los últimos 3 s menos el short-term. Es la lectura "en vivo" de cuánto
         // margen de pico le queda a la mezcla en este momento.
         float tpWindow = kSilenceFloor;

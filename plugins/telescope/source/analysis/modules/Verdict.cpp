@@ -291,6 +291,18 @@ VerdictReport Verdict::evaluate (const Inputs& in)
     const int n = std::max (0, in.n);
     const auto* rows = in.rows;
 
+    // ===== F5 de la 0.2 (D-122): SIN AUDIO NO HAY INFORME =====
+    // Con el transporte parado el host manda ceros y las filas se llenan igual. La F4 ya hacía decir a la lente
+    // «esperando audio», pero el motor seguía evaluando: «3 chequeos dentro de rango · 1 para revisar», un ⚠ de
+    // Celular («el 0 % de la energía está por debajo de 300 Hz») y cinco tildes, todo sacado de ceros. Una regla
+    // que dispara sobre silencio no mide nada: dice algo del silencio. Así que, si ninguna fila pasó la compuerta,
+    // el informe sale vacío (sólo el pie), `seconds` queda en 0 y el resumen sin texto: los segundos de silencio
+    // no se cuentan como analizados. Vale igual para el camino de ARCHIVO, que llega por este mismo evaluate.
+    // Con UNA fila con audio en la ventana, todo sigue como antes (también el silencio que venga después).
+    rep.summary.secondsTotal = n;
+    rep.summary.heard = heardAudio (rows, n);
+    if (! rep.summary.heard) return rep;
+
     // ---- las filas útiles ----
     std::vector<int> spectral, loud;
     spectral.reserve ((size_t) n);
@@ -794,14 +806,25 @@ VerdictReport Verdict::evaluate (const Inputs& in)
         // condición de siempre—; cambia cómo se cuenta. Bandas CONTIGUAS (índices consecutivos de ⅓ de
         // octava) cuyos tramos [t0, t1) se SOLAPAN son un solo hueco, y la frase sale con la banda más honda,
         // su caída y su tramo, más el rango de bandas que abarca (`values` = caída, banda baja, banda alta,
-        // segundos). La cadena se arma de a pares, cada banda contra la anterior: dos pozos en bandas vecinas
-        // pero en momentos que no se tocan siguen siendo dos frases.
+        // segundos). Dos pozos en bandas vecinas pero en momentos que no se tocan siguen siendo dos frases.
+        //
+        // F4 de la 0.2 (T9, el MEDIUM del revisor del 57d): LA CADENA NO ES TRANSITIVA. Hasta acá se armaba de a
+        // pares —cada banda contra la anterior—, así que con A que se solapa con B y B con C, pero A y C sin un solo
+        // segundo en común, las tres salían como UN pozo con la ventana de las tres: más ancho que cualquier
+        // caída real. Ahora una banda entra al grupo sólo si comparte un momento con TODAS las que ya están (la
+        // intersección de sus tramos no queda vacía): un pozo es una caída al mismo tiempo. La ventana que se
+        // informa sigue siendo la unión (ver abajo).
         for (size_t i = 0; i < holes.size(); )
         {
             size_t j = i + 1;
+            int commonT0 = holes[i].t0, commonT1 = holes[i].t1;   // lo que comparten todas las del grupo
             while (j < holes.size() && holes[j].band == holes[j - 1].band + 1
-                   && holes[j].t0 < holes[j - 1].t1 && holes[j - 1].t0 < holes[j].t1)
+                   && std::max (commonT0, holes[j].t0) < std::min (commonT1, holes[j].t1))
+            {
+                commonT0 = std::max (commonT0, holes[j].t0);
+                commonT1 = std::min (commonT1, holes[j].t1);
                 ++j;
+            }
 
             size_t deepest = i;
             int spanT0 = holes[i].t0, spanT1 = holes[i].t1;
@@ -1189,5 +1212,13 @@ VerdictReport Verdict::evaluate (const Inputs& in)
     }
 
     return rep;
+}
+
+bool Verdict::heardAudio (const SecondRow* rows, int n) noexcept
+{
+    if (rows == nullptr) return false;
+    for (int i = 0; i < n; ++i)
+        if (rows[i].hasLoudness() && rows[i].momentaryMax > kAbsGateLufs) return true;
+    return false;
 }
 }

@@ -118,6 +118,9 @@ private:
     // Estado del último frame leído (no se copia el SpectrumFrame entero: son 260 KB).
     juce::uint32 lastFrameIndex = 0xffffffffu;
     int          fftSizeSeen = 0, numBinsSeen = 0, channelSeen = 0;
+    int          lastSmoothIdx = -1;   // ver advanceFrame: los ajustes que cambian el dibujo
+    bool visiblyMoved (float now, float before) const noexcept;   // el piso de silencio (ver el .cpp)
+    std::vector<float> holdBefore[SpectrumFrame::kMaxSpectra];   // el hold del cuadro anterior (¿se movió?)
     double       srSeen = 48000.0;
 
     // Una entrada por COLUMNA DE PÍXEL del plot (ver el encabezado).

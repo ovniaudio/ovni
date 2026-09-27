@@ -13,14 +13,27 @@ juce::PropertiesFile& PluginEditorBase::uiSettings()
             o.filenameSuffix      = "settings";       // -> ~/Library/Application Support/OVNI/OVNI.settings
             o.folderName          = "OVNI";
             o.osxLibrarySubFolder = "Application Support";
+            o.processLock         = &settingsProcessLock();   // D-100: el lock entre procesos de JUCE
             return o;
         }());
     return file;
 }
 
+// El lock ENTRE PROCESOS de OVNI.settings (D-100, EYEPIECE-PLUGINS-PROPIOS §2quater punto 4). El archivo lo
+// comparten los plugins del sello, TELESCOPE y EYEPIECE: cada uno escribe sólo su clave, relee justo antes
+// de escribir y escribe con este lock. El nombre es el contrato: el que use otro nombre no se entera.
+juce::InterProcessLock& PluginEditorBase::settingsProcessLock()
+{
+    static juce::InterProcessLock lock ("OVNI.settings");
+    return lock;
+}
+
 PluginEditorBase::PluginEditorBase (PluginProcessorBase& p, juce::String desig)
     : juce::AudioProcessorEditor (&p), processor (p), designation (std::move (desig))
 {
+    // El editor pinta TODO su rectángulo (paint: fillAll con bg0 opaco; encima, el canvas): se declara
+    // opaco para que el host no tenga que pintar lo que queda debajo en cada repaint.
+    setOpaque (true);
     addAndMakeVisible (content);
     processor.presets().addChangeListener (this);   // refrescar el nombre cuando cambia el preset
     // NOTA: el plugin concreto llama setBaseSize(...) en SU constructor (corre después de éste).
@@ -74,13 +87,8 @@ void PluginEditorBase::applyZoom (Zoom z)
         const auto& displays = juce::Desktop::getInstance().getDisplays();
         const auto* disp = displays.getDisplayForRect (getScreenBounds());
         if (disp == nullptr) disp = displays.getPrimaryDisplay();
-        if (disp != nullptr && baseW > 0 && baseH > 0)
-        {
-            const auto ua = disp->userArea;
-            const float maxF = juce::jmin (((float) ua.getWidth()  - 24.0f) / (float) baseW,
-                                           ((float) ua.getHeight() - 64.0f) / (float) baseH);
-            f = juce::jlimit (0.5f, juce::jmax (0.5f, maxF), f);
-        }
+        if (disp != nullptr)
+            f = fitZoomToArea (f, disp->userArea, baseW, baseH);
     }
 
     content.setTransform (juce::AffineTransform::scale (f));
@@ -88,11 +96,28 @@ void PluginEditorBase::applyZoom (Zoom z)
     repaint();
 }
 
+// La cuenta del clamp, sin la pantalla: pura, para poder probarla con la pantalla de otro (TELESCOPE 0.2 F2:
+// un usuario, Windows al 125 % en 1680 × 1050 = 1344 × 840 puntos). Margen para la barra de título y el chrome
+// del host: 24 de ancho, 64 de alto. Nunca por debajo de 0.5.
+float PluginEditorBase::fitZoomToArea (float wanted, juce::Rectangle<int> userArea, int baseW, int baseH) noexcept
+{
+    if (baseW <= 0 || baseH <= 0) return wanted;
+    const float maxF = juce::jmin (((float) userArea.getWidth()  - 24.0f) / (float) baseW,
+                                   ((float) userArea.getHeight() - 64.0f) / (float) baseH);
+    return juce::jlimit (0.5f, juce::jmax (0.5f, maxF), wanted);
+}
+
 void PluginEditorBase::setZoom (Zoom z)
 {
     applyZoom (z);
-    uiSettings().setValue ("uiZoom", (int) z);
-    uiSettings().saveIfNeeded();
+    // Relee ANTES de escribir, con el lock tomado (D-100). `uiSettings()` es una copia cargada al abrir la
+    // primera ventana: guardarla tal cual borraba toda clave que otro producto —u otra ventana— hubiera
+    // escrito después (el tema de TELESCOPE, el «no mostrar más» de EYEPIECE).
+    const juce::InterProcessLock::ScopedLockType lock (settingsProcessLock());
+    auto& s = uiSettings();
+    s.reload();
+    s.setValue ("uiZoom", (int) z);
+    s.saveIfNeeded();
 }
 
 void PluginEditorBase::resized()
@@ -106,7 +131,7 @@ void PluginEditorBase::resized()
 
 void PluginEditorBase::paint (juce::Graphics& g)
 {
-    g.fillAll (ui::theme::bg0);   // respaldo bajo el canvas (cubre cualquier borde por redondeo)
+    g.fillAll (frameInk.base);   // respaldo bajo el canvas (cubre cualquier borde por redondeo)
 }
 
 //==================================================================================================
@@ -147,11 +172,17 @@ void PluginEditorBase::paintCanvas (juce::Graphics& g)
 {
     // Fondo atmósfera — horneado a resolución FÍSICA (nítido en Retina); el Panel cachea internamente.
     // El Panel respeta el COLOR de familia (mockup #plugin::before): cian/magenta/verde saturado.
-    g.fillAll (ui::theme::bg0);
+    g.fillAll (frameInk.base);
     panel.setHue (familyHue);
     const float scale = (float) g.getInternalContext().getPhysicalPixelScaleFactor();
-    panel.render (canvasW(), canvasH(), scale);   // nitidez: el scale acumula host DPI × zoom
-    panel.paint (g);
+    // Rehornear SÓLO si cambió el tamaño, la escala o el hue (Panel.h). Sin la guarda, cada repaint de un
+    // hijo no opaco (la lente de TELESCOPE, 30 por segundo) rehacía el fondo entero en el hilo del host.
+    if (frameInk.atmosphere)   // FrameInk: un plugin puede pedir la base lisa (el tema claro de TELESCOPE)
+    {
+        if (panel.needsRender (canvasW(), canvasH(), scale))
+            panel.render (canvasW(), canvasH(), scale);   // nitidez: el scale acumula host DPI × zoom
+        panel.paint (g);
+    }
 
     paintHeader (g);
     paintBody (g);    // PLUGIN
@@ -165,13 +196,13 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
     // ===== superficie del header (mockup): sheen superior + hairline inferior =====
     {
         auto hr = headerArea.toFloat();
-        juce::ColourGradient sheen (juce::Colour (0x0ba0c0e0), 0.0f, hr.getY(),
-                                    juce::Colour (0x00a0c0e0), 0.0f, hr.getY() + hr.getHeight() * 0.8f, false);
+        juce::ColourGradient sheen (frameInk.sheen, 0.0f, hr.getY(),
+                                    frameInk.sheen.withAlpha ((juce::uint8) 0), 0.0f, hr.getY() + hr.getHeight() * 0.8f, false);
         g.setGradientFill (sheen);
         g.fillRect (hr);
-        g.setColour (juce::Colour (0x0fbee1ff));
+        g.setColour (frameInk.topLine);
         g.fillRect (hr.getX(), hr.getY(), hr.getWidth(), 1.0f);          // inner-top sheen
-        g.setColour (theme::lineSoft);
+        g.setColour (frameInk.lineSoft);
         g.fillRect (hr.getX(), hr.getBottom() - 1.0f, hr.getWidth(), 1.0f);   // hairline inferior
     }
 
@@ -180,7 +211,7 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
     const auto bcol = bypassed ? theme::red : familyHue;
     {
         auto byp = bypassZone.toFloat();
-        g.setColour (theme::lineSoft);
+        g.setColour (frameInk.lineSoft);
         g.drawRoundedRectangle (byp, 3.0f, 1.0f);
         if (! bypassed)
         {
@@ -207,11 +238,11 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
 
     // ===== marca: OVNI · NOMBRE (cian, glow) · designación (badge mono) =====
     auto h = headerArea.reduced (12, 0).withTrimmedLeft (bypassZone.getRight() - 12 + 4);
-    g.setColour (theme::lineSoft);
+    g.setColour (frameInk.lineSoft);
     g.fillRect (h.getX() + 8, h.getCentreY() - 10, 1, 20);               // hsep
     int tx = h.getX() + 21;
 
-    g.setColour (theme::txt);
+    g.setColour (frameInk.txt);
     g.setFont (fonts::display (17.0f).withExtraKerningFactor (0.30f));
     g.drawText ("OVNI", tx, h.getY(), 76, h.getHeight(), juce::Justification::centredLeft);
     tx += 86;
@@ -224,8 +255,9 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
         // glow del nombre (mockup: text-shadow del hue de familia) — 4 pasadas tenues + sólida encima
         const juce::Point<int> offs[] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } };
         g.setColour (familyHue.withAlpha (0.20f));
-        for (const auto& off : offs)
-            g.drawText (pluginName, tx + off.x, h.getY() + off.y, nw, h.getHeight(), juce::Justification::centredLeft);
+        if (frameInk.nameGlow)
+            for (const auto& off : offs)
+                g.drawText (pluginName, tx + off.x, h.getY() + off.y, nw, h.getHeight(), juce::Justification::centredLeft);
         g.setColour (familyHue);
         g.drawText (pluginName, tx, h.getY(), nw, h.getHeight(), juce::Justification::centredLeft);
         tx += 13 + 11 * pluginName.length();
@@ -235,9 +267,9 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
         g.setFont (fonts::mono (9.0f).withExtraKerningFactor (0.12f));
         const int bw = 18 + 7 * designation.length();
         auto badge = juce::Rectangle<int> (tx, h.getCentreY() - 9, bw, 17);
-        g.setColour (theme::lineSoft);
+        g.setColour (frameInk.lineSoft);
         g.drawRoundedRectangle (badge.toFloat(), 2.0f, 1.0f);
-        g.setColour (theme::fnt);
+        g.setColour (frameInk.fnt);
         g.drawText (designation, badge, juce::Justification::centred);
     }
 
@@ -245,32 +277,32 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
 
     // ‹ nombre › (sin caja: cluster limpio como el mockup)
     {
-        g.setColour (theme::mut);
+        g.setColour (frameInk.mut);
         g.setFont (fonts::mono (13.0f));
         g.drawText (juce::String::fromUTF8 ("\xe2\x80\xb9"), presetPrevZone, juce::Justification::centred);
         g.drawText (juce::String::fromUTF8 ("\xe2\x80\xba"), presetNextZone, juce::Justification::centred);
         const auto pcur = processor.presets().current();
         juce::String pname = pcur.name.isEmpty() ? juce::String ("Init") : pcur.name;
         if (pcur.modified) pname += juce::String::fromUTF8 (" *");   // marca de modificado
-        g.setColour (theme::txt);
+        g.setColour (frameInk.txt);
         g.setFont (fonts::label (12.0f));
         g.drawText (pname, presetNameZone, juce::Justification::centred);
     }
 
     // SAVE
-    g.setColour (theme::mut);
+    g.setColour (frameInk.mut);
     g.setFont (fonts::mono (10.0f).withExtraKerningFactor (0.10f));
     g.drawText ("SAVE", presetSaveZone, juce::Justification::centred);
 
     // separadores verticales entre clusters
-    g.setColour (theme::lineSoft);
+    g.setColour (frameInk.lineSoft);
     for (const int sx : { presetSaveZone.getX() - 7, presetAbZone.getX() - 7, zoomSZone.getX() - 7 })
         g.fillRect (sx, headerArea.getCentreY() - 10, 1, 20);
 
     // A/B: grupo borde hairline, slot activo RELLENO cian con texto oscuro (mockup #ab .on)
     {
         auto ab = presetAbZone;
-        g.setColour (theme::lineSoft);
+        g.setColour (frameInk.lineSoft);
         g.drawRoundedRectangle (ab.toFloat(), 3.0f, 1.0f);
         const bool onA = processor.ab().activeSlot() == 'A';
         auto aCell = ab.removeFromLeft (ab.getWidth() / 2);
@@ -278,16 +310,16 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
         g.setFont (fonts::mono (10.0f));
         if (onA) { g.setColour (familyHue); g.fillRoundedRectangle (aCell.toFloat().reduced (1.0f), 2.0f); }
         else     { g.setColour (familyHue); g.fillRoundedRectangle (bCell.toFloat().reduced (1.0f), 2.0f); }
-        g.setColour (onA ? juce::Colour (0xff031014) : theme::mut);
+        g.setColour (onA ? frameInk.onHue : frameInk.mut);
         g.drawText ("A", aCell, juce::Justification::centred);
-        g.setColour (onA ? theme::mut : juce::Colour (0xff031014));
+        g.setColour (onA ? frameInk.mut : frameInk.onHue);
         g.drawText ("B", bCell, juce::Justification::centred);
     }
 
     // selector de tamaño S·M·L (grupo hairline; activo = cian sobre tinte)
     {
         auto grp = zoomSZone.getUnion (zoomLZone);
-        g.setColour (theme::lineSoft);
+        g.setColour (frameInk.lineSoft);
         g.drawRoundedRectangle (grp.toFloat(), 3.0f, 1.0f);
         g.fillRect (zoomMZone.getX(), grp.getY() + 5, 1, grp.getHeight() - 10);
         g.fillRect (zoomLZone.getX(), grp.getY() + 5, 1, grp.getHeight() - 10);
@@ -303,7 +335,7 @@ void PluginEditorBase::paintHeader (juce::Graphics& g)
                 g.setColour (familyHue.withAlpha (0.10f));
                 g.fillRect (zones[i].reduced (1));
             }
-            g.setColour (zoom == zs[i] ? familyHue : theme::mut);
+            g.setColour (zoom == zs[i] ? familyHue : frameInk.mut);
             g.drawText (lbls[i], zones[i], juce::Justification::centred);
         }
     }
@@ -315,10 +347,10 @@ void PluginEditorBase::paintBezel (juce::Graphics& g)
 {
     if (flexible) return;   // app full-bleed: sin marco de instrumento (el visual Metal llena la ventana)
     const auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) baseW, (float) baseH).reduced (4.0f);
-    g.setColour (juce::Colour (0x0ea0c0e0));                 // hairline tenue (alpha ~0.055)
+    g.setColour (frameInk.bezel);                 // hairline tenue (alpha ~0.055)
     g.drawRoundedRectangle (r, 3.0f, 1.0f);
 
-    const juce::Colour bk (0x3396bee1);                      // brackets rgba(150,190,225,0.20)
+    const juce::Colour bk = frameInk.brackets;                      // brackets rgba(150,190,225,0.20)
     g.setColour (bk);
     const float L = 11.0f;
     // top-left · top-right · bottom-left · bottom-right

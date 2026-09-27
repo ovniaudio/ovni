@@ -1,6 +1,7 @@
 #include "lenses/FieldLens.h"
 #include "PluginProcessor.h"
 #include "lenses/LensReadout.h"
+#include "lenses/Look.h"
 #include "ui-kit/Fonts.h"
 #include "ui-kit/Theme.h"
 #include <algorithm>
@@ -11,7 +12,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 // Las octavas "redondas" que rotula el eje de frecuencia. Todas caen dentro de 20 Hz – 20 kHz.
 constexpr double kOctavesHz[] = { 31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0 };
@@ -788,7 +789,7 @@ void FieldLens::blitRelief (const juce::Image::BitmapData& bd, juce::Rectangle<f
     // sube más de lo que `k` predice, y sin margen eso es un test que falla por el sistema operativo.
     //
     // A escala 1 no se hace: ahí no sobra nada.
-    const int colStep = coarse ? 2 : 1;
+    const int colStep = look::coarseColumns (coarse) ? 2 : 1;   // M-3: el runner puede forzar el fino
     const int nCols = x1 - x0 + 1;
     const int nRes  = (nCols + colStep - 1) / colStep;   // columnas RESUELTAS (las de la pasada 1)
 
@@ -1039,7 +1040,7 @@ void FieldLens::drawStage (juce::Graphics& g) const
     g.drawLine (ftr.x, ftr.y, btr.x, btr.y, 1.0f);
 
     // El plano de ADELANTE es el que se lee: va más marcado que el resto de la caja.
-    g.setColour (ovni::ui::theme::line);
+    g.setColour (th::line);
     g.drawLine (fl.x,  fl.y,  fr.x,  fr.y,  1.0f);
     g.drawLine (ftl.x, ftl.y, ftr.x, ftr.y, 1.0f);
     g.drawLine (ftl.x, ftl.y, fl.x,  fl.y,  1.0f);
@@ -1047,7 +1048,7 @@ void FieldLens::drawStage (juce::Graphics& g) const
 
     // La vertical del CENTRO (pan = 0): la referencia con la que se lee todo lo demás.
     const auto c0 = proj.project (0.5f, 0.0f, 0.0f), c1 = proj.project (0.5f, 1.0f, 0.0f);
-    g.setColour (ovni::ui::theme::lineSoft);
+    g.setColour (th::lineSoft);
     g.drawLine (c0.x, c0.y, c1.x, c1.y, 1.0f);
 }
 
@@ -1056,9 +1057,10 @@ void FieldLens::renderStatic (juce::Graphics& g, int width, int height)
 {
     zones = zonesFor (width, height);
     proj  = projectionFor (zones);
+    look::drawScreenEdge (g, zones.plot);   // D-109: en claro, la pantalla lleva su filo oscuro
 
     // ---- eje de FRECUENCIA (log, por octavas), en el plano de adelante ----
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     for (const double hz : kOctavesHz)
     {
         const double t = std::log10 (hz / FieldFrame::kMinHz) / FieldFrame::kDecades;
@@ -1069,20 +1071,20 @@ void FieldLens::renderStatic (juce::Graphics& g, int width, int height)
         const int  y = juce::roundToInt (p.y);
         g.setColour (th::line);
         look::fillSnapped (g, { (float) (zones.freqAxis.getRight() - 5), (float) (y), (float) (5), 1.0f });
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (shortHz (hz), zones.freqAxis.getX(), y - 6, kAxisW - 8, 12,
-                    juce::Justification::centredRight, false);
+                    juce::Justification::centredRight, true);
     }
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
+    g.setFont (look::label (10.0f));
     g.drawText ("Hz", zones.freqAxis.getX(), zones.plot.getY() + 2, kAxisW - 8, 12,
-                juce::Justification::centredRight, false);
+                juce::Justification::centredRight, true);
 
     // ---- eje de DIRECCIÓN: L … C … R, con ticks en ±0.5 y NUNCA grados (ver el encabezado) ----
     const struct { float pan; const char* label; } marks[] = {
         { -1.0f, "L" }, { -0.5f, nullptr }, { 0.0f, "C" }, { 0.5f, nullptr }, { 1.0f, "R" }
     };
-    g.setFont (ovni::ui::fonts::mono (10.0f));
+    g.setFont (look::mono (10.0f));
     for (const auto& m : marks)
     {
         const auto p = proj.project ((m.pan + 1.0f) * 0.5f, 0.0f, 0.0f);
@@ -1091,16 +1093,16 @@ void FieldLens::renderStatic (juce::Graphics& g, int width, int height)
         look::fillSnapped (g, { (float) (x), (float) (zones.dirAxis.getY()), 1.0f, (float) (m.label != nullptr ? 5 : 3) });
         if (m.label == nullptr) continue;
         g.setColour (th::mut);
-        g.drawText (m.label, x - 20, zones.dirAxis.getY() + 4, 40, 12, juce::Justification::centred, false);
+        g.drawText (m.label, x - 20, zones.dirAxis.getY() + 4, 40, 12, juce::Justification::centred, true);
     }
 
     // EL RÓTULO FIJO. Va debajo del eje que califica —que es donde alguien busca qué significa el eje— y
     // no se puede apagar. Ver la nota de honestidad del encabezado.
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.0f));
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (9.0f));
     g.drawText (honestyLabel(),
                 zones.dirAxis.getX(), zones.dirAxis.getBottom() - 12, zones.dirAxis.getWidth(), 12,
-                juce::Justification::centred, false);
+                juce::Justification::centred, true);
 }
 
 //======================================================================================== capa viva
@@ -1112,12 +1114,19 @@ void FieldLens::paintLive (juce::Graphics& g)
     // en el plano LÓGICO: sólo la superficie es de píxeles.
     cache.prepare (look::physicalScale (g), zones.plot.getWidth(), zones.plot.getHeight());
 
-    updateImage();
-    cache.blit (g, zones.plot.getX(), zones.plot.getY());
-    drawStage (g);   // encima de la imagen: ver el comentario de drawStage
+    // D-109 — la superficie, la caja de alambre y la lectura son de la PANTALLA: tinta oscura en los dos
+    // temas (Look.h, ScreenInk). Con la del claro, el fondo de la superficie era el papel y la energía, que
+    // se mezcla con él, salía pálida. Los ejes de afuera, los botones y el estado del pie van con el tema.
+    {
+        const look::ScreenInk screen;
+        updateImage();
+        cache.blit (g, zones.plot.getX(), zones.plot.getY());
+        drawStage (g);   // encima de la imagen: ver el comentario de drawStage
+    }
 
     if (cursor.x >= 0)
     {
+        const look::ScreenInk screen;
         const auto r = readoutAt (cursor);
         if (r.valid)
         {
@@ -1127,7 +1136,7 @@ void FieldLens::paintLive (juce::Graphics& g)
             const juce::String side = r.panPercent < -0.5 ? "L" : (r.panPercent > 0.5 ? "R" : "C");
             const juce::String text = side + " " + juce::String (std::abs (r.panPercent), 0) + " %  \xc2\xb7  "
                                     + shortHz (r.freqHz) + " Hz  \xc2\xb7  " + juce::String (r.db, 1) + " dB rel";
-            g.setFont (ovni::ui::fonts::mono (11.0f));
+            g.setFont (look::mono (11.0f));
             const int tw = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text)) + 16;
             const auto box = readoutBoxFor (zones.plot, cursor.x, tw);
             g.setColour (th::bg1.withAlpha (0.9f));
@@ -1135,7 +1144,7 @@ void FieldLens::paintLive (juce::Graphics& g)
             g.setColour (th::green.withAlpha (0.4f));
             g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 3.0f, 1.0f);
             g.setColour (th::txt);
-            g.drawText (text, box, juce::Justification::centred, false);
+            g.drawText (text, box, juce::Justification::centred, true);
         }
     }
 
@@ -1148,15 +1157,15 @@ void FieldLens::paintLive (juce::Graphics& g)
 
     // El estado del dibujo, chico y al costado: cuántos puntos entraron del tope y cuántas láminas de
     // estela hay. Sin esto, "se ven pocos puntos" no se distingue de "hay poca señal".
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setColour (look::txtTertiary);
+    g.setFont (look::mono (9.0f));
     // 56: ya no se cuentan PUNTOS (no hay). Se dice el tamaño de la superficie y cuántas láminas de
     // historia hay detrás, que es lo que de verdad describe lo que se está mirando.
     g.drawText (juce::String (FieldFrame::kDir) + juce::String::fromUTF8 (" \xc3\x97 ")
                     + juce::String (FieldFrame::kRows) + juce::String::fromUTF8 ("  \xc2\xb7  ")
                     + juce::String (trailLayers) + " " + tr (strings::Key::trails),
                 zones.footer.getRight() - 180, zones.footer.getY(), 178, zones.footer.getHeight(),
-                juce::Justification::centredRight, false);
+                juce::Justification::centredRight, true);
 }
 
 void FieldLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& label,
@@ -1176,12 +1185,8 @@ void FieldLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const
     }
 
     auto inner = area.reduced (8, 0);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.0f));
-    g.drawText (label, inner.removeFromLeft (inner.getWidth() * 3 / 5), juce::Justification::centredLeft, false);
-    g.setColour (hue);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (value, inner, juce::Justification::centredRight, false);
+    look::drawLabelValue (g, inner, label, look::label (9.0f), look::txtTertiary,
+                         value, look::mono (11.0f), hue);
 }
 
 //======================================================================================== animación
@@ -1191,9 +1196,39 @@ bool FieldLens::advanceFrame()
     // repinta: la superficie se dibuja entera cada frame, así que con la tabla nueva ya alcanza.
     if (processor.paletteIndex() != paletteSeen) { buildPalette(); return true; }
 
-    const auto idx = processor.field().read().frameIndex;
-    if (idx == lastFrame) return false;
-    lastFrame = idx;
+    // EL PISO DE SILENCIO: el campo decae exponencial y nunca llega a cero (medido en silencio: la celda más
+    // fuerte bajando de 1.8e-19 a 1.4e-19 por cuadro, unos −190 dB). Por debajo de −120 dB de energía no hay
+    // nada que mostrar que el cuadro anterior no mostrara ya.
+    constexpr float kSilentCell = 1.0e-12f;
+
+    // La normalización del brillo se suaviza EN EL PINTADO (10 % por cuadro): con un cuadro quieto que no es
+    // silencio, el dibujo sigue cambiando hasta que llega a la celda más fuerte. (En silencio no: la celda
+    // sigue decayendo y la normalización no la alcanza nunca — era repintar para siempre.)
+    const bool normSettling = shownMaxCell >= kSilentCell && std::abs (norm - shownMaxCell) > shownMaxCell * 1.0e-3f;
+
+    const auto& f = processor.field().read();
+    if (f.frameIndex == lastFrame) return normSettling;
+    lastFrame = f.frameIndex;
+
+    // Un cuadro nuevo que dibuja lo MISMO que el anterior no es un cambio: con el transporte parado el
+    // motor sigue publicando cuadros de silencio, idénticos, y la lente —que redibuja la superficie
+    // entera— repintaba 60 veces por segundo para siempre (prompt 96).
+    if (f.maxCell < kSilentCell && shownMaxCell >= 0.0f && shownMaxCell < kSilentCell) return false;
+
+    constexpr size_t kGridCells  = (size_t) FieldFrame::kRows * FieldFrame::kDir;
+    constexpr size_t kTrailCells = (size_t) FieldFrame::kTrail * FieldFrame::kTrailRows * FieldFrame::kTrailDir;
+    const float* grid  = &f.grid[0][0];
+    const float* trail = &f.trail[0][0][0];
+    const bool same = f.trailCount == shownTrailCount && f.maxCell == shownMaxCell
+                   && shownGrid.size() == kGridCells && shownTrail.size() == kTrailCells
+                   && std::equal (grid, grid + kGridCells, shownGrid.begin())
+                   && std::equal (trail, trail + kTrailCells, shownTrail.begin());
+    if (same) return normSettling;
+
+    shownGrid.assign (grid, grid + kGridCells);
+    shownTrail.assign (trail, trail + kTrailCells);
+    shownMaxCell    = f.maxCell;
+    shownTrailCount = f.trailCount;
     return true;
 }
 

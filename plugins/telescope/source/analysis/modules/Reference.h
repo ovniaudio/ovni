@@ -1,7 +1,9 @@
 #pragma once
 #include <juce_core/juce_core.h>
+#include <vector>
 #include "analysis/FileAnalysis.h"
 #include "analysis/ReferenceFrame.h"
+#include "analysis/modules/KWeighting.h"
 #include "analysis/modules/Spectrum.h"
 
 // ========================================================================================================
@@ -41,7 +43,30 @@ public:
 
     // ---- lado vivo (worker) ----
     void resetLive() noexcept;
-    void spectrumFrameComputed (const Spectrum::FrameInfo& info) override { live.spectrumFrameComputed (info); }
+    // F4 de la 0.2 (T4, D-113): un cuadro bajo la compuerta absoluta (−70 LUFS) NO entra al promedio, así la
+    // curva no se hunde en silencio: queda como estaba. Ver frameLoudnessLufs.
+    void spectrumFrameComputed (const Spectrum::FrameInfo& info) override
+    {
+        if (frameLoudnessLufs (info) <= kAbsGateLufs) { ++gatedFrames; return; }
+        live.spectrumFrameComputed (info);
+    }
+
+    // ---- F4 (T4): LA COMPUERTA DEL CUADRO ----
+    //
+    // La loudness de UN cuadro de la FFT, con la misma cuenta de BS.1770 que el medidor:
+    //     L = −0.691 + 10·log10 (z_L + z_R),   z = media cuadrática del canal K-PONDERADO
+    // La K se aplica en frecuencia (|H_K(f)|² por bin, KWeighting::magnitudeDb) y la media cuadrática sale
+    // por Parseval con la ventana (FrameInfo::meanSquareNorm). En un cuadro de ruido estacionario da lo mismo
+    // que el medidor, dentro de la varianza de la ventana; en el borde entre sonido y silencio, el cuadro
+    // lleva la parte que sonó. El silencio digital da −inf: nunca pasa.
+    //
+    // Es frame-local a propósito: no mira al medidor, que come hops después del chunk, así que la decisión
+    // no depende del tamaño del bloque (REF[bloque] sigue al bit). Sin `meanSquareNorm` (0: un cuadro
+    // fabricado a mano) no hay con qué medir y el cuadro entra, como antes.
+    static constexpr double kAbsGateLufs = -70.0;   // EBU R128, la de Loudness::kAbsGate
+    double frameLoudnessLufs (const Spectrum::FrameInfo& info);
+    // Cuántos cuadros quedaron afuera desde el reset (para los tests y el diagnóstico; no se dibuja).
+    long long gatedOutFrames() const noexcept { return gatedFrames; }
 
     // El integrado del medidor de loudness, tal cual. `valid` es su `integratedValid`: sin integrado no
     // hay normalización posible, y una curva sin normalizar comparada contra una normalizada sería basura.
@@ -77,6 +102,10 @@ private:
     };
 
     ThirdOctaveAverage live;
+    long long          gatedFrames = 0;
+    std::vector<double> kWeight2;      // |H_K(f_k)|² por bin, para la geometría de abajo
+    int                kWeightBins = 0;
+    double             kWeightSr   = 0.0;
     float              liveIntegrated = kSilenceDb;
     bool               liveIntegratedValid = false;
 

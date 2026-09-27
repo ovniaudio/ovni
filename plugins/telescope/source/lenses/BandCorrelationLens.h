@@ -96,7 +96,9 @@ protected:
 private:
     static constexpr double kMinHz = 20.0, kMaxHz = 20000.0;
     static constexpr float  kRelease = 0.35f;   // suavizado de las barras (sin reduced-motion)
-    static constexpr int    kScaleW  = 44;      // canal de etiquetas de escala
+    // Canal de etiquetas de escala. 72 y no 44 desde la F2 de la 0.2: con el piso de 11 px el rótulo de la
+    // fila secundaria («MONO dB», «LARGHEZZA») no entraba y se cortaba — «MONO dB» ya salía «MONO d» antes.
+    static constexpr int    kScaleW  = 72;
     static constexpr int    kAxisH   = 15;      // tira de frecuencias
     static constexpr int    kHeadH   = 22;      // el resumen
 

@@ -7,6 +7,108 @@ La entrada de la versión publicada está **en inglés y en lenguaje de usuario*
 release y desde el sitio). El **diario de construcción** por prompt queda debajo, en castellano, tal como
 se escribió: es la historia de cómo se llegó acá, no la nota de release.
 
+## 0.2.0
+
+TELESCOPE 0.2 comes out on the same day as EYEPIECE, OVNI's free Mac app. It fixes the one serious problem
+0.1.0 had — **an open TELESCOPE window could stall the whole DAW** — and adds what users asked for: a light
+theme, labels you can read, VERDICT at 125 % and 150 %, and a way to choose which part of the reference track
+TONAL BALANCE compares against.
+
+**What a file measures did not change.** Integrated, LRA, true peak, the 30 bands and the per-second history
+come out equal to the bit to 0.1.0: thirteen golden dumps of the engine, generated with the 0.1.0 analysis code
+and compared byte by byte (`[golden]`). Pass-through is still bit-exact, with 0 samples of latency (`[null]`).
+
+Each line says where it comes from: the commit in the development repository (the public tag carries them as
+one snapshot), the decision that ordered it, and the test that checks it.
+
+### Fixed
+
+- **An open TELESCOPE window no longer stalls the DAW.** Two causes, both measured. The editor's background —
+  a full-window image at physical resolution, with gradients and grain — was re-baked on every lens frame,
+  30 times a second: 12–80 ms per frame, and more than a second of the main thread per second at size M on a
+  Retina screen. Now it is baked once. And 11 of the 13 lenses kept repainting 30 times a second while the
+  transport was stopped, drawing the same silence; now a lens repaints only when something visible changes.
+  *Source:* `22082ee`, `9e03962` · decision D-99 · test `[editorbudget]`.
+- **Silence no longer shows up as a measurement.**
+  - DYNAMICS does not pile silence into the bottom bin of the short-term histogram: it counts only short-term
+    values above the EBU R128 absolute gate (−70 LUFS).
+  - The live TONAL BALANCE curve does not sink when the music stops: frames below −70 LUFS stay out of the
+    average.
+  - VERDICT says **"waiting for audio"** while the window being analysed has had no audio above −70 LUFS — and
+    shows nothing else: no checks, no warnings, no device ticks, and the silent seconds are not counted as
+    analysed. With audio in the window everything works as before, including the silence that comes after it.
+    A file with no audio above −70 LUFS gets the same treatment: no rule runs on it, and VERDICT says why.
+  *Source:* `c95c777`, `d4554e2` · decisions D-113, D-122 · tests `[silencio]`, `[f5]`.
+- **At 125 % and 150 % the lens lands on a whole physical pixel.** It used to fall half a pixel off and be
+  resampled on every frame: slightly blurred, and 3–6 ms per frame at M on 125 % against 0.2–2.3 ms for the same
+  lens at the origin. *Source:* `4c068e2`, `43cb8c0` · tests `[editorbudget]`, `[ancla]`.
+- **SCOPE and FIELD no longer flash garbage** for about 0.3 s after the window is resized (the trail cache was
+  allocated without being cleared). *Source:* `74d65a2` · test `[scopetrail]`.
+- **VERDICT's footer has its own row** and no longer overlaps the last line of the list (on Windows it bled
+  into the margin). *Source:* `f59a91a` · test in `VerdictLensTest.cpp`.
+- **VERDICT has its accents back** in Spanish, Portuguese, French, German and Italian ("Medición", "análisis",
+  "Prüfungen"). *Source:* `3104e34`.
+- **Capitals keep their accents in every language.** VERDICT's section titles and SCOPE's column labels were
+  upper-cased with a function that depends on the locale of the host's process, so in some hosts they came
+  out as "CóMO SE VA A SENTIR" or "Où çA SE TRADUIT". Case is now converted with a fixed table: "CÓMO SE VA A
+  SENTIR", "OÙ ÇA SE TRADUIT", the same in any host and on any system. The lower-case readouts get the same
+  fix ("fenêtre", "balanço"). *Source:* `aec9757` · decision D-126 · test `[mayus]`.
+- **The MODE button shows the whole name of the mode.** It showed only its first word: "EN" in Spanish and
+  French, "AO" in Portuguese, "DAL" in Italian. Now it reads "EN VIVO", "EN DIRECT", "AO VIVO", "DAL VIVO", and it
+  fits at every size. *Source:* `c4c6cc3` · decision D-126 · test `[modo]`.
+- **A dip is merged only with bands it overlaps in time.** Merging was transitive: three bands dipping at
+  different moments came out as one finding spanning all of them. *Source:* `88c6253` · test `[verdict]`.
+
+### New
+
+- **A light theme**, chosen in the lens strip (THEME), with dark still the default. It is remembered per user in
+  `~/Library/Application Support/OVNI/OVNI.settings` (TELESCOPE writes only its own key, re-reading the file
+  under an inter-process lock). In the light theme the four data lenses — SPECTROGRAM, WATERFALL, STEREO
+  SPECTROGRAM and FIELD — keep their dark screen and palette, like an instrument display on a light panel, so
+  the data reads the same in both themes. *Source:* `358b727`, `3104e34` · decision D-109 · tests `[tema]`,
+  `[pantalla-datos]`, `[lock]`.
+- **Labels you can read.** Axis numbers, frequencies and scales were mostly 2.3–3.4:1 at 8.5–10 px: 797 of
+  1 275 labels were under 4.5:1. Now 0 of 1 272, in both themes, with an 11 px floor, and the lens names that did
+  not fit go on two lines in all six languages. *Source:* `a697761`, `3104e34` · tests `[contraste]`, `[tira]`.
+- **VERDICT reflows** in all six languages at sizes S, M and L and at 125 % and 150 %, and the window fits a
+  1344 × 840-point screen. *Source:* `005cdf3` · tests `[reacomoda]`, `[pantalla]`.
+- **Choose the part of the reference that TONAL BALANCE compares against.** With a reference loaded, its
+  waveform appears under the lens header: drag to pick a section, double-click to go back to the whole file.
+  A label says which part is in use ("ref · 0:32–1:04"). The section is saved with the session and measured
+  again when you reopen it, in a background thread, with the same function the command-line tool uses.
+  *Source:* `aac7854`, `c4c86f7` · test `[tramo]`.
+- **`telescope-measure`, a command-line tool** in the source (`plugins/telescope/measure/`): it reads JSON
+  Lines — a file, and optionally a section in seconds — and writes one JSON line per request, with the
+  schema in `measure/SCHEMA.md` (units in every field name, `null` with a code when something cannot be
+  measured, the file identified by its name and SHA-256, never by its path). It gives the same bytes on macOS and on
+  Windows. It is **not** in the installer: it is there for anyone who builds from source. `telescope-measure --version` prints the engine version and commit.
+  *Source:* `3d9b078`, `fc39ec8`, `6732627`, `e4664f5`, `88c6253` · decisions D-100, D-106 · tests
+  `[measure]`, `[range]`, `[golden]`.
+- **A card that introduces EYEPIECE — once, on the Mac only.** The first time the editor opens with 0.2, a card
+  inside the editor (not a dialog: it blocks nothing) says what EYEPIECE is. "Close" and the main button both
+  dismiss it for good. The button reads "Open EYEPIECE" if the app is installed and "Get EYEPIECE" (which opens
+  ovniaudio.com/eyepiece) if not; TELESCOPE looks for it through LaunchServices and in the Applications folders,
+  without loading anything. On Windows the card does not exist. *Source:* `59b32d0` · decisions D-79, D-113 ·
+  tests `[eyepiece]`, `[lock]`.
+
+### Known issues
+
+- **WATERFALL at scale 2** draws dense lines as 2-pixel steps: 1.33 % of its pixels differ from the fine
+  drawing path. Fixing it costs paint time, so it goes to 0.2.1. *Source:* `88c6253` · decision D-122 · test
+  `[columnas]`.
+- **The per-second history still counts whole FFT bins.** At 48 kHz with a 4096-point FFT, its 25 Hz and 40 Hz
+  bands contain no bin and read the floor. That history feeds VERDICT; fixing it changes the numbers a file
+  measures, so it will come with its own decision and new golden files. *Source:* `88c6253` · decision D-122 ·
+  test `[graves]`.
+
+### Platforms
+
+- macOS 11.0+ · **VST3 + AU**, universal binary (Apple Silicon `arm64` + Intel `x86_64`), signed and notarized.
+- Windows 10+ · **VST3 x64**, as an unsigned ZIP in the same release (SmartScreen may warn).
+- Licence **AGPLv3**, like the whole OVNI catalog. The fonts inside the plug-in keep their own licences, which
+  now ship in the installer and in the ZIP: Clash Grotesk and General Sans (ITF Free Font License) and
+  JetBrains Mono (SIL Open Font License 1.1).
+
 ## 0.1.0 — 2026-09-15
 
 First public release. TELESCOPE is a **free, open-source audio analyser that also concludes**: one

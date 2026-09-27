@@ -99,6 +99,17 @@ public:
         // El INTEGRADO no tiene parcial y no lo va a tener: la compuerta es la compuerta.
         float momentaryPartial = -300.0f;
         float shortTermPartial = -300.0f;
+
+        // ---- F4 de la 0.2 (T4, D-113) ---- APPEND-ONLY, como lo de arriba.
+        //
+        // EL HISTOGRAMA DE LA LENTE, SIN EL SILENCIO. `histogram` cuenta TODOS los short-term, y los que
+        // caen bajo −60 van al bin del borde: con el transporte parado el host manda ceros, y esa barra de
+        // abajo de todo crecía hasta aplastar la forma de la mezcla. Éste cuenta sólo los short-term SOBRE
+        // la compuerta absoluta de EBU R128 (−70 LUFS, `kAbsGate`: la misma que usa el integrado). Es lo que
+        // dibuja DYNAMICS en vivo. `histogram` queda tal cual: su invariante (Σ bins == shortTermHops) y
+        // el que lo quiera entero siguen valiendo.
+        std::array<std::uint32_t, kHistogramBins> histogramGated {};
+        long long shortTermHopsGated = 0;   // Σ histogramGated: los short-term que pasaron la compuerta
     };
 
     static constexpr double kOffset      = -0.691;   // la constante de BS.1770

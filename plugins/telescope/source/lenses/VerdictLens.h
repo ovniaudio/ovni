@@ -78,9 +78,24 @@ public:
 
     // El estado como DATO (la lente lo dibuja; el test lo lee).
     juce::String stateText() const;
+
+    // F4 de la 0.2 (T4, D-113): ¿hubo AUDIO en la ventana analizada? Una fila cuenta si su momentary máximo
+    // pasa la compuerta absoluta de EBU R128 (−70 LUFS, la del integrado). Sin ninguna, el estado en vivo dice
+    // «esperando audio» en vez de «en vivo · N s»: con el transporte parado el host manda ceros, las filas
+    // se llenan igual, y contar esos segundos como «analizados» decía que se estaba midiendo algo.
+    // F5 (D-122): la compuerta y la cuenta viven en el motor (Verdict), que con esto deja el informe vacío;
+    // la lente usa las mismas, no una copia.
+    static constexpr float kAbsGateLufs = Verdict::kAbsGateLufs;
+    static bool heardAudio (const SecondRow* rows, int n) noexcept { return Verdict::heardAudio (rows, n); }
+    // La segunda línea de la cabecera (los segundos analizados, contra qué se comparó, el TP) tal como se
+    // dibuja. Vacía mientras no hubo audio: pública para que el test lea lo mismo que se pinta.
+    juce::String headSubText() const;
     // La TONALIDAD tal como sale en la cabecera. Pública para que el test la compare, para las seis
     // lenguas y las veinticuatro tonalidades, contra la que dibuja CQT en su pie.
     static juce::String keyText (int tonic, int mode, const juce::String& language);
+    // F5b (D-126): el valor del botón MODO, tal como se dibuja: el rótulo corto de cada modo en cada idioma
+    // (`mode.live.short` / `mode.file.short`). Era la primera palabra de `mode.live`: «EN» en castellano.
+    static juce::String modeButtonText (int verdictMode, const juce::String& language);
     // El informe vigente, para que el test lea las frases sin mirar píxeles.
     const VerdictReport& report() const noexcept { return rep; }
     int  scrollOffset() const noexcept { return scroll; }
@@ -108,6 +123,7 @@ public:
     // saber DÓNDE mirar, y tienen que ser los mismos que usa el dibujo (no una copia).
     int  textWidth() const noexcept         { return textWidthFor (listArea().getWidth()); }
     juce::Rectangle<int> listArea() const noexcept { return zones.list; }
+    juce::Rectangle<int> noteArea() const noexcept { return zones.note; }   // F2b: el renglón del pie
     int  contentHeight() const noexcept { return contentH; }
 
     // ===== 57d · para el test del orden y del colapso =====
@@ -129,7 +145,7 @@ private:
 
     struct Zones
     {
-        juce::Rectangle<int> head, headline, list, footer;
+        juce::Rectangle<int> head, headline, list, note, footer;   // note: el pie de texto (F2b)
         juce::Rectangle<int> button[kNumControls];
     };
     Zones zonesFor (int w, int h) const;

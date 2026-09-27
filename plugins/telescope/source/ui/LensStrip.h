@@ -24,6 +24,7 @@ public:
 
     std::function<void (int)> onSelect;                  // sólo se llama para lentes construidas
     std::function<void (const juce::String&)> onLanguage;   // 56b: el código elegido en el chip del pie
+    std::function<void()> onTheme;                          // F2 de la 0.2: el clic en la fila del tema
 
     // 56: el idioma de los nombres. Lo fija quien tenga el ValueTree a mano; por defecto es inglés (D-50).
     void setLanguage (const juce::String& code) { if (code != lang) { lang = code; repaint(); } }
@@ -42,6 +43,16 @@ public:
     juce::Rectangle<int> languageRow() const
     {
         return getLocalBounds().removeFromBottom (kLanguageRowH).reduced (6, 3);
+    }
+
+    // ================== EL TEMA (F2 de la 0.2) ==================
+    // Arriba del idioma, con el mismo peso: los dos son ajustes del plugin, no del análisis. Un clic
+    // alterna oscuro / claro; quién guarda la preferencia lo decide el editor (ThemePreference.h).
+    juce::Rectangle<int> themeRow() const
+    {
+        auto b = getLocalBounds();
+        b.removeFromBottom (kLanguageRowH);
+        return b.removeFromBottom (kLanguageRowH).reduced (6, 3);
     }
 
     void cycleLanguage()
@@ -70,7 +81,7 @@ public:
     //
     // Públicas porque el test tiene que apretar donde la fila ESTÁ dibujada: si copiara la cuenta,
     // mediría su propia copia.
-    int listHeight() const noexcept { return juce::jmax (kNumLenses, getHeight() - kLanguageRowH); }
+    int listHeight() const noexcept { return juce::jmax (kNumLenses, getHeight() - 2 * kLanguageRowH); }   // tema + idioma
 
     juce::Rectangle<float> rowBounds (int i) const noexcept
     {
@@ -84,6 +95,32 @@ public:
         return (i >= 0 && i < kNumLenses) ? i : -1;
     }
 
+    // ================== UN NOMBRE LARGO, EN DOS RENGLONES (F2b de la 0.2) ==================
+    // Con el piso de 11 px (F2) los nombres largos dejaron de entrar en una línea de la tira: en castellano,
+    // a M, «CORRELACIÓN POR BAN…» y «ESPECTROGRAMA ESTÉ…»; en alemán «STEREO-SPEKTROGRAMM», en italiano
+    // «BILANCIAMENTO TONALE». La tira no se ensancha (movería las lentes) ni se achica la letra (es el piso):
+    // un nombre que no entra se parte en DOS renglones, por el espacio —o después del guion— que deje el
+    // renglón más largo lo más corto posible. Si ningún corte entra, sale en uno con elipsis, y [tira] lo ve.
+    static juce::StringArray linesFor (const juce::String& name, const juce::Font& f, float width)
+    {
+        const auto w = [&f] (const juce::String& t) { return juce::GlyphArrangement::getStringWidth (f, t); };
+        if (w (name) <= width) return { name };
+
+        juce::String bestA, bestB;
+        float best = width + 1.0f;
+        for (int i = 1; i < name.length() - 1; ++i)
+        {
+            const auto c = name[i];
+            if (c != ' ' && c != '-') continue;
+            const auto a = c == ' ' ? name.substring (0, i) : name.substring (0, i + 1);
+            const auto b = name.substring (i + 1);
+            const float longest = juce::jmax (w (a), w (b));
+            if (longest <= width && longest < best) { best = longest; bestA = a; bestB = b; }
+        }
+        if (bestA.isEmpty()) return { name };
+        return { bestA, bestB };
+    }
+
     void setBuilt (juce::uint32 mask)  { builtMask = mask; repaint(); }
     void setSelected (int index)       { if (index != selected) { selected = index; repaint(); } }
 
@@ -91,7 +128,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        namespace th = ovni::ui::theme;
+        namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
         const auto hue = th::green;
         const auto  langRow = languageRow();
         const auto  m = look::metricsFor (juce::jmax (760, getHeight()));   // 56: la tira escala con el alto
@@ -144,18 +181,48 @@ public:
 
             g.setColour (on ? look::txtPrimary : (built ? look::txtSecondary
                                                         : look::txtTertiary.withAlpha (0.62f)));
-            g.setFont (ovni::ui::fonts::label (on ? m.textSmall + 0.5f : m.textSmall));
-            g.drawText (strings::get (keyFor (i), lang),
-                        juce::roundToInt (row.getX() + 21.0f), juce::roundToInt (row.getY()),
-                        juce::roundToInt (row.getWidth() - 23.0f), juce::roundToInt (row.getHeight()),
-                        juce::Justification::centredLeft, false);
+            const auto font = look::label (on ? m.textSmall + 0.5f : m.textSmall);
+            g.setFont (font);
+            const juce::Rectangle<int> textBox (juce::roundToInt (row.getX() + 21.0f), juce::roundToInt (row.getY()),
+                                                juce::roundToInt (row.getWidth() - 23.0f),
+                                                juce::roundToInt (row.getHeight()));
+            const auto lines = linesFor (strings::get (keyFor (i), lang), font, (float) textBox.getWidth());
+            if (lines.size() == 1)
+            {
+                g.drawText (lines[0], textBox, juce::Justification::centredLeft, true);
+            }
+            else
+            {
+                const int lineH = (int) std::ceil (font.getHeight());
+                auto block = textBox.withSizeKeepingCentre (textBox.getWidth(), 2 * lineH);
+                g.drawText (lines[0], block.removeFromTop (lineH), juce::Justification::centredLeft, true);
+                g.drawText (lines[1], block, juce::Justification::centredLeft, true);
+            }
         }
 
         // ---- el chip de idioma, al pie de la tira ----
         // Pesa MENOS que una lente a propósito: es un ajuste, no una decimocuarta vista. Por eso va con el
         // color terciario, sin punto y sin barra de acento, separado por una hairline.
+        const auto themeR = themeRow();
         g.setColour (th::lineSoft);
-        look::fillSnapped (g, { (float) (langRow.getX()), (float) (langRow.getY() - 3), (float) (langRow.getWidth()), 1.0f });
+        look::fillSnapped (g, { (float) (themeR.getX()), (float) (themeR.getY() - 3), (float) (themeR.getWidth()), 1.0f });
+
+        if (themeHovered)
+        {
+            g.setColour (hue.withAlpha (th::state::hoverGlow));
+            g.fillRoundedRectangle (themeR.toFloat(), m.radius);
+        }
+        g.setColour (themeHovered ? look::txtSecondary : look::txtTertiary);
+        g.setFont (look::label (m.textSmall - 0.5f));
+        g.drawText (strings::get (strings::Key::theme, lang),
+                    themeR.getX() + 15, themeR.getY(), themeR.getWidth() - 17, themeR.getHeight(),
+                    juce::Justification::centredLeft, true);
+        g.setColour (themeHovered ? look::txtPrimary : look::txtSecondary);
+        g.setFont (look::label (m.textSmall));
+        g.drawText (strings::get (look::theme() == look::Theme::light ? strings::Key::themeLight
+                                                                       : strings::Key::themeDark, lang),
+                    themeR.getX(), themeR.getY(), themeR.getWidth() - 4, themeR.getHeight(),
+                    juce::Justification::centredRight, true);
 
         if (langHovered)
         {
@@ -163,33 +230,37 @@ public:
             g.fillRoundedRectangle (langRow.toFloat(), m.radius);
         }
         g.setColour (langHovered ? look::txtSecondary : look::txtTertiary);
-        g.setFont (ovni::ui::fonts::label (m.textSmall - 0.5f));
+        g.setFont (look::label (m.textSmall - 0.5f));
         g.drawText (strings::get (strings::Key::language, lang),
                     langRow.getX() + 15, langRow.getY(), langRow.getWidth() - 17, langRow.getHeight(),
-                    juce::Justification::centredLeft, false);
+                    juce::Justification::centredLeft, true);
         g.setColour (langHovered ? look::txtPrimary : look::txtSecondary);
-        g.setFont (ovni::ui::fonts::label (m.textSmall));
+        g.setFont (look::label (m.textSmall));
         g.drawText (strings::endonymOf (lang), langRow.getX(), langRow.getY(),
-                    langRow.getWidth() - 4, langRow.getHeight(), juce::Justification::centredRight, false);
+                    langRow.getWidth() - 4, langRow.getHeight(), juce::Justification::centredRight, true);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (languageRow().contains (e.getPosition())) { cycleLanguage(); return; }
+        if (themeRow().contains (e.getPosition()))    { if (onTheme) onTheme(); return; }
         const int i = rowAt (e.y);
         if (i >= 0 && isBuilt (i) && onSelect) onSelect (i);
     }
 
     void mouseMove (const juce::MouseEvent& e) override
     {
-        const bool overLang = languageRow().contains (e.getPosition());
-        const int  i = overLang ? -1 : rowAt (e.y);
-        if (i != hovered || overLang != langHovered) { hovered = i; langHovered = overLang; repaint(); }
+        const bool overLang  = languageRow().contains (e.getPosition());
+        const bool overTheme = themeRow().contains (e.getPosition());
+        const int  i = (overLang || overTheme) ? -1 : rowAt (e.y);
+        if (i != hovered || overLang != langHovered || overTheme != themeHovered)
+        { hovered = i; langHovered = overLang; themeHovered = overTheme; repaint(); }
     }
 
     void mouseExit (const juce::MouseEvent&) override
     {
-        if (hovered != -1 || langHovered) { hovered = -1; langHovered = false; repaint(); }
+        if (hovered != -1 || langHovered || themeHovered)
+        { hovered = -1; langHovered = false; themeHovered = false; repaint(); }
     }
 
 private:
@@ -198,6 +269,7 @@ private:
     int  selected = 0;
     int  hovered  = -1;
     bool langHovered = false;
+    bool themeHovered = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LensStrip)
 };

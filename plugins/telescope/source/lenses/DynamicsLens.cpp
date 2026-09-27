@@ -10,7 +10,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 constexpr float kSmoothing = 0.25f;
 
@@ -21,10 +21,17 @@ const juce::ValueTree& DynamicsLens::stateTree() const { return processor.apvts.
 
 DynamicsLens::DynamicsLens (TelescopeProcessor& p) : Lens (30), processor (p)
 {
-    setSettleHold (90);   // 3 s más de repintado: la línea de tiempo sigue corriendo aunque el número no cambie
+    // settleHold 2 (antes 90, "la línea de tiempo sigue corriendo aunque el número no cambie"): la línea de
+    // tiempo ahora cuenta como cambio por sí misma (advanceFrame compara sus marcas), igual que las barras
+    // del histograma en píxeles. Con 90 cuadros de cola, cualquier cambio —y en silencio el histograma
+    // cambia: el short-term del silencio cae en el bin del borde— dejaba la lente repintando 30 veces por
+    // segundo (prompt 96).
+    setSettleHold (2);
 
     threshold.setKnobLookAndFeel (&knobLaf);
     threshold.getProperties().set ("hue", (int) th::green.getARGB());
+    // F2: el valor, con la tinta secundaria del tema (en oscuro es el mismo `mut` que pone OvniKnob).
+    threshold.setColour (juce::Slider::textBoxTextColourId, look::txtSecondary);
     threshold.setRange ((double) Loudness::kMinClipThresholdDbtp, (double) Loudness::kMaxClipThresholdDbtp, 0.1);
     threshold.setTextValueSuffix (" dBTP");
     threshold.setValue ((double) processor.clipThresholdDbtp(), juce::dontSendNotification);
@@ -103,25 +110,25 @@ void DynamicsLens::renderStatic (juce::Graphics& g, int width, int height)
 
     // ---- rejilla del histograma: marcas cada 6 LU ----
     const auto hist = zones.histogram.reduced (th::padIn / 2).withTrimmedTop (18).withTrimmedBottom (14);
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     for (int lufs = kBinsFloorLufs; lufs <= 0; lufs += 6)
     {
         const float t = (float) (lufs - kBinsFloorLufs) / (float) (-kBinsFloorLufs);
         const int   x = hist.getX() + juce::roundToInt (t * (float) hist.getWidth());
         g.setColour (look::gridMinor);
         look::fillSnapped (g, { (float) (x), (float) (hist.getY()), 1.0f, (float) (hist.getHeight()) });
-        g.setColour (th::fnt);
-        g.drawText (juce::String (lufs), x - 14, hist.getBottom() + 1, 28, 12, juce::Justification::centred, false);
+        g.setColour (look::txtTertiary);
+        g.drawText (juce::String (lufs), x - 14, hist.getBottom() + 1, 28, 12, juce::Justification::centred, true);
     }
 
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
+    g.setFont (look::label (10.0f));
     g.drawText (tr (strings::Key::histogramShortTerm),
-                hist.getX(), zones.histogram.getY() + 6, hist.getWidth(), 14, juce::Justification::left, false);
+                hist.getX(), zones.histogram.getY() + 6, hist.getWidth(), 14, juce::Justification::left, true);
     g.drawText (tr (strings::Key::clips) + juce::String::fromUTF8 (" \xc2\xb7 ")
                     + tr (strings::Key::lastMinutes),
                 zones.clips.getX() + th::padIn / 2, zones.clips.getY() + 6,
-                zones.clips.getWidth(), 14, juce::Justification::left, false);
+                zones.clips.getWidth(), 14, juce::Justification::left, true);
 }
 
 //======================================================================================== capa viva
@@ -145,23 +152,23 @@ void DynamicsLens::paintHero (juce::Graphics& g) const
 
     // ---- PSR, número héroe ----
     auto hero = head.removeFromLeft (head.getWidth() * 2 / 5);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText ("PSR", hero.getX(), hero.getY(), hero.getWidth(), 12, juce::Justification::left, false);
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (10.0f));
+    g.drawText ("PSR", hero.getX(), hero.getY(), hero.getWidth(), 12, juce::Justification::left, true);
 
     const auto heroSize = (float) juce::jmin (54, hero.getHeight() - 34);
     const auto psrText  = fmt1 (dispPsr, psrValid);
     g.setColour (psrValid ? th::txt : th::mut);
-    g.setFont (ovni::ui::fonts::mono (heroSize));
+    g.setFont (look::mono (heroSize));
     const auto textW = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), psrText)) + 4;
     const int  textH = juce::roundToInt (heroSize * 1.2f);
-    g.drawText (psrText, hero.getX(), hero.getY() + 14, textW, textH, juce::Justification::left, false);
+    g.drawText (psrText, hero.getX(), hero.getY() + 14, textW, textH, juce::Justification::left, true);
 
     // La unidad PEGADA al número (como en LOUDNESS): suelta en el medio del panel no se lee como su unidad.
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (juce::jmax (9.0f, heroSize * 0.28f)));
+    g.setFont (look::label (juce::jmax (9.0f, heroSize * 0.28f)));
     g.drawText ("dB", hero.getX() + textW + 6, hero.getY() + 14 + textH - 16, 40, 14,
-                juce::Justification::left, false);
+                juce::Justification::left, true);
 
     // ---- la barra 0…20 dB con la línea de referencia en 8 ----
     const auto bar = zones.psrBar;
@@ -198,28 +205,28 @@ void DynamicsLens::paintHero (juce::Graphics& g) const
     const int   rx = bar.getX() + juce::roundToInt (rt * (float) bar.getWidth());
     g.setColour (th::amber.withAlpha (0.85f));
     look::fillSnapped (g, { (float) (rx), (float) (bar.getY() - 3), 1.0f, (float) (bar.getHeight() + 6) });
-    g.setFont (ovni::ui::fonts::label (9.5f));
+    g.setFont (look::label (9.5f));
     g.setColour (th::amber.withAlpha (0.9f));
     g.drawText (tr (strings::Key::dynamicRefShort) + juce::String (kPsrReference, 0) + " dB", rx - 60, bar.getBottom() + 5, 130, 12,
-                juce::Justification::centred, false);
+                juce::Justification::centred, true);
 
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::mono (9.0f));
-    g.drawText ("0",  bar.getX(), bar.getY() - 14, 20, 12, juce::Justification::left, false);
-    g.drawText ("20", bar.getRight() - 20, bar.getY() - 14, 20, 12, juce::Justification::right, false);
+    g.setColour (look::txtTertiary);
+    g.setFont (look::mono (9.0f));
+    g.drawText ("0",  bar.getX(), bar.getY() - 14, 20, 12, juce::Justification::left, true);
+    g.drawText ("20", bar.getRight() - 20, bar.getY() - 14, 20, 12, juce::Justification::right, true);
 
     // ---- PLR, secundario ----
     auto side = zones.header.reduced (th::padIn / 2);
     side = side.withTrimmedLeft (side.getWidth() * 4 / 5);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText ("PLR", side.getX(), side.getY(), side.getWidth(), 12, juce::Justification::left, false);
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (10.0f));
+    g.drawText ("PLR", side.getX(), side.getY(), side.getWidth(), 12, juce::Justification::left, true);
     g.setColour (plrValid ? th::txt : th::mut);
-    g.setFont (ovni::ui::fonts::mono (24.0f));
+    g.setFont (look::mono (24.0f));
     g.drawText (fmt1 (plr, plrValid), side.getX(), side.getY() + 16, side.getWidth(), 30,
-                juce::Justification::topLeft, false);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.5f));
+                juce::Justification::topLeft, true);
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (9.5f));
     g.drawFittedText (tr (strings::Key::plrSinceReset),
                       side.getX(), side.getY() + 48, side.getWidth(), 28, juce::Justification::topLeft, 2);
 }
@@ -270,15 +277,15 @@ void DynamicsLens::paintClips (juce::Graphics& g) const
     // ---- contador ----
     auto counter = area.removeFromLeft (juce::jmax (200, area.getWidth() / 3) - zones.knob.getWidth() - th::padIn / 2);
     g.setColour (clipEvents > 0 ? th::red : th::txt);
-    g.setFont (ovni::ui::fonts::mono ((float) juce::jmin (40, counter.getHeight() - 24)));
+    g.setFont (look::mono ((float) juce::jmin (40, counter.getHeight() - 24)));
     g.drawText (juce::String ((int) clipEvents), counter.getX(), counter.getY(), counter.getWidth(),
-                counter.getHeight() - 18, juce::Justification::topLeft, false);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.5f));
+                counter.getHeight() - 18, juce::Justification::topLeft, true);
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (9.5f));
     g.drawText (tr (strings::Key::eventsAbove) + juce::String (processor.clipThresholdDbtp(), 1)
                     + " dBTP",
                 counter.getX(), counter.getBottom() - 16, counter.getWidth(), 14,
-                juce::Justification::left, false);
+                juce::Justification::left, true);
 
     // ---- línea de tiempo: 10 min, el ahora a la DERECHA (misma convención que la historia de LOUDNESS) ----
     const auto tl = zones.timeline;
@@ -294,9 +301,9 @@ void DynamicsLens::paintClips (juce::Graphics& g) const
         const int x = tl.getRight() - juce::roundToInt ((float) min / 10.0f * (float) tl.getWidth());
         g.setColour (look::gridMinor);
         look::fillSnapped (g, { (float) (x), (float) (tl.getY() + 1), 1.0f, (float) (tl.getHeight() - 2) });
-        g.setColour (th::fnt);
-        g.setFont (ovni::ui::fonts::mono (8.5f));
-        g.drawText ("-" + juce::String (min), x + 3, tl.getBottom() - 12, 24, 11, juce::Justification::left, false);
+        g.setColour (look::txtTertiary);
+        g.setFont (look::mono (8.5f));
+        g.drawText ("-" + juce::String (min), x + 3, tl.getBottom() - 12, 24, 11, juce::Justification::left, true);
     }
 
     const auto n = (int) timelineBuf.size();
@@ -316,10 +323,10 @@ void DynamicsLens::paintClips (juce::Graphics& g) const
                                             (float) tl.getHeight() - 4.0f));
     }
 
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.5f));
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (9.5f));
     g.drawText (trLower (strings::Key::threshold), zones.knob.getX(), zones.knob.getY() - 13,
-                zones.knob.getWidth(), 12, juce::Justification::centred, false);
+                zones.knob.getWidth(), 12, juce::Justification::centred, true);
     juce::ignoreUnused (hue);
 }
 
@@ -339,8 +346,8 @@ void DynamicsLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, co
         g.fillRoundedRectangle (r, 3.0f);
     }
     g.setColour (active ? hue : th::txt);
-    g.setFont (ovni::ui::fonts::label (11.0f));
-    g.drawText (text, area, juce::Justification::centred, false);
+    g.setFont (look::label (11.0f));
+    g.drawText (text, area, juce::Justification::centred, true);
 }
 
 //======================================================================================== animación
@@ -355,19 +362,37 @@ bool DynamicsLens::advanceFrame()
     clipEvents = f.clipEvents;
 
     histMax = 1;
-    juce::uint32 histSum = 0;
     for (int i = 0; i < kBins; ++i)
     {
         histogram[i] = f.histogram[i];
         histMax  = juce::jmax (histMax, histogram[i]);
-        histSum += histogram[i];   // Σ bins = short-terms medidos: cambia en cuanto entra uno nuevo
+    }
+
+    // El histograma cambia A LA VISTA cuando alguna barra cambia de altura en píxeles (la misma cuenta que
+    // paintHistogram). Antes contaba la suma de los bins: en silencio el short-term cae en el bin del
+    // borde, la suma sube 10 veces por segundo y casi nunca mueve un píxel.
+    bool barsMoved = false;
+    {
+        const int barsH = zones.histogram.reduced (th::padIn / 2).withTrimmedTop (18).withTrimmedBottom (14).getHeight();
+        for (int i = 0; i < kBins; ++i)
+        {
+            const int hpx = histogram[i] == 0 ? 0
+                          : juce::jmax (1, juce::roundToInt ((float) histogram[i] / (float) histMax * (float) barsH));
+            barsMoved = barsMoved || hpx != lastBarPx[i];
+            lastBarPx[i] = hpx;
+        }
     }
 
     currentBin = (f.loudness.shortTerm > (float) kBinsFloorLufs - 0.5f && f.loudness.shortTerm < 1.0f)
                    ? juce::jlimit (0, kBins - 1, juce::roundToInt (f.loudness.shortTerm) - kBinsFloorLufs)
                    : -1;
 
+    lastTimeline = timelineBuf;
     processor.clipHistory().copyLatest (timelineBuf, kTimelineSeconds);
+    const bool timelineMoved = timelineBuf != lastTimeline;   // las marcas corren un lugar por segundo
+    const float thresholdDb  = processor.clipThresholdDbtp();
+    const bool thresholdMoved = thresholdDb != lastThresholdDb;
+    lastThresholdDb = thresholdDb;
 
     const float before = dispPsr;
     if (! psrValid)                    dispPsr = 0.0f;
@@ -380,12 +405,11 @@ bool DynamicsLens::advanceFrame()
     // bin, o un PLR que se mueve) no se vería hasta que el PSR volviera a moverse (LOW del revisor del 49).
     bool changed = std::abs (dispPsr - before) > 1.0e-3f;
     changed |= (clipEvents != lastClipEvents);
-    changed |= (histSum    != lastHistSum);
+    changed |= barsMoved || timelineMoved || thresholdMoved;
     changed |= (currentBin != lastBin);
     changed |= (std::abs (plr - lastPlr) > 1.0e-3f) || (plrValid != lastPlrValid);
 
     lastClipEvents = clipEvents;
-    lastHistSum    = histSum;
     lastBin        = currentBin;
     lastPlr        = plr;
     lastPlrValid   = plrValid;

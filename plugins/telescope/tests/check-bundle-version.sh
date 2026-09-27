@@ -24,6 +24,10 @@
 #                          una por idioma: si sólo se mirara la primera, la tabla en inglés podría quedar
 #                          vieja sin que nadie se entere. Un release cuya ficha dice otra cosa es una
 #                          ficha que miente.
+#                          Con el prefijo `first:` se mira SÓLO la primera línea que coincide: es el caso del
+#                          CHANGELOG desde la 0.2.0, que guarda debajo la entrada de cada versión anterior
+#                          (`## 0.1.0 — …`). Lo que tiene que decir la versión vigente es la entrada de ARRIBA;
+#                          las de abajo son historia y dicen la suya.
 #
 # Exit: 0 si todo declara lo mismo · 1 si algo no coincide o falta.
 set -uo pipefail
@@ -64,7 +68,10 @@ while [ "$#" -ge 2 ]; do
   doc="$1"; anchor="$2"; shift 2
   d="$(basename "$doc")"
   if [ ! -f "$doc" ]; then bad "$d no existe ($doc)"; continue; fi
-  lines="$(grep -E "$anchor" "$doc")"
+  case "$anchor" in
+    first:*) anchor="${anchor#first:}"; lines="$(grep -E "$anchor" "$doc" | head -n1)" ;;
+    *)       lines="$(grep -E "$anchor" "$doc")" ;;
+  esac
   if [ -z "$lines" ]; then
     bad "$d no tiene ninguna línea que declare la versión (ancla: $anchor)"
     continue

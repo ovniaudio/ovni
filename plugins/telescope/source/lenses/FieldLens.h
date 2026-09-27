@@ -282,6 +282,12 @@ private:
     float norm = 0.0f;             // la normalización del brillo (suavizada salvo con reduced-motion)
     int   drawn = 0, trailLayers = 0, liveCells = 0;
     juce::uint32 lastFrame = 0xffffffffu;
+    // El último cuadro que se mostró, para no contar como cambio un cuadro idéntico (ver advanceFrame).
+    // En el heap y no adentro del objeto: son ~73 KB, y hay tests que construyen la lente en la pila (en
+    // Windows la pila del hilo principal es de 1 MB).
+    std::vector<float> shownGrid, shownTrail;
+    float shownMaxCell    = -1.0f;
+    int   shownTrailCount = -1;
 
     int   hovered = -1;
     juce::Point<int> cursor { -1, -1 };

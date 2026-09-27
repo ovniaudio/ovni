@@ -25,11 +25,15 @@
 //   3 · se dibuja con `AffineTransform::scale (1/s)`, de vuelta al tamaño lógico;
 //   4 · si s cambia —mover la ventana a otro monitor— la caché se rehace.
 //
-// EL FILTRO. Con s ENTERO (1, 2, 3) un píxel de la imagen cae exactamente sobre un píxel del dispositivo:
-// no hay nada que interpolar y el remuestreo de baja calidad es el CORRECTO además del más barato —
-// pedirle bilineal a una correspondencia 1:1 sólo agrega un desenfoque de medio píxel. Con s fraccionaria
-// (1.5, 1.25 en un monitor escalado) sí hace falta el filtro bueno, porque ahí un píxel de imagen cae
-// entre dos del dispositivo.
+// EL FILTRO: SIEMPRE EL BAJO (T2, F2 de la 0.2). La imagen se asigna a escala física y se dibuja con
+// `scale (1/s)`, así que lo que llega al dispositivo es una TRASLACIÓN pura: un píxel de imagen por píxel
+// de dispositivo, con cualquier s. Hasta la 0.1 se pedía el filtro bueno cuando s era fraccionaria (1.25,
+// 1.5), con la idea de que ahí un píxel de imagen caía entre dos del dispositivo. No cae: lo que queda
+// fraccionario es el ORIGEN de la lente (M a 1.25: 227.5 px), y con el filtro bueno eso se pagaba como un
+// re-muestreo bilineal de la caché entera en cada cuadro (3 a 6 ms en vez de 0.3 a 1) que además la
+// dejaba medio píxel borrosa. Con el bajo la copia va al píxel más cercano: se corre menos de medio píxel
+// físico y queda nítida. Lo mide [editorbudget], «a escala no entera la lente en su lugar cuesta lo que
+// en el origen».
 //
 // s = 1 SE DIBUJA COMO SIEMPRE, con `drawImageAt`. No es una optimización: es la garantía de que en el
 // banco de pruebas —que pinta sobre una `juce::Image` sin transformación— el resultado siga siendo BYTE
@@ -38,12 +42,6 @@
 // ========================================================================================================
 namespace telescope::raster
 {
-// ¿La escala cae sobre la grilla de píxeles del dispositivo sin resto?
-inline bool isIntegerScale (float s) noexcept
-{
-    return std::abs (s - std::round (s)) < 1.0e-3f;
-}
-
 // De un largo LÓGICO al mismo largo en píxeles de dispositivo. Redondeo hacia arriba: una caché un píxel
 // corta deja una franja sin pintar en el borde derecho, y ese borde es justo el "ahora" del espectrograma.
 inline int toDevice (int logical, float s) noexcept
@@ -71,7 +69,10 @@ public:
             && std::abs (sNew - s) < 1.0e-4f && logicalW == lw && logicalH == lh)
             return false;
 
-        img = juce::Image (juce::Image::ARGB, w, h, false);
+        // LIMPIA (T3, prompt 98). La estela de SCOPE no se repinta entera: se atenúa y se le suman puntos,
+        // así que lo que trajera la memoria se veía como un fogonazo de basura de ~0,3 s tras cada cambio
+        // de tamaño. Limpiar cuesta sólo acá —al crear o redimensionar—, nunca por cuadro.
+        img = juce::Image (juce::Image::ARGB, w, h, true);
         s   = sNew;
         lw  = logicalW;
         lh  = logicalH;
@@ -104,8 +105,7 @@ public:
         // saveState/restoreState y no un getter: `LowLevelGraphicsContext` no expone con qué calidad
         // estaba, y dejar la del blit puesta le cambiaría el filtro a lo que dibuje la lente después.
         g.saveState();
-        g.setImageResamplingQuality (isIntegerScale (s) ? juce::Graphics::lowResamplingQuality
-                                                        : juce::Graphics::highResamplingQuality);
+        g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);   // ver EL FILTRO, arriba
         g.drawImageTransformed (im, juce::AffineTransform::scale (1.0f / s)
                                         .translated ((float) x, (float) y));
         g.restoreState();

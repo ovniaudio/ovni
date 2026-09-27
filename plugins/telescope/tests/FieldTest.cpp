@@ -647,10 +647,32 @@ void push (telescope::TelescopeProcessor& proc, Gen& gen, double seconds)
         }
         proc.processBlock (buf, midi);
         const double pushed = (double) n / 48000.0;
-        if (pushed - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 8000));
+        if (pushed - proc.analysis().read().timeSeconds > 2.0
+            && ! telescope::test::waitUntil (
+                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 8000))
+            FAIL ("el hilo de análisis no alcanzó al audio empujado");   // sin REQUIRE en el camino feliz
     }
+}
+
+// F2b de la 0.2 · LA FOTO ESPERA AL MOTOR ENTERO. `push` corta en bloques enteros de 512 (5 s son 239616
+// muestras: 49.92 hops) y los casos de foto esperaban «las 8 estelas», no el final: la foto del CLARO de
+// field_wide_M cambiaba entre dos corridas (veredicto 99, reparo 1). El oscuro lo tapaba porque hornea la
+// atmósfera del sello y llega más tarde a la foto. Para las fotos: muestras EXACTAS en hops enteros y
+// waitDigested (TestHelpers.h). `push` queda como estaba para los tests que no fotografían.
+template <typename Gen>
+void pushDigested (telescope::TelescopeProcessor& proc, Gen& gen, double seconds)
+{
+    const auto total = (long long) std::llround (seconds * 48000.0);
+    telescope::test::pushExact (proc, total, 48000.0, [&] (juce::AudioBuffer<float>& buf, int k)
+    {
+        for (int i = 0; i < k; ++i)
+        {
+            const auto v = gen.next();
+            buf.setSample (0, i, v.first);
+            buf.setSample (1, i, v.second);
+        }
+    });
+    telescope::test::waitDigested (proc, total, 48000.0);
 }
 
 struct TwoSources
@@ -1238,7 +1260,7 @@ TEST_CASE ("telescope: snapshot del editor con la lente FIELD en S/M/L", "[teles
 
     // (a) DOS FUENTES en canales opuestos: dos manchas en esquinas opuestas.
     TwoSources two;
-    push (proc, two, 4.0);
+    pushDigested (proc, two, 4.0);
     REQUIRE (telescope::test::waitUntil ([&] { return proc.field().read().trailCount
                                                       == telescope::FieldFrame::kTrail; }, 8000));
     {
@@ -1287,7 +1309,7 @@ TEST_CASE ("telescope: snapshot del editor con la lente FIELD en S/M/L", "[teles
     REQUIRE ((wideProc.enabledModules() & telescope::kField) != 0u);
 
     IndepPink wide;
-    push (wideProc, wide, 5.0);
+    pushDigested (wideProc, wide, 5.0);
     REQUIRE (telescope::test::waitUntil ([&] { return wideProc.field().read().trailCount
                                                       == telescope::FieldFrame::kTrail; }, 8000));
     std::printf ("UISNAP field (independientes): maxCell %.3e  ·  %d estelas\n",

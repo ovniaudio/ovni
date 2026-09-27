@@ -11,6 +11,7 @@
 //   VERDICTLENS[drop]     soltar un .txt no carga nada y lo dice.
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
+#include <vector>
 #include <cstdio>
 #include <memory>
 #include <utility>
@@ -377,7 +378,24 @@ TEST_CASE ("telescope: VERDICT envuelve el texto de verdad y no se come el marge
     lens.pumpFrames (4);
 
     juce::Image img (juce::Image::ARGB, lens.getWidth(), lens.getHeight(), true);
+    std::vector<telescope::look::TextRequest> requests;   // F2b: los renglones que pidió, con su caja
+    telescope::look::textRequestSink() = &requests;
     { juce::Graphics g (img); lens.paintEntireComponent (g, false); }
+    telescope::look::textRequestSink() = nullptr;
+
+    // 0 · EL PIE NO PISA LA LISTA (F2b de la 0.2). El pie se dibujaba en una caja que empezaba 4 px ADENTRO de la
+    // lista: con la letra de 11 px de la F2 quedaba encima del renglón que asoma por el scroll, y en Windows su
+    // tinta caía en el margen que se mide abajo. Su caja tiene que empezar debajo de la lista, con 2 px de aire.
+    {
+        const telescope::look::TextRequest* footer = nullptr;
+        for (const auto& r : requests)
+            if (r.text.startsWith ("Measurement")) footer = &r;
+        REQUIRE (footer != nullptr);
+        std::printf ("VERDICTLENS[wrap] el pie: caja y %.0f..%.0f · la lista termina en %d · aire %.0f px\n",
+                     (double) footer->box.getY(), (double) footer->box.getBottom(), lens.listArea().getBottom(),
+                     (double) footer->box.getY() - lens.listArea().getBottom());
+        CHECK (footer->box.getY() >= (float) lens.listArea().getBottom() + 2.0f);
+    }
 
     // 1 · EL ALTO RESERVADO ES EL ALTO DIBUJADO. Antes eran dos cuentas distintas —una estimación por
     // ancho de glifo para reservar, un drawFittedText para pintar— y podían no coincidir. Ahora hay un
@@ -403,7 +421,7 @@ TEST_CASE ("telescope: VERDICT envuelve el texto de verdad y no se come el marge
     // "Con tinta" = distinto del POZO. El fondo de la lente es opaco (renderStatic lo rellena con
     // look::well), así que mirar el alpha marcaría los 1820 píxeles de fondo de la franja como si fueran
     // texto. Lo que se busca es cualquier cosa dibujada ENCIMA del fondo.
-    const auto bg = telescope::look::well;
+    const juce::Colour bg = telescope::look::well;
     const auto isInk = [&] (juce::Colour c)
     {
         return std::abs ((int) c.getRed()   - (int) bg.getRed())   > 12
@@ -426,14 +444,33 @@ TEST_CASE ("telescope: VERDICT envuelve el texto de verdad y no se come el marge
         // Un separador enciende la franja de punta a punta; el antialiasing puede dejar un extremo por
         // debajo del umbral, así que se lo reconoce por MAYORÍA y no por unanimidad. Un desborde de texto
         // es lo contrario: unos pocos glifos pegados al borde izquierdo de la franja.
-        if (lit * 2 >= x1 - x0) ++rules;
-        else                    overflow += lit;
+        if (lit * 2 >= x1 - x0) { ++rules; continue; }
+        overflow += lit;
+        // F2b de la 0.2 · DÓNDE cae cada píxel. En Windows (corrida 36227358851) este criterio daba 3 px y en la
+        // Mac 0, y un arreglo a ciegas (envolver 2 px antes, fb15837) no movió el número: sin saber dónde
+        // estaban, no había cómo saber qué los pintaba. Ahora cada uno sale con su lugar y su color.
+        for (int x = x0; x < x1; ++x)
+            if (const auto c = img.getPixelAt (x, y); isInk (c))
+                std::printf ("VERDICTLENS[wrap]   tinta en el margen: x=%d (textRight+%d, list.right-%d)  y=%d (list.y+%d)  "
+                             "#%02x%02x%02x a=%d\n", x, x - textRight, list.getRight() - x, y, y - list.getY(),
+                             c.getRed(), c.getGreen(), c.getBlue(), c.getAlpha());
+    }
+    // La imagen de la lente, para mirarla (en Windows sale en el artefacto de [uisnap]).
+    {
+        const juce::File f (telescope::test::uisnapPath ("/tmp/ovni_telescope_verdict_wrap_S.png"));
+        f.deleteFile();
+        juce::FileOutputStream os (f);
+        if (os.openedOk()) juce::PNGImageFormat().writeImageToStream (img, os);
     }
 
     std::printf ("VERDICTLENS[wrap] margen derecho (x %d..%d): %d px de texto desbordado  ·  "
                  "%d separadores de seccion cruzando\n", x0, x1 - 1, overflow, rules);
     REQUIRE (overflow == 0);
-    REQUIRE (rules == 3);      // los tres títulos de sección; si fueran 0, el criterio de arriba no mediría
+    // Los títulos de sección que CABEN en la lista: si fueran 0, el criterio de arriba no mediría. Eran los
+    // tres hasta la F2 de la 0.2; con el piso de 11 px (Look.h, kMinTextPx) en S el tercero queda bajo el
+    // pliegue —la lista tiene scroll— y se ven dos.
+    REQUIRE (rules >= 1);
+    REQUIRE (rules <= 3);
 
     proc.releaseResources();
 }
@@ -606,4 +643,101 @@ TEST_CASE ("telescope: la tonica de VERDICT usa la convencion de notas del idiom
     // Sin tonalidad estimada VERDICT sigue diciendo "--" (su contrato de siempre).
     REQUIRE (telescope::VerdictLens::keyText (-1, 0, "es") == "--");
     REQUIRE (telescope::VerdictLens::keyText (0, -1, "es") == "--");
+}
+
+// F5 de la 0.2 (D-122) — VERDICT EN VIVO CON LA VENTANA EN SILENCIO: sólo «esperando audio», sin chequeos, sin avisos,
+// sin tildes y sin «N s analizados». Es la foto del reparo de la F4 (`t4_verdict_10s_silencio.png`: 10 s de ceros),
+// en inglés y en castellano; el tema lo elige la corrida (OVNI_TEST_THEME), como el resto de [uisnap].
+TEST_CASE ("telescope: snapshot de VERDICT en silencio (en y es)", "[telescope][uisnap]")
+{
+    for (const char* lang : { "en", "es" })
+    {
+        telescope::TelescopeProcessor proc;
+        proc.prepareToPlay (kSr, 512);
+        proc.setEnabledModules (telescope::kSpectrum | telescope::kStereoBands | telescope::kReference
+                                | telescope::kCqt | telescope::kAlwaysOnModules);
+        proc.setVerdictLanguage (lang);
+
+        auto* lensParam = proc.apvts.getParameter ("lens");
+        REQUIRE (lensParam != nullptr);
+        lensParam->setValueNotifyingHost (lensParam->convertTo0to1 ((float) (int) telescope::LensId::verdict));
+
+        const auto pushed = telescope::test::pushExact (proc, (long long) (10.0 * kSr), kSr,
+                                                        [] (juce::AudioBuffer<float>& buf, int) { buf.clear(); });
+        telescope::test::waitDigested (proc, pushed, kSr);
+
+        std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
+        auto* tel = dynamic_cast<telescope::TelescopeEditor*> (ed.get());
+        REQUIRE (tel != nullptr);
+        tel->applyZoom (ovni::PluginEditorBase::Zoom::medium);
+        tel->pumpLensFrames (6);
+
+        telescope::VerdictLens probe (proc);
+        probe.setSize (kLensW, kLensH);
+        probe.pumpFrames (4);
+        const auto& rep = probe.report();
+        std::printf ("UISNAP verdict silencio %s: filas %d · heard %d · hallazgos %d · dentro %d · lineas %d · estado «%s»\n",
+                     lang, rep.summary.secondsTotal, (int) rep.summary.heard, (int) rep.findings.size(),
+                     (int) rep.strengths.size(), probe.numLines(), probe.stateText().toRawUTF8());
+        REQUIRE (rep.summary.secondsTotal >= 9);
+        REQUIRE_FALSE (rep.summary.heard);
+        REQUIRE (rep.findings.empty());
+        REQUIRE (probe.numLines() == 0);
+
+        telescope::test::writePng (*tel, juce::String ("/tmp/ovni_telescope_verdict_silencio_") + lang + "_M.png");
+        proc.releaseResources();
+    }
+}
+
+// F5b de la 0.2 (D-126) — VERDICT EN LOS SEIS IDIOMAS, PARA MIRAR. No es [uisnap]: la serie de siempre queda con sus
+// 251 fotos, y ésta se corre a pedido (`"[fotos-idiomas]"`, con OVNI_UISNAP_DIR y OVNI_TEST_THEME como el resto).
+// Por idioma, dos fotos a M y a 125 %: el archivo con la señal de defectos (se ven los títulos de las secciones, en
+// mayúscula) y en vivo sin audio (se ve el botón MODO en su modo EN VIVO). Imprime cada texto que VERDICT pidió
+// dibujar, para leer las mayúsculas y el botón sin abrir la foto.
+TEST_CASE ("telescope: fotos de VERDICT en los seis idiomas (F5b)", "[.][fotos-idiomas]")
+{
+    telescope::TelescopeProcessor proc;
+    proc.prepareToPlay (kSr, 512);
+    const auto wav = writeSignal ("verdict_idiomas_defect.wav", telescope::test::makeDefectSignal());
+    loadIntoVerdict (proc, wav);
+
+    auto* lensParam = proc.apvts.getParameter ("lens");
+    REQUIRE (lensParam != nullptr);
+    lensParam->setValueNotifyingHost (lensParam->convertTo0to1 ((float) (int) telescope::LensId::verdict));
+    std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
+    auto* tel = dynamic_cast<telescope::TelescopeEditor*> (ed.get());
+    REQUIRE (tel != nullptr);
+    tel->applyZoom (ovni::PluginEditorBase::Zoom::medium);
+
+    for (const int mode : { (int) telescope::TelescopeProcessor::verdictFile, (int) telescope::TelescopeProcessor::verdictLive })
+    {
+        proc.setVerdictMode (mode);
+        const char* modeName = mode == telescope::TelescopeProcessor::verdictFile ? "archivo" : "vivo";
+        for (const auto& lang : telescope::strings::availableLanguages())
+        {
+            proc.setVerdictLanguage (lang);
+            telescope::strings::setLanguage (proc.apvts.state, lang);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (20);
+
+            std::vector<telescope::look::TextRequest> requests;
+            telescope::look::textRequestSink() = &requests;
+            tel->pumpLensFrames (6);
+            telescope::test::writePngAt (*tel, "/tmp/ovni_telescope_verdict_idioma_" + lang + "_" + modeName + "_M@1.25x.png", 1.25f);
+            telescope::look::textRequestSink() = nullptr;
+
+            juce::StringArray seen;
+            for (const auto& r : requests) seen.addIfNotAlreadyThere (r.text);
+            std::printf ("FOTOS_IDIOMAS %s %s: %d textos pedidos, %d distintos\n", lang.toRawUTF8(), modeName,
+                         (int) requests.size(), seen.size());
+            for (const auto& s : seen)
+                std::printf ("FOTOS_IDIOMAS %s %s «%s»\n", lang.toRawUTF8(), modeName, s.toRawUTF8());
+            CHECK (! requests.empty());
+        }
+    }
+
+    proc.setVerdictLanguage ("en");
+    telescope::strings::setLanguage (proc.apvts.state, "en");
+    ed.reset();
+    proc.releaseResources();
+    wav.deleteFile();
 }

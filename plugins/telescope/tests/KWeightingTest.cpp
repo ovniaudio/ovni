@@ -7,6 +7,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <cmath>
 #include <cstdio>
+#include <juce_core/juce_core.h>   // juce::MathConstants (M_PI no existe en MSVC sin _USE_MATH_DEFINES)
 #include "analysis/modules/KWeighting.h"
 
 using telescope::KWeighting;
@@ -68,7 +69,7 @@ TEST_CASE ("telescope: el filtro corrido da la ganancia que promete su respuesta
     double sumIn = 0.0, sumOut = 0.0;
     for (int i = 0; i < n; ++i)
     {
-        const double x = std::sin (2.0 * M_PI * 997.0 * (double) i / fs);
+        const double x = std::sin (2.0 * juce::MathConstants<double>::pi * 997.0 * (double) i / fs);
         const double y = kw.processSample (x);
         if (i > 4800)   // saltear los primeros 100 ms
         {

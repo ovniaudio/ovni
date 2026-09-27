@@ -85,7 +85,10 @@ private:
 
     // Lo que advanceFrame() compara para decidir si hay que repintar (ver la nota ahí): el PSR suavizado
     // no alcanza, porque la lente dibuja además clips, histograma y PLR.
-    juce::uint32 lastClipEvents = 0, lastHistSum = 0;
+    juce::uint32 lastClipEvents = 0;
+    int   lastBarPx[kBins] {};          // la altura en píxeles de cada barra la última vez (ver advanceFrame)
+    std::vector<juce::uint32> lastTimeline;
+    float lastThresholdDb = -1000.0f;
     int          lastBin = -1;
     float        lastPlr = 0.0f;
     bool         lastPlrValid = false;

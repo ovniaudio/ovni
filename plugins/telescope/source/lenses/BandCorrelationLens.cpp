@@ -11,7 +11,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 constexpr double kSixthDown = 0.8908987181403393;   // 2^(-1/6)
 constexpr double kSixthUp   = 1.1224620483093730;   // 2^(+1/6)
@@ -90,7 +90,9 @@ BandCorrelationLens::Zones BandCorrelationLens::zonesFor (int w, int h) const
     // La fila de correlación se lleva más alto que la secundaria: es la que se mira primero.
     const int corrH = juce::jmax (60, (int) std::lround (0.58 * (double) body.getHeight()));
     auto top = body.removeFromTop (corrH);
-    body.removeFromTop (th::padIn / 2);
+    // padIn ENTERO entre los dos paneles (F2 de la 0.2), como en TONAL BALANCE: abajo del primero termina
+    // "-1.00" y arriba del segundo empieza "0"; con 8 px y la escala a 11 px se tocaban.
+    body.removeFromTop (th::padIn);
 
     z.scaleCorr = top.removeFromLeft (kScaleW);
     z.corr      = top;
@@ -172,11 +174,11 @@ void BandCorrelationLens::renderStatic (juce::Graphics& g, int width, int height
         look::fillSnapped (g, { (float) (x), (float) (zones.row.getY()), 1.0f, (float) (zones.row.getHeight()) });
     }
 
-    g.setFont (ovni::ui::fonts::mono (9.0f));
-    g.setColour (th::fnt);
+    g.setFont (look::mono (9.0f));
+    g.setColour (look::txtTertiary);
     for (const double hz : kLabelledHz)
         g.drawText (shortHz (hz), juce::roundToInt (xForFreq (hz)) - 20, zones.freqAxis.getY() + 1, 40, 12,
-                    juce::Justification::centred, false);
+                    juce::Justification::centred, true);
 
     // ---- escala de correlación: el 0 fuerte, ±0.5 rotuladas (REFERENCIA, no veredicto) ----
     const struct { float v; bool strong; } corrTicks[] = {
@@ -187,9 +189,9 @@ void BandCorrelationLens::renderStatic (juce::Graphics& g, int width, int height
         const int y = juce::roundToInt (yForCorr (t.v, zones.corr));
         g.setColour (t.v == 0.0f ? th::line : (t.strong ? th::lineSoft : th::lineSoft.withAlpha (0.5f)));
         look::fillSnapped (g, { (float) (zones.corr.getX()), (float) (y), (float) (zones.corr.getWidth()), 1.0f });
-        g.setColour (t.v < 0.0f ? th::red.withAlpha (0.8f) : th::fnt);
+        g.setColour (t.v < 0.0f ? th::red : look::txtTertiary);   // F2: al 80 % daba 3.5:1
         g.drawText (fmt2 (t.v), zones.scaleCorr.getX(), y - 6, kScaleW - 8, 12,
-                    juce::Justification::centredRight, false);
+                    juce::Justification::centredRight, true);
     }
 
     // La mitad negativa del panel de correlación, teñida: es la zona que importa de un vistazo.
@@ -197,9 +199,9 @@ void BandCorrelationLens::renderStatic (juce::Graphics& g, int width, int height
     g.fillRect (zones.corr.withTop (juce::roundToInt (yForCorr (0.0f, zones.corr))));
 
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText ("CORR", zones.scaleCorr.getX(), zones.corr.getY() + 2, kScaleW - 8, 12,
-                juce::Justification::centredRight, false);
+    g.setFont (look::label (10.0f));
+    g.drawText ("CORR", zones.scaleCorr.getX(), zones.corr.getY() + 8, kScaleW - 8, 12,
+                juce::Justification::centredRight, true);
 
     // ---- escala de la fila secundaria ----
     float ticks[3] = { 0.0f, 0.0f, 0.0f };
@@ -213,16 +215,16 @@ void BandCorrelationLens::renderStatic (juce::Graphics& g, int width, int height
         const int y = juce::roundToInt (yForRow (ticks[i], zones.row));
         g.setColour (i == 1 && rowMode == rowBalance ? th::line : th::lineSoft);
         look::fillSnapped (g, { (float) (zones.row.getX()), (float) (y), (float) (zones.row.getWidth()), 1.0f });
-        g.setColour (th::fnt);
-        g.setFont (ovni::ui::fonts::mono (9.0f));
+        g.setColour (look::txtTertiary);
+        g.setFont (look::mono (9.0f));
         g.drawText (rowMode == rowWidth ? juce::String (ticks[i], 1) : juce::String ((int) ticks[i]),
-                    zones.scaleRow.getX(), y - 6, kScaleW - 8, 12, juce::Justification::centredRight, false);
+                    zones.scaleRow.getX(), y - 6, kScaleW - 8, 12, juce::Justification::centredRight, true);
     }
 
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText (rowShortLabel (*this, rowMode), zones.scaleRow.getX(), zones.row.getY() + 2, kScaleW - 8, 12,
-                juce::Justification::centredRight, false);
+    g.setFont (look::label (10.0f));
+    g.drawText (rowShortLabel (*this, rowMode), zones.scaleRow.getX(), zones.row.getY() + 8, kScaleW - 8, 12,
+                juce::Justification::centredRight, true);
 }
 
 //======================================================================================== datos
@@ -278,16 +280,16 @@ void BandCorrelationLens::paintLive (juce::Graphics& g)
     auto head = zones.head;
     const auto side = head.removeFromRight (juce::jmin (220, head.getWidth() / 3));
 
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (10.0f));
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (10.0f));
     g.drawText (trLower (strings::Key::window) + " " + juce::String (windowSec, 2) + " s  \xc2\xb7  "
                     + juce::String (measured) + " " + trLower (strings::Key::measuredBands),
-                side, juce::Justification::centredRight, false);
+                side, juce::Justification::centredRight, true);
 
     const auto s = summary();
-    g.setFont (ovni::ui::fonts::mono (12.0f));
+    g.setFont (look::mono (12.0f));
     g.setColour (s.valid && s.worstCorr < 0.0f ? th::red : th::txt);
-    g.drawText (summaryText(), head, juce::Justification::centredLeft, false);
+    g.drawText (summaryText(), head, juce::Justification::centredLeft, true);
 
     paintBars (g, zones.corr, true);
     paintBars (g, zones.row, false);
@@ -321,7 +323,7 @@ void BandCorrelationLens::paintBars (juce::Graphics& g, juce::Rectangle<int> are
         // dibujar un cero sería decir "no hay correlación", que es otra cosa.
         if (bins[b] == 0)
         {
-            g.setColour (th::fnt.withAlpha (0.55f));
+            g.setColour (look::tick.withAlpha (0.55f));
             g.fillRect (juce::Rectangle<float> (x, base - 1.5f, w, 3.0f));
             continue;
         }
@@ -467,7 +469,7 @@ void BandCorrelationLens::paintReadout (juce::Graphics& g) const
            + trLower (strings::Key::mono) + " " + juce::String (r.monoLossDb, 1) + " dB" + dot
            + juce::String (r.bins) + (r.bins == 1 ? " bin" : " bins"));
 
-    g.setFont (ovni::ui::fonts::mono (11.0f));
+    g.setFont (look::mono (11.0f));
     const int tw = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text)) + 16;
     const auto box = readoutBoxFor (zones.corr, cursor.x, tw);
 
@@ -476,7 +478,7 @@ void BandCorrelationLens::paintReadout (juce::Graphics& g) const
     g.setColour (th::green.withAlpha (0.4f));
     g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 3.0f, 1.0f);
     g.setColour (th::txt);
-    g.drawText (text, box, juce::Justification::centred, false);
+    g.drawText (text, box, juce::Justification::centred, true);
 }
 
 void BandCorrelationLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& label,
@@ -496,12 +498,8 @@ void BandCorrelationLens::paintButton (juce::Graphics& g, juce::Rectangle<int> a
     }
 
     auto inner = area.reduced (8, 0);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.0f));
-    g.drawText (label, inner.removeFromLeft (inner.getWidth() / 2), juce::Justification::centredLeft, false);
-    g.setColour (hue);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (value, inner, juce::Justification::centredRight, false);
+    look::drawLabelValue (g, inner, label, look::label (9.0f), look::txtTertiary,
+                         value, look::mono (11.0f), hue);
 }
 
 //======================================================================================== interacción

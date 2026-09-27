@@ -5,6 +5,26 @@ All notable changes to the [OVNI](https://github.com/ovniaudio/ovni) catalog are
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0/).
 
+## TELESCOPE 0.2.0
+
+**TELESCOPE 0.2 comes out with EYEPIECE**, OVNI's free Mac app. Full notes, with the commit, the decision and the
+test behind every line: [`plugins/telescope/CHANGELOG.md`](plugins/telescope/CHANGELOG.md).
+
+- **An open TELESCOPE window no longer stalls the DAW**: the editor background is baked once instead of on every
+  lens frame, and the lenses stop repainting while nothing visible changes.
+- **A light theme** (dark stays the default), **labels at 4.5:1 or better** with an 11 px floor, and **VERDICT
+  reflowing** in six languages at 125 % and 150 %, with its capitals accented in any host and the whole name of
+  the mode on its MODE button.
+- **Silence is no longer shown as a measurement**: DYNAMICS and TONAL BALANCE gate at −70 LUFS, and VERDICT says
+  "waiting for audio" and nothing else until there is audio.
+- **TONAL BALANCE: choose the part of the reference** it compares against, on a waveform strip.
+- **`telescope-measure`**, a command-line tool on the same engine (JSON Lines, `plugins/telescope/measure/SCHEMA.md`).
+  Not in the installer: it is in the source.
+- **A card that introduces EYEPIECE**, once, on the Mac only.
+- **What a file measures did not change**: thirteen golden dumps of the engine, equal to 0.1.0 byte by byte.
+- The font licences (ITF Free Font License for Clash Grotesk and General Sans, SIL OFL 1.1 for JetBrains Mono)
+  now ship in the installer and in the ZIP.
+
 ## TELESCOPE 0.1.0 — 2026-09-15
 
 **A new, ninth plugin: TELESCOPE 🔭, a free audio analyser that also concludes.** One analysis

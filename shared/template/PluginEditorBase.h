@@ -43,6 +43,8 @@ public:
 
     // ======== zoom ========
     void applyZoom (Zoom z);                     // aplica (transform + setSize). NO persiste. (público: tests)
+    // El factor que de verdad se aplica en una pantalla con esta área útil (el clamp de applyZoom, puro).
+    static float fitZoomToArea (float wanted, juce::Rectangle<int> userArea, int baseW, int baseH) noexcept;
     void setZoom   (Zoom z);                     // aplica + persiste (lo usa el selector)
 
     // ======== header browser on/off (H14 · app-mode) ========
@@ -65,6 +67,32 @@ public:
     // plugin del catálogo cambia. El render NO se toca → goldens byte-exactos.
     void setFlexibleCanvas (bool on);
     bool isFlexibleCanvas() const noexcept { return flexible; }
+
+    // Test-only: cuántas veces se horneó el fondo (ver ui::Panel::renderCount). Con el tamaño y la escala
+    // quietos, repintar una lente no puede rehacer el fondo del editor entero.
+    int backgroundRenderCount() const noexcept { return panel.renderCount(); }
+
+    // ======== LAS TINTAS DEL MARCO (opt-in; TELESCOPE 0.2, F2 «que se pueda leer») ========
+    // Los colores con que se pintan el fondo, el header y el bisel. Los valores por DEFECTO son, uno por uno,
+    // los que estas funciones tenían escritos: un plugin que no llama setFrameInk se ve igual que antes, bit
+    // por bit. TELESCOPE lo usa para su tema claro.
+    struct FrameInk
+    {
+        juce::Colour base       = ui::theme::bg0;          // el relleno del editor y del canvas
+        bool         atmosphere = true;                    // el Panel del sello; false = la base lisa
+        juce::Colour sheen      { 0x0ba0c0e0 };            // el brillo del header (arriba → transparente)
+        juce::Colour topLine    { 0x0fbee1ff };            // la hairline de arriba del header
+        juce::Colour lineSoft   = ui::theme::lineSoft;
+        juce::Colour txt        = ui::theme::txt;
+        juce::Colour mut        = ui::theme::mut;
+        juce::Colour fnt        = ui::theme::fnt;
+        juce::Colour onHue      { 0xff031014 };            // el texto sobre el slot A/B encendido
+        juce::Colour bezel      { 0x0ea0c0e0 };
+        juce::Colour brackets   { 0x3396bee1 };
+        bool         nameGlow   = true;                    // el glow del nombre del plugin
+    };
+    void setFrameInk (const FrameInk& f) { frameInk = f; repaint(); content.repaint(); }
+    const FrameInk& getFrameInk() const noexcept { return frameInk; }
 
 protected:
     // ======== PUNTOS DE EXTENSIÓN (el plugin concreto los define; coords BASE) ========
@@ -131,6 +159,12 @@ private:
 
     static juce::PropertiesFile& uiSettings();           // settings global del sello (compartido por los 6)
 
+public:
+    // El lock entre procesos de OVNI.settings (D-100). Público: TELESCOPE guarda su tema con el mismo.
+    static juce::InterProcessLock& settingsProcessLock();
+
+private:
+
     // Tamaño LÓGICO del canvas: base×zoom por default; en modo flexible = tamaño real del editor.
     int  canvasW() const noexcept { return flexible ? juce::jmax (1, getWidth())  : baseW; }
     int  canvasH() const noexcept { return flexible ? juce::jmax (1, getHeight()) : baseH; }
@@ -148,6 +182,7 @@ private:
     juce::Rectangle<int> presetPrevZone, presetNameZone, presetNextZone, presetSaveZone, presetAbZone, bypassZone;
     juce::Rectangle<int> zoomSZone, zoomMZone, zoomLZone;   // selector S·M·L
 
+    FrameInk      frameInk;   // los colores del marco (default = los de siempre)
     ui::Panel     panel;   // fondo atmósfera del sello (compartido por todos los plugins)
     ui::BottomBar bar;     // franja contextual (opt-in via enableBottomBar)
     bool          bottomBarOn = false;

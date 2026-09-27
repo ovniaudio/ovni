@@ -4,9 +4,15 @@
 x86_64), VST3 + AU**; VST3 x64 para Windows 10+ en ZIP sin firma, en el mismo release.
 Es el 9º plugin del sello. El diseño (motor + 13 lentes, honestidad medible) está desarrollado en este mismo documento, en la [ficha técnica](docs/ficha.md) y en el [manual](docs/manual/README.md); el spec interno de diseño no viaja en el repo público.
 
-> **Estado: 0.1.0 — las 13 lentes construidas.** LOUDNESS · DYNAMICS · SPECTRUM · SPECTROGRAM ·
+> **Estado: 0.2.0 — las 13 lentes construidas.** LOUDNESS · DYNAMICS · SPECTRUM · SPECTROGRAM ·
 > WATERFALL · CQT · SPIRAL · SCOPE (con HEMISFERIO) · BAND CORRELATION · STEREO SPECTROGRAM · FIELD ·
 > TONAL BALANCE · VERDICT. No hay "coming soon": lo que está en la tira, mide.
+> **Lo que suma la 0.2** (el detalle, con el commit y el test de cada renglón, en el [CHANGELOG](CHANGELOG.md)):
+> la ventana abierta ya no traba el DAW; tema claro (el oscuro sigue siendo el de fábrica); rótulos a
+> ≥ 4,5:1 y 11 px; VERDICT que reacomoda a 125 y 150 %; el silencio no se muestra como medición; el tramo
+> de la referencia en TONAL BALANCE; la herramienta de consola [`telescope-measure`](measure/SCHEMA.md)
+> (el motor como biblioteca, `ovni_analysis`), y la tarjeta que presenta a EYEPIECE, una vez y sólo en la
+> Mac. **Lo que mide un archivo no cambió**: los 13 dorados de `[golden]` son los de la 0.1.0, al bit.
 > La versión vive en [`VERSION`](VERSION) y de ahí la leen el CMake, el test `telescope-version`, el
 > `SOURCE.txt` del `.pkg`, el [CHANGELOG](CHANGELOG.md) y la [ficha](docs/ficha.md).
 
@@ -25,9 +31,10 @@ ctest --test-dir build -R telescope --output-on-failure
 Cuatro targets y nada más: el árbol es un monorepo y `ninja` pelado construiría también los otros ocho
 plugins (que, con `COPY_PLUGIN_AFTER_BUILD`, pisarían los bundles instalados en `~/Library`).
 
-`ctest -R telescope` corre tres cosas: la batería entera del exe (`telescope`), la guardia de versión
+`ctest -R telescope` corre cuatro cosas: la batería entera del exe (`telescope`), la guardia de versión
 (`telescope-version`, que compara los `Info.plist` de los tres bundles —y el CHANGELOG y la ficha— contra
-[`VERSION`](VERSION)) y la de frescura de la matriz de idiomas (`telescope-strings-matrix`).
+[`VERSION`](VERSION)), la de frescura de la matriz de idiomas (`telescope-strings-matrix`) y, desde la 0.2,
+`telescope-measure` visto desde afuera del proceso (`telescope-measure-cli`).
 
 Filtros de Catch2 sobre el exe (`build/plugins/telescope/tests/OvniTelescopeTests_artefacts/Release/OvniTelescopeTests`):
 la tabla completa está en [Verificación](#verificación), al final.
@@ -1225,16 +1232,29 @@ Filtros de Catch2 sobre `$(find build -type f -name OvniTelescopeTests)`:
 | `[smoke]` | instancia, prepare en 44.1/48/96 kHz × 64/512/2048, editor |
 | `[gain]` | la puerta anti-clip del sello: full-scale por el processor ensamblado → `PEAK=1.000000` e identidad muestra a muestra. Es el test que `tools/gain-staging-check.sh` busca (0.1.0) |
 | `[.][strings-dump]` | **no verifica: genera.** Vuelca `docs/strings-matrix.md` desde las tablas del código. Oculto con `[.]`, no corre en la suite normal (0.1.0) |
+| `[golden]` | el motor sobre señales fijas, volcado a texto y comparado **byte a byte** con 13 dorados generados con el código de la 0.1.0: lo que mide un archivo no cambia (0.2) |
+| `[measure]` `[range]` | `telescope-measure` y el JSON v1, regla por regla con su control; medir `[a, b)` = medir el archivo cortado ahí, al bit (0.2) |
+| `[tramo]` | el tramo de la referencia en TONAL BALANCE: las bandas = las de `telescope-measure`, el estado vuelve igual, el arrastre y el doble clic (0.2) |
+| `[silencio]` `[f5]` | lo que se muestra en vivo cuando no suena nada: DYNAMICS, TONAL BALANCE y VERDICT, en silencio, con señal y con silencio después de señal; VERDICT sin audio sobre −70 LUFS no evalúa ninguna regla, tampoco por archivo (0.2) |
+| `[editorbudget]` | el editor entero: el fondo se hornea una vez y ninguna lente repinta en silencio; a escala no entera la lente cuesta lo mismo que en el origen (0.2) |
+| `[ancla]` `[scopetrail]` | la lente cae en un píxel físico entero sin que el test ponga el ancla; la estela de SCOPE nace limpia (0.2) |
+| `[contraste]` `[tira]` `[reacomoda]` `[pantalla]` | los rótulos a ≥ 4,5:1 contra su fondo real y ≥ 11 px, en los dos temas; la tira en seis idiomas sin cortar; VERDICT sin texto cortado a 125 y 150 %; la ventana en 1344 × 840 puntos (0.2) |
+| `[tema]` `[pantalla-datos]` `[lock]` | el tema claro: sólo su clave en `OVNI.settings`, releída con el lock entre procesos; las cuatro lentes de datos, iguales en los dos temas (0.2) |
+| `[eyepiece]` | la tarjeta de EYEPIECE: una vez, «Cerrar» persiste, el botón según la detección, apagada en el runner, y fuera de la Mac no existe (0.2) |
+| `[columnas]` `[graves]` `[tmp]` | FIELD y WATERFALL de a dos columnas contra el camino fino; graves de verdad por archivo y en vivo hasta VERDICT; los WAV de los tests en la carpeta de build (0.2) |
+| `[mayus]` `[modo]` | la caja sin locale: con el locale «C» puesto a propósito, `look::upper`/`look::lower` en los seis idiomas y los títulos de VERDICT dibujados con su tilde; el botón MODO con el nombre entero del modo, en los seis idiomas, en S/M/L a 100, 125 y 150 % (0.2) |
+| `[.][fotos-idiomas]` | **no verifica: fotografía.** VERDICT en los seis idiomas a M y 125 %, en ARCHIVO y EN VIVO, e imprime lo que dibujó. Oculto con `[.]` (0.2) |
 
 > Catch2 v3 combina varios tags con **coma**, no con espacios: `"[chain],[lifecycle]"` corre los dos;
 > `"[chain]" "[lifecycle]"` pide los que tengan **ambos** tags y no corre nada.
 
-Además del exe, `ctest -R telescope` corre dos guardias que no son tags de Catch2 porque miran cosas que
+Además del exe, `ctest -R telescope` corre tres guardias que no son tags de Catch2 porque miran cosas que
 no están adentro del binario:
 
 | Test de ctest | Qué verifica |
 |---|---|
-| `telescope-version` | los `Info.plist` de los tres bundles, el CHANGELOG y la ficha declaran lo que dice [`VERSION`](VERSION) |
+| `telescope-version` | los `Info.plist` de los tres bundles, la entrada de arriba del CHANGELOG (desde la 0.2.0 las viejas quedan debajo, con su número) y la ficha declaran lo que dice [`VERSION`](VERSION) |
+| `telescope-measure-cli` | `telescope-measure` como binario: exit, que no escribe en disco, los mismos bytes dos veces y `--version` (0.2) |
 | `telescope-strings-matrix` | `docs/strings-matrix.md` está al día: se regenera a un temporal y se compara |
 
 **Determinismo.** Las garantías bit-exactas del plugin — el pass-through de `[null]`, el `casa-4` del

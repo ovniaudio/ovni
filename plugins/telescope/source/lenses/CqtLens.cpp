@@ -11,7 +11,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 // Las cinco negras de la octava, en clases de nota (C=0): C# D# F# G# A#.
 bool isBlackKey (int pitchClass) noexcept
@@ -112,16 +112,34 @@ float CqtLens::yForDb (float db) const
 //======================================================================================== animación
 bool CqtLens::advanceFrame()
 {
-    const int wantedRange = processor.spectrumSettings().rangeDb();
-    if (wantedRange != lastRangeDb) { lastRangeDb = wantedRange; invalidateStatic(); }
+    const int  wantedRange  = processor.spectrumSettings().rangeDb();
+    const bool rangeChanged = wantedRange != lastRangeDb;
+    if (rangeChanged) { lastRangeDb = wantedRange; invalidateStatic(); }
 
     const auto& f = processor.cqt().read();
     const bool fresh = f.frameIndex != lastFrameIndex || f.numBins != binsSeen;
 
+    // ¿El cuadro nuevo cambia algo que se dibuja TAL CUAL (sin suavizar)? El hold, el cromagrama suavizado
+    // del motor, la tonalidad y la latencia. Lo suavizado lo cubre `moved`, abajo.
+    bool frameChanged = false;
     if (fresh)
     {
+        // La tonalidad se escribe con la confianza a dos decimales y el tiempo en % entero: cuenta el TEXTO.
+        // En silencio las dos estadísticas siguen moviéndose en el tercer decimal (medido) sin que cambie
+        // una letra.
+        frameChanged = juce::String (latencySeen, 2) != juce::String (f.lowestBinLatencySec, 2)
+                    || keyTonic != f.keyTonic || keyMode != f.keyMode
+                    || juce::String (keyConfidence, 2) != juce::String (f.keyConfidence, 2)
+                    || juce::roundToInt (100.0f * keyTimeFraction) != juce::roundToInt (100.0f * f.keyTimeFraction);
+        for (int k = 0; k < binsSeen && k < f.numBins && ! frameChanged; ++k)
+            frameChanged = std::abs (holdDb[(size_t) k] - f.holdDb[k]) > 0.01f
+                        && juce::jmax (holdDb[(size_t) k], f.holdDb[k]) > -(float) lastRangeDb - 20.0f;
+        for (int c = 0; c < CqtFrame::kNumClasses && ! frameChanged; ++c)
+            frameChanged = std::abs (chromaSm[c] - f.chromaSmooth[c]) > 0.002f;
+
         if (f.numBins != binsSeen || f.binsPerOctave != bpoSeen)
         {
+            frameChanged = true;
             binsSeen = f.numBins;
             bpoSeen  = juce::jmax (1, f.binsPerOctave);
             fMinSeen = f.fMin > 0.0f ? f.fMin : (float) Cqt::kFMinHz;
@@ -157,7 +175,8 @@ bool CqtLens::advanceFrame()
     {
         const float target = targetDb[k], before = dispDb[k];
         dispDb[k] = (reduced || target > before) ? target : before + (target - before) * kRelease;
-        moved = moved || std::abs (dispDb[k] - before) > 0.01f;
+        // El piso de silencio: por debajo del rango del plot (menos 20 dB de margen) la barra no se ve.
+        moved = moved || (std::abs (dispDb[k] - before) > 0.01f && juce::jmax (dispDb[k], before) > -(float) lastRangeDb - 20.0f);
     }
     for (int c = 0; c < CqtFrame::kNumClasses; ++c)
     {
@@ -165,7 +184,9 @@ bool CqtLens::advanceFrame()
         dispChroma[c] = (reduced || target > before) ? target : before + (target - before) * kRelease;
         moved = moved || std::abs (dispChroma[c] - before) > 0.002f;
     }
-    return fresh || moved;
+    // Antes era `fresh || moved`: en silencio el motor sigue publicando cuadros idénticos y la lente no
+    // paraba nunca (prompt 96). Cuenta lo que se ve.
+    return moved || frameChanged || rangeChanged;
 }
 
 //======================================================================================== capa estática
@@ -179,24 +200,24 @@ void CqtLens::renderStatic (juce::Graphics& g, int width, int height)
 
     // ---- eje de dB: la misma escala de SPECTRUM (0 arriba, el rango elegido hacia abajo) ----
     const int step = lastRangeDb >= 120 ? 20 : (lastRangeDb >= 90 ? 15 : 10);
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     for (int db = 0; db >= -lastRangeDb; db -= step)
     {
         const int y = juce::roundToInt (yForDb ((float) db));
         g.setColour (db == 0 ? th::line : th::lineSoft);
         look::fillSnapped (g, { (float) (zones.plot.getX()), (float) (y), (float) (zones.plot.getWidth()), 1.0f });
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (juce::String (db), zones.dbScale.getX(), y - 6, kScaleW - 6, 12,
-                    juce::Justification::centredRight, false);
+                    juce::Justification::centredRight, true);
     }
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText ("dB", zones.dbScale.getX(), zones.plot.getY() + 2, kScaleW - 6, 12,
-                juce::Justification::centredRight, false);
+    g.setFont (look::label (10.0f));
+    g.drawText ("dB", zones.dbScale.getX(), zones.plot.getY() + 8, kScaleW - 6, 12,
+                juce::Justification::centredRight, true);
 
     // ---- una marca vertical en cada DO, con su octava ----
     const int semitones = binsSeen * 12 / juce::jmax (1, bpoSeen);
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     for (int s = 0; s < semitones; ++s)
     {
         const int midi = 21 + s;                       // el semitono 0 es A0 = MIDI 21
@@ -206,9 +227,8 @@ void CqtLens::renderStatic (juce::Graphics& g, int width, int height)
         const int x = juce::roundToInt (xForPosition ((double) (s * perSemi) - 0.5 * (double) perSemi));
         g.setColour (look::gridMajor);
         look::fillSnapped (g, { (float) (x), (float) (zones.plot.getY()), 1.0f, (float) (zones.plot.getHeight()) });
-        g.setColour (th::fnt);
-        g.drawText ("C" + juce::String (midi / 12 - 1), x + 3, zones.plot.getY() + 2, 26, 12,
-                    juce::Justification::centredLeft, false);
+        // El rótulo de la octava va en la capa VIVA, encima de las barras (paintOctaveTags): acá abajo, una
+        // barra alta lo tapaba a medias y lo dejaba en 4.4:1 (F2 de la 0.2).
     }
 
     paintKeyboard (g);
@@ -219,15 +239,15 @@ void CqtLens::renderStatic (juce::Graphics& g, int width, int height)
     g.setColour (look::gridMinor);
     g.drawRoundedRectangle (zones.chroma.toFloat().reduced (0.5f), 3.0f, 1.0f);
 
-    g.setFont (ovni::ui::fonts::label (9.0f));
+    g.setFont (look::label (9.0f));
     const float cw = (float) zones.chroma.getWidth() / (float) CqtFrame::kNumClasses;
     for (int c = 0; c < CqtFrame::kNumClasses; ++c)
     {
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (classNameFor (c, strings::languageOf (stateTree())),
                     juce::Rectangle<float> ((float) zones.chroma.getX() + (float) c * cw,
                                             (float) zones.chroma.getBottom() - 11.0f, cw, 10.0f),
-                    juce::Justification::centred, false);
+                    juce::Justification::centred, true);
     }
 
 }
@@ -366,6 +386,20 @@ void CqtLens::paintLive (juce::Graphics& g)
             g.fillRect (juce::Rectangle<float> (x0, yh, juce::jmax (1.0f, x1 - x0 - 0.5f), 1.0f));
         }
         g.restoreState();
+
+        // Los rótulos de octava, ENCIMA de las barras y con su pastilla (Look.h, drawTagOverData): la
+        // línea de cada Do sigue en la capa estática.
+        g.setFont (look::mono (9.0f));
+        const int semitones = binsSeen * 12 / juce::jmax (1, bpoSeen);
+        const int perSemi   = juce::jmax (1, bpoSeen / 12);
+        for (int s = 0; s < semitones; ++s)
+        {
+            const int midi = 21 + s;
+            if (((midi % 12) + 12) % 12 != 0) continue;
+            const int x = juce::roundToInt (xForPosition ((double) (s * perSemi) - 0.5 * (double) perSemi));
+            look::drawTagOverData (g, "C" + juce::String (midi / 12 - 1), { x + 3, zones.plot.getY() + 2, 26, 12 },
+                                   juce::Justification::centredLeft, look::txtTertiary);
+        }
     }
 
     paintChroma (g);
@@ -385,14 +419,14 @@ void CqtLens::paintLive (juce::Graphics& g)
     const auto libre = zones.footer.withLeft (zones.button[kNumControls - 1].getRight() + 12);
     if (libre.getWidth() > 120)
     {
-        g.setColour (th::fnt);
-        g.setFont (ovni::ui::fonts::label (9.0f));
-        g.drawText (tr (strings::Key::bassLatency), libre.withTrimmedRight (72), juce::Justification::centredRight, false);
+        g.setColour (look::txtTertiary);
+        g.setFont (look::label (9.0f));
+        g.drawText (tr (strings::Key::bassLatency), libre.withTrimmedRight (72), juce::Justification::centredRight, true);
         g.setColour (th::mut);
-        g.setFont (ovni::ui::fonts::mono (10.0f));
+        g.setFont (look::mono (10.0f));
         g.drawText ("A0 " + juce::String::fromUTF8 ("\xc2\xb7") + " "
                         + juce::String (latencySeen > 0.0f ? latencySeen : 1.241f, 2) + " s",
-                    libre, juce::Justification::centredRight, false);
+                    libre, juce::Justification::centredRight, true);
     }
 }
 
@@ -443,8 +477,8 @@ void CqtLens::paintChroma (juce::Graphics& g) const
         text = tr (strings::Key::noKeyEstimated);
 
     g.setColour (keyTonic >= 0 ? th::txt : th::mut);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (text, zones.keyText, juce::Justification::centred, false);
+    g.setFont (look::mono (11.0f));
+    g.drawText (text, zones.keyText, juce::Justification::centred, true);
 }
 
 //======================================================================================== lectura
@@ -480,7 +514,7 @@ void CqtLens::paintReadout (juce::Graphics& g) const
                             + juce::String::fromUTF8 ("  \xc2\xb7  ")
                             + juce::String (r.db, 1) + " dB";
 
-    g.setFont (ovni::ui::fonts::mono (11.0f));
+    g.setFont (look::mono (11.0f));
     const int tw = juce::jmax (170, (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text)) + 16);
     const auto box = readoutBoxFor (zones.plot, cursorX, tw);
 
@@ -489,7 +523,7 @@ void CqtLens::paintReadout (juce::Graphics& g) const
     g.setColour (th::green.withAlpha (0.4f));
     g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 3.0f, 1.0f);
     g.setColour (th::txt);
-    g.drawText (text, box, juce::Justification::centred, false);
+    g.drawText (text, box, juce::Justification::centred, true);
 }
 
 void CqtLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& label,
@@ -509,12 +543,8 @@ void CqtLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const j
     }
 
     auto inner = area.reduced (8, 0);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.0f));
-    g.drawText (label, inner.removeFromLeft (inner.getWidth() / 2), juce::Justification::centredLeft, false);
-    g.setColour (hue);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (value, inner, juce::Justification::centredRight, false);
+    look::drawLabelValue (g, inner, label, look::label (9.0f), look::txtTertiary,
+                         value, look::mono (11.0f), hue);
 }
 
 //======================================================================================== interacción

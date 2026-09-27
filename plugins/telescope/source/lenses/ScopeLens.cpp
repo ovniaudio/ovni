@@ -5,13 +5,14 @@
 #include "analysis/modules/Stereo.h"
 #include "ui-kit/Fonts.h"
 #include "ui-kit/Theme.h"
+#include <algorithm>
 #include <cmath>
 
 namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 constexpr float kCorrSmoothing = 0.30f;
 const float     kInvSqrt2      = 1.0f / std::sqrt (2.0f);
@@ -229,7 +230,7 @@ void ScopeLens::renderStatic (juce::Graphics& g, int width, int height)
             g.setColour (mk.hi ? look::dataLine.withAlpha (0.85f) : look::txtSecondary);
             g.drawText (tr (mk.k), juce::roundToInt (cx + mk.dx * rad - 10.0f),
                         juce::roundToInt (baseY + mk.dy * rad - 7.0f), 20, 14,
-                        juce::Justification::centred, false);
+                        juce::Justification::centred, true);
         }
 
         // Los rótulos de dB sobre el eje mono, tabulares para que no bailen al cambiar de tamaño. Son
@@ -240,19 +241,19 @@ void ScopeLens::renderStatic (juce::Graphics& g, int width, int height)
         for (const float db : { -6.0f, -12.0f, -18.0f })
             g.drawText (juce::String ((int) db), juce::roundToInt (cx + 4.0f),
                         juce::roundToInt (baseY - rad * hemiRadiusFrac (db, 0.0f, scNow) - 11.0f), 34, 12,
-                        juce::Justification::left, false);
+                        juce::Justification::left, true);
 
         g.setColour (look::txtTertiary);
         g.setFont (look::labelFont (m.textMicro));
         g.drawText (tr (strings::Key::hemiLegend),
                     (int) plot.getX(), (int) plot.getBottom() - 13, (int) plot.getWidth(), 12,
-                    juce::Justification::centred, false);
+                    juce::Justification::centred, true);
         g.setColour (look::txtSecondary);
         g.setFont (look::labelFont (m.textSmall));
         g.drawText (tr (strings::Key::hemisphere), zones.gonio.getX() + 10, zones.gonio.getY() + 6,
-                    zones.gonio.getWidth() - 20, 14, juce::Justification::left, false);
+                    zones.gonio.getWidth() - 20, 14, juce::Justification::left, true);
         g.drawText (tr (strings::Key::correlation), zones.centre.getX(), zones.centre.getY() + 6,
-                    zones.centre.getWidth(), 14, juce::Justification::centred, false);
+                    zones.centre.getWidth(), 14, juce::Justification::centred, true);
         return;
     }
 
@@ -275,7 +276,7 @@ void ScopeLens::renderStatic (juce::Graphics& g, int width, int height)
     g.drawLine (c.x - d, c.y - d, c.x + d, c.y + d, 1.0f);
     g.drawLine (c.x + d, c.y - d, c.x - d, c.y + d, 1.0f);
 
-    g.setFont (ovni::ui::fonts::label (10.0f));
+    g.setFont (look::label (10.0f));
     // 57b — SE FUE EL RÓTULO DEL LADO. Estaba solo a la derecha (el del lado negativo, a la izquierda,
     // no se rotulaba), así que el eje se leía como si hubiera un canal con ese nombre en un solo lado.
     // Que el eje horizontal sea el lado es cierto y no hace falta decirlo: lo que el ojo necesita en un
@@ -285,10 +286,10 @@ void ScopeLens::renderStatic (juce::Graphics& g, int width, int height)
     };
     for (const auto& m : marks)
     {
-        g.setColour (m.t[0] == 'M' ? hue.withAlpha (0.8f) : th::fnt);
+        g.setColour (m.t[0] == 'M' ? hue.withAlpha (0.8f) : look::txtTertiary);
         g.drawText (m.t, juce::roundToInt (c.x + m.dx * (radius + 9.0f) - 8.0f),
                     juce::roundToInt (c.y + m.dy * (radius + 9.0f) - 7.0f), 16, 14,
-                    juce::Justification::centred, false);
+                    juce::Justification::centred, true);
     }
 
     // ---- retícula del osciloscopio: cero y ±0.5 ----
@@ -300,11 +301,11 @@ void ScopeLens::renderStatic (juce::Graphics& g, int width, int height)
         look::fillSnapped (g, { (float) (os.getX()), (float) (os.getCentreY() + juce::roundToInt (f * (float) os.getHeight() * 0.5f)), (float) (os.getWidth()), 1.0f });
 
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
+    g.setFont (look::label (10.0f));
     g.drawText (tr (strings::Key::oscilloscope) + "  40 ms", os.getX(), os.getY() + 2, os.getWidth(), 14,
-                juce::Justification::left, false);
+                juce::Justification::left, true);
     g.drawText (tr (strings::Key::correlation), zones.centre.getX() + 10, zones.centre.getY() + 8,
-                zones.centre.getWidth() - 20, 14, juce::Justification::left, false);
+                zones.centre.getWidth() - 20, 14, juce::Justification::left, true);
 }
 
 //======================================================================================== capa viva
@@ -578,7 +579,7 @@ void ScopeLens::paintHemisphere (juce::Graphics& g)
     g.setColour (look::txtTertiary);
     g.setFont (look::tabularFont (m.textMicro));
     g.drawText (juce::String (hemi.peakDb, 1) + " dB", (int) plot.getX(), (int) plot.getY() + 2,
-                (int) plot.getWidth() - 4, 12, juce::Justification::right, false);
+                (int) plot.getWidth() - 4, 12, juce::Justification::right, true);
 
 }
 
@@ -618,13 +619,13 @@ void ScopeLens::paintCorrelationVertical (juce::Graphics& g, juce::Rectangle<int
 
     g.setColour (look::txtTertiary);
     g.setFont (look::tabularFont (m.textMicro));
-    g.drawText ("+1", area.getX(), bar.getY() - 12, area.getWidth(), 12, juce::Justification::centred, false);
-    g.drawText ("0",  area.getX(), bar.getCentreY() - 6, area.getWidth(), 12, juce::Justification::centred, false);
-    g.drawText ("-1", area.getX(), bar.getBottom(), area.getWidth(), 12, juce::Justification::centred, false);
+    g.drawText ("+1", area.getX(), bar.getY() - 12, area.getWidth(), 12, juce::Justification::centred, true);
+    g.drawText ("0",  area.getX(), bar.getCentreY() - 6, area.getWidth(), 12, juce::Justification::centred, true);
+    g.drawText ("-1", area.getX(), bar.getBottom(), area.getWidth(), 12, juce::Justification::centred, true);
 
     g.setColour (dispCorr < 0.0f ? look::alert : look::txtPrimary);
     g.setFont (look::tabularFont (m.textNumber));
-    g.drawText (fmt2 (dispCorr), value, juce::Justification::centred, false);
+    g.drawText (fmt2 (dispCorr), value, juce::Justification::centred, true);
 }
 
 // El goniómetro con su capa de fósforo. La capa se ATENÚA (no se borra) y encima van los puntos del hop:
@@ -653,13 +654,13 @@ void ScopeLens::paintGonio (juce::Graphics& g)
 
     // La escala, SIEMPRE a la vista: el anillo exterior vale este pico. Sin este rótulo la auto-escala
     // sería un gráfico bonito sin unidades.
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.5f));
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (9.5f));
     const auto peakDb = 20.0f * std::log10 (juce::jmax (1.0e-6f, gonioPeak));
     g.drawText (processor.scopePolar()
                     ? tr (strings::Key::polarLegend)
                     : trLower (strings::Key::lissajous) + juce::String::fromUTF8 (" \xc2\xb7 ") + trLower (strings::Key::peakEdge) + " " + juce::String (peakDb, 1) + " dBFS",
-                area.getX(), area.getBottom() - 12, area.getWidth(), 12, juce::Justification::centred, false);
+                area.getX(), area.getBottom() - 12, area.getWidth(), 12, juce::Justification::centred, true);
 }
 
 void ScopeLens::decayTrail()
@@ -729,7 +730,10 @@ void ScopeLens::plotPoints (juce::Image& img, juce::Rectangle<int> area, float a
 
         // Acumulativo dentro del frame (donde se cruzan muchas muestras, brilla más) pero acotado a 255.
         const auto prev = bd.getPixelColour (px, py);
-        const float a   = juce::jmin (1.0f, prev.getFloatAlpha() + alpha * 0.42f);   // 56: punto más fino
+        // F2 de la 0.2: en el tema CLARO un punto de verde oscuro al 36 % sobre papel es un gris que casi no
+        // se ve (sobre negro, el mismo punto brilla). La ganancia por impacto sube sólo en claro.
+        const float gain = look::theme() == look::Theme::light ? 0.85f : 0.42f;
+        const float a   = juce::jmin (1.0f, prev.getFloatAlpha() + alpha * gain);   // 56: punto más fino
         bd.setPixelColour (px, py, hue.withAlpha (a));
     }
 }
@@ -744,8 +748,8 @@ void ScopeLens::paintCorrelation (juce::Graphics& g, juce::Rectangle<int> area) 
     // ---- el número, grande: es la lectura que se mira de reojo ----
     auto head = r.removeFromTop (juce::jmax (46, r.getHeight() / 4));
     g.setColour (dispCorr < 0.0f ? th::red : th::txt);
-    g.setFont (ovni::ui::fonts::mono ((float) juce::jmin (40, head.getHeight() - 6)));
-    g.drawText (fmt2 (dispCorr), head, juce::Justification::centredLeft, false);
+    g.setFont (look::mono ((float) juce::jmin (40, head.getHeight() - 6)));
+    g.drawText (fmt2 (dispCorr), head, juce::Justification::centredLeft, true);
 
     // ---- la barra -1…+1, con la mitad negativa marcada ----
     auto bar = r.removeFromTop (26);
@@ -763,11 +767,11 @@ void ScopeLens::paintCorrelation (juce::Graphics& g, juce::Rectangle<int> area) 
     g.setColour (dispCorr < 0.0f ? th::red : hue);
     g.fillRect (x - 1, bar.getY() + 1, 3, bar.getHeight() - 2);
 
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::mono (9.0f));
-    g.drawText ("-1", bar.getX(), bar.getBottom() + 1, 20, 12, juce::Justification::left, false);
-    g.drawText ("0",  bar.getCentreX() - 10, bar.getBottom() + 1, 20, 12, juce::Justification::centred, false);
-    g.drawText ("+1", bar.getRight() - 20, bar.getBottom() + 1, 20, 12, juce::Justification::right, false);
+    g.setColour (look::txtTertiary);
+    g.setFont (look::mono (9.0f));
+    g.drawText ("-1", bar.getX(), bar.getBottom() + 1, 20, 12, juce::Justification::left, true);
+    g.drawText ("0",  bar.getCentreX() - 10, bar.getBottom() + 1, 20, 12, juce::Justification::centred, true);
+    g.drawText ("+1", bar.getRight() - 20, bar.getBottom() + 1, 20, 12, juce::Justification::right, true);
     r.removeFromTop (16);
 
     // ---- lectura fina ----
@@ -780,10 +784,10 @@ void ScopeLens::paintCorrelation (juce::Graphics& g, juce::Rectangle<int> area) 
     paintReadout (g, r.removeFromTop (rowH), tr (strings::Key::monoLoss),
                   juce::String (monoLossDb, 1) + " dB", monoLossDb < -3.0f ? th::red : th::txt);
 
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.5f));
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (9.5f));
     g.drawText (trLower (strings::Key::window) + " " + juce::String (windowSec, 2) + " s",
-                r.getX(), r.getY(), r.getWidth(), 14, juce::Justification::left, false);
+                r.getX(), r.getY(), r.getWidth(), 14, juce::Justification::left, true);
 }
 
 // ===== 57b: LOS TRES NÚMEROS DEL ESTÉREO, EN UNA FILA =====
@@ -818,28 +822,29 @@ void ScopeLens::paintStereoNumbers (juce::Graphics& g, juce::Rectangle<int> area
         g.setColour (look::txtTertiary);
         g.setFont (look::labelFont (m.textMicro));
         // En mayúscula como los otros tres: en la tabla `outOfPhase` está en caja baja porque también se
-        // usa como frase suelta, y acá es un rótulo de columna.
-        g.drawText (tr (cells[i].k).toUpperCase(), r.getX(), r.getY(), r.getWidth(), r.getHeight() / 2,
-                    juce::Justification::centredLeft, false);
+        // usa como frase suelta, y acá es un rótulo de columna. Con look::upper (F5b, D-126): toUpperCase
+        // depende del locale del host.
+        g.drawText (look::upper (tr (cells[i].k)), r.getX(), r.getY(), r.getWidth(), r.getHeight() / 2,
+                    juce::Justification::centredLeft, true);
         g.setColour (quiet ? look::txtTertiary : cells[i].tint);
         g.setFont (quiet ? look::labelFont (m.textMicro) : look::tabularFont (m.textNumber));
         g.drawText (quiet ? tr (strings::Key::noSignal) : cells[i].v,
                     r.getX(), r.getY() + r.getHeight() / 2, r.getWidth(), r.getHeight() / 2,
-                    juce::Justification::centredLeft, false);
+                    juce::Justification::centredLeft, true);
     }
 }
 
 void ScopeLens::paintReadout (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& label,
                               const juce::String& value, juce::Colour tint) const
 {
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.5f));
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (9.5f));
     g.drawText (label, area.getX(), area.getY(), area.getWidth() / 2, area.getHeight(),
-                juce::Justification::centredLeft, false);
+                juce::Justification::centredLeft, true);
     g.setColour (tint);
-    g.setFont (ovni::ui::fonts::mono (13.0f));
+    g.setFont (look::mono (13.0f));
     g.drawText (value, area.getX() + area.getWidth() / 2, area.getY(), area.getWidth() / 2, area.getHeight(),
-                juce::Justification::centredRight, false);
+                juce::Justification::centredRight, true);
 }
 
 void ScopeLens::paintOsc (juce::Graphics& g, juce::Rectangle<int> area) const
@@ -903,13 +908,13 @@ void ScopeLens::paintOsc (juce::Graphics& g, juce::Rectangle<int> area) const
     trace (scope.oscR, look::reference.withAlpha (0.30f),    1.0f, false);
     trace (scope.oscM, look::dataLine,                       1.6f, true);
 
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.5f));
+    g.setColour (look::txtTertiary);
+    g.setFont (look::label (9.5f));
     const auto oscTag = tr (strings::Key::mid) + juce::String::fromUTF8 (" \xc2\xb7 ") + tr (strings::Key::left)
                         + juce::String::fromUTF8 (" \xc2\xb7 ") + tr (strings::Key::right)
                         + "   " + tr (useTrigger ? strings::Key::trigger : strings::Key::free);
     g.drawText (oscTag,
-                r.getX(), r.getBottom() - 13, r.getWidth(), 12, juce::Justification::left, false);
+                r.getX(), r.getBottom() - 13, r.getWidth(), 12, juce::Justification::left, true);
 }
 
 void ScopeLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& text,
@@ -929,14 +934,40 @@ void ScopeLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const
     }
 
     g.setColour (active ? hue : th::txt);
-    g.setFont (ovni::ui::fonts::label (10.5f));
-    g.drawText (text, area, juce::Justification::centred, false);
+    g.setFont (look::label (10.5f));
+    g.drawText (text, area, juce::Justification::centred, true);
 }
 
 //======================================================================================== animación
+namespace
+{
+// ¿El hop nuevo dibuja lo MISMO que el anterior? Con el transporte parado el host sigue mandando ceros y
+// el motor sigue publicando hops: nuevos, pero idénticos (todos los puntos en el centro, la onda plana,
+// la envolvente en el piso). Un hop así no es un cambio: si contara, la lente repintaría 30 veces por
+// segundo para siempre mirando silencio (prompt 96, la ventana que trababa el DAW).
+bool sameHop (const ScopeFrame& a, const ScopeFrame& b) noexcept
+{
+    const auto same = [] (const float* x, const float* y, int n)
+    {
+        return std::equal (x, x + juce::jmax (0, n), y);
+    };
+    return a.xyCount == b.xyCount && a.oscCount == b.oscCount && a.trigger == b.trigger
+        && a.envelopePeakDb == b.envelopePeakDb
+        && same (a.xyL, b.xyL, a.xyCount) && same (a.xyR, b.xyR, a.xyCount)
+        && same (a.oscM, b.oscM, a.oscCount) && same (a.oscL, b.oscL, a.oscCount)
+        && same (a.oscR, b.oscR, a.oscCount)
+        && same (a.envelope, b.envelope, ScopeFrame::kHemiBins);
+}
+
+bool movedBy (float now, float before, float eps) noexcept { return std::abs (now - before) > eps; }
+}
+
 bool ScopeLens::advanceFrame()
 {
     const auto& f = processor.analysis().read();
+    // Las lecturas finas (WIDTH / BALANCE / MONO LOSS / ventana) se escriben con dos decimales.
+    const bool numbersMoved = movedBy (f.width, width, 1.0e-3f) || movedBy (f.balanceDb, balanceDb, 1.0e-3f)
+                           || movedBy (f.monoLossDb, monoLossDb, 1.0e-3f) || f.stereoWindowSec != windowSec;
     corr       = f.corr;
     width      = f.width;
     balanceDb  = f.balanceDb;
@@ -945,7 +976,8 @@ bool ScopeLens::advanceFrame()
 
     const auto& s = processor.scope().read();
     const bool  fresh = s.timeSeconds != lastFrameTime;
-    if (fresh) { scope = s; lastFrameTime = s.timeSeconds; }
+    bool hopChanged = false;
+    if (fresh) { hopChanged = ! sameHop (scope, s); scope = s; lastFrameTime = s.timeSeconds; }
 
     // Pico del hop para la auto-escala: sube de una (no perderse un transitorio) y baja despacio (que la
     // nube no lata con cada golpe). Es el comportamiento de cualquier medidor de picos con hold.
@@ -953,25 +985,45 @@ bool ScopeLens::advanceFrame()
     for (int i = 0; i < scope.xyCount; ++i)
         hopPeak = juce::jmax (hopPeak, juce::jmax (std::abs (scope.xyL[(size_t) i]),
                                                    std::abs (scope.xyR[(size_t) i])));
+    const bool anyPoint = hopPeak > 0.0f;
     hopPeak = juce::jmax (hopPeak, kGonioMinPeak);
     // Con reduced-motion la escala TAMBIÉN salta: una escala que se desliza sola durante segundos es
     // movimiento, aunque sea movimiento útil. El cuadro tiene que quedar quieto y coherente.
+    const float peakBefore = gonioPeak;
     gonioPeak = (prefersReducedMotion() || hopPeak > gonioPeak)
                   ? hopPeak
                   : gonioPeak + (hopPeak - gonioPeak) * 0.08f;
+    // La escala se VE de dos maneras: en el rótulo (dBFS con un decimal) y en el tamaño de la nube — éste
+    // sólo si hay algún punto fuera del centro (en silencio están todos en el centro y la escala no mueve
+    // nada).
+    const auto label = [] (float peak) { return juce::roundToInt (200.0f * std::log10 (juce::jmax (1.0e-6f, peak))); };
+    const bool peakMoved = label (gonioPeak) != label (peakBefore)
+                        || (anyPoint && std::abs (gonioPeak - peakBefore) > peakBefore * 1.0e-4f);
 
     // ===== 56 ===== la envolvente del hemisferio. Se actualiza SIEMPRE (aunque el modo no esté a la
     // vista) por 30 muestras de 360 floats por segundo: es barato, y así cambiar de modo no muestra medio
     // segundo de pantalla vacía mientras la memoria se vuelve a llenar.
     //
     // Con reduced-motion NO hay memoria: la envolvente es el hop y nada más, un cuadro quieto.
-    hemi.update (scope, hemiDecayDbPerSec(), kHemiDecayFps, ! prefersReducedMotion());
+    const bool hemiChanged = hemi.update (scope, hemiDecayDbPerSec(), kHemiDecayFps, ! prefersReducedMotion());
 
     const float before = dispCorr;
     dispCorr = prefersReducedMotion() ? corr : dispCorr + (corr - dispCorr) * kCorrSmoothing;
 
-    // Sin reduced-motion la estela sigue viva un rato después del último hop: hay que seguir repintando.
-    return fresh || std::abs (dispCorr - before) > 1.0e-3f || ! prefersReducedMotion();
+    // Los ajustes que cambian el dibujo pueden cambiar sin un click en esta lente (un preset, el estado
+    // que restaura el host): con la lente en pausa también tienen que verse.
+    const int settings = (int) scopeMode() | ((processor.scopePolar() ? 1 : 0) << 4)
+                       | ((processor.scopeTrigger() ? 1 : 0) << 5) | (hemiDecayIndex() << 6)
+                       | ((int) hemiScale() << 10);
+    const bool settingsChanged = settings != lastSettings;
+    lastSettings = settings;
+
+    // Cambió algo que SE VE. Ya no alcanza con "llegó un hop" (en silencio llegan hops idénticos) ni con
+    // "no hay reduced-motion" (eso era repintar siempre). La estela de fósforo se apaga sola en ~8
+    // cuadros después del último cambio: el settleHold (30) de la base la cubre de sobra.
+    return hopChanged || numbersMoved || peakMoved || settingsChanged
+        || std::abs (dispCorr - before) > 1.0e-3f
+        || (hemiChanged && scopeMode() == Mode::hemisphere);
 }
 
 //======================================================================================== interacción

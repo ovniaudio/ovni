@@ -43,18 +43,16 @@ std::vector<double> majorTriadHz()
     return hz;
 }
 
+// Empuja `seconds` EXACTOS (el último bloque, corto: antes se completaba con ceros y el total no caía en
+// un hop) y espera a que el motor los haya digerido enteros (TestHelpers.h, waitDigested).
 void pushTriad (telescope::TelescopeProcessor& proc, double seconds, double amp)
 {
     const auto hz = majorTriadHz();
-    juce::AudioBuffer<float> buf (2, 512);
-    juce::MidiBuffer midi;
     long long n = 0;
     const auto total = (long long) std::llround (seconds * 48000.0);
 
-    for (long long done = 0; done < total; done += 512)
+    telescope::test::pushExact (proc, total, 48000.0, [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        const int k = (int) juce::jmin ((long long) 512, total - done);
-        buf.clear();
         for (int i = 0; i < k; ++i, ++n)
         {
             double v = 0.0;
@@ -63,13 +61,8 @@ void pushTriad (telescope::TelescopeProcessor& proc, double seconds, double amp)
             buf.setSample (0, i, (float) v);
             buf.setSample (1, i, (float) v);
         }
-        proc.processBlock (buf, midi);
-
-        const double pushed = (double) n / 48000.0;
-        if (pushed - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 8000));
-    }
+    });
+    telescope::test::waitDigested (proc, total, 48000.0);
 }
 
 // La captura a PNG vive en TestHelpers.h, en UNA sola copia (LOW de los tres revisores).
@@ -86,23 +79,22 @@ TEST_CASE ("telescope: snapshot del editor con la lente LOUDNESS en S/M/L", "[te
         proc.apvts.getParameter ("target")->convertTo0to1 (1.0f));   // Spotify
 
     const float peak = std::pow (10.0f, -14.0f / 20.0f);
-    juce::AudioBuffer<float> buf (2, 512);
-    juce::MidiBuffer midi;
     long long n = 0;
-    for (int b = 0; b < (int) (5.0 * 48000.0 / 512.0); ++b)
+    // F2b de la 0.2 · la foto del CLARO no salía igual dos veces (veredicto 99, reparo 1). Este caso empujaba
+    // un número NO entero de hops y esperaba un umbral anterior al final: la cola del último hop podía estar
+    // consumida o no al sacar la foto, según la carga. El oscuro lo tapaba porque hornea la atmósfera del
+    // sello (~4 veces más lento) y el motor terminaba antes; el claro no la hornea. Ahora: muestras EXACTAS
+    // en hops enteros y waitDigested (TestHelpers.h), la misma regla que la F2 le puso a los otros casos.
+    const auto pushed = telescope::test::pushExact (proc, 5 * 48000, 48000.0, [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < 512; ++i, ++n)
+        for (int i = 0; i < k; ++i, ++n)
         {
             const auto v = (float) (peak * std::sin (2.0 * juce::MathConstants<double>::pi * 997.0 * (double) n / 48000.0));
             buf.setSample (0, i, v);
             buf.setSample (1, i, v * 0.85f);   // un poco de desbalance: el medidor no es simétrico
         }
-        proc.processBlock (buf, midi);
-    }
-    // Que el motor digiera los ~5 s antes de la foto (espera por condición, no por reloj).
-    // 4.85 y no 4.9: `analysedSeconds` acumula 0.1 por hop y 0.1 no es exacto en binario — a los 49 hops
-    // vale 4.899999999999999. Comparar contra el borde exacto sería un test que falla por aritmética.
-    REQUIRE (telescope::test::waitUntil ([&] { return proc.analysis().read().timeSeconds >= 4.85; }, 3000));
+    });
+    telescope::test::waitDigested (proc, pushed, 48000.0);
 
     // La foto tiene que tener NÚMEROS adentro, no sólo el tamaño correcto.
     {
@@ -164,21 +156,24 @@ TEST_CASE ("telescope: snapshot de LOUDNESS con la ventana de short-term a medio
     proc.prepareToPlay (48000.0, 512);
 
     const float peak = std::pow (10.0f, -14.0f / 20.0f);
-    juce::AudioBuffer<float> buf (2, 512);
-    juce::MidiBuffer midi;
     long long n = 0;
-    for (int b = 0; b < (int) (0.55 * 48000.0 / 512.0); ++b)
+    // F2b de la 0.2 · la foto del CLARO no salía igual dos veces (veredicto 99, reparo 1). Este caso empujaba
+    // un número NO entero de hops y esperaba un umbral anterior al final: la cola del último hop podía estar
+    // consumida o no al sacar la foto, según la carga. El oscuro lo tapaba porque hornea la atmósfera del
+    // sello (~4 veces más lento) y el motor terminaba antes; el claro no la hornea. Ahora: muestras EXACTAS
+    // en hops enteros y waitDigested (TestHelpers.h), la misma regla que la F2 le puso a los otros casos.
+    // Medio segundo exacto (5 hops): el short-term de 3 s sigue a medio llenar, que es lo que se fotografía.
+    const auto pushed = telescope::test::pushExact (proc, 24000, 48000.0, [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < 512; ++i, ++n)
+        for (int i = 0; i < k; ++i, ++n)
         {
             const auto v = (float) (peak * std::sin (2.0 * juce::MathConstants<double>::pi * 997.0
                                                      * (double) n / 48000.0));
             buf.setSample (0, i, v);
             buf.setSample (1, i, v * 0.85f);
         }
-        proc.processBlock (buf, midi);
-    }
-    REQUIRE (telescope::test::waitUntil ([&] { return proc.analysis().read().timeSeconds >= 0.45; }, 3000));
+    });
+    telescope::test::waitDigested (proc, pushed, 48000.0);
 
     const auto f = proc.analysis().read();
     std::printf ("UISNAP loudness parcial a %.2f s: momentary oficial %+.1f (parcial %+.2f)  ·  "
@@ -231,18 +226,20 @@ TEST_CASE ("telescope: snapshot del editor con la lente SCOPE en S/M/L", "[teles
 
     const float peak = std::pow (10.0f, -20.0f / 20.0f);
     telescope::test::Pink a { telescope::test::kPinkSeedA }, b { telescope::test::kPinkSeedB };
-    juce::AudioBuffer<float> buf (2, 512);
-    juce::MidiBuffer midi;
-    for (int blk = 0; blk < (int) (3.0 * 48000.0 / 512.0); ++blk)
+    // F2b de la 0.2 · la foto del CLARO no salía igual dos veces (veredicto 99, reparo 1). Este caso empujaba
+    // un número NO entero de hops y esperaba un umbral anterior al final: la cola del último hop podía estar
+    // consumida o no al sacar la foto, según la carga. El oscuro lo tapaba porque hornea la atmósfera del
+    // sello (~4 veces más lento) y el motor terminaba antes; el claro no la hornea. Ahora: muestras EXACTAS
+    // en hops enteros y waitDigested (TestHelpers.h), la misma regla que la F2 le puso a los otros casos.
+    const auto pushed = telescope::test::pushExact (proc, 3 * 48000, 48000.0, [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < 512; ++i)
+        for (int i = 0; i < k; ++i)
         {
             buf.setSample (0, i, peak * a.next());
             buf.setSample (1, i, peak * b.next());
         }
-        proc.processBlock (buf, midi);
-    }
-    REQUIRE (telescope::test::waitUntil ([&] { return proc.analysis().read().timeSeconds >= 2.85; }, 3000));
+    });
+    telescope::test::waitDigested (proc, pushed, 48000.0);
 
     // La foto tiene que tener DATO adentro, no sólo el tamaño correcto: el goniómetro dibujando el tope
     // de puntos y un correlímetro finito y cercano a 0 (dos fuentes independientes).
@@ -314,9 +311,10 @@ TEST_CASE ("telescope: snapshot del editor con la lente DYNAMICS en S/M/L", "[te
         proc.processBlock (buf, midi);
 
         const double pushedSec = (double) (done + k) / 48000.0;
-        if (pushedSec - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushedSec - proc.analysis().read().timeSeconds <= 1.0; }, 5000));
+        if (pushedSec - proc.analysis().read().timeSeconds > 2.0
+            && ! telescope::test::waitUntil (
+                [&] { return pushedSec - proc.analysis().read().timeSeconds <= 1.0; }, 5000))
+            FAIL ("el hilo de análisis no alcanzó al audio empujado");   // sin REQUIRE en el camino feliz
     }
 
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
@@ -377,18 +375,18 @@ TEST_CASE ("telescope: snapshot del editor con la lente SPECTRUM en S/M/L", "[te
 
     const float peak = std::pow (10.0f, -14.0f / 20.0f);
     telescope::test::Pink a { telescope::test::kPinkSeedA }, b { telescope::test::kPinkSeedB };
-    juce::AudioBuffer<float> buf (2, 512);
-    juce::MidiBuffer midi;
-    for (int blk = 0; blk < (int) (3.0 * 48000.0 / 512.0); ++blk)
+    const auto pushed = telescope::test::pushExact (proc, 3 * 48000, 48000.0,
+                                                    [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < 512; ++i)
+        for (int i = 0; i < k; ++i)
         {
             buf.setSample (0, i, peak * a.next());
             buf.setSample (1, i, peak * b.next() * 0.7f);   // R un poco más bajo: dos curvas distinguibles
         }
-        proc.processBlock (buf, midi);
-    }
-    REQUIRE (telescope::test::waitUntil ([&] { return proc.spectrum().read().frameIndex > 20u; }, 5000));
+    });
+    // La foto, con TODO el audio adentro (antes: "más de 20 frames", o sea con el motor todavía comiendo).
+    telescope::test::waitDigested (proc, pushed, 48000.0);
+    REQUIRE (proc.spectrum().read().frameIndex > 20u);
 
     // Que haya ESPECTRO en la foto: los dos espectros de L+R, con energía real en el medio del rango.
     {
@@ -491,10 +489,17 @@ TEST_CASE ("telescope: snapshot del editor con la lente SPECTROGRAM en S/M/L", "
         proc.processBlock (buf, midi);
 
         const double pushedSec = (double) (done + k) / 48000.0;
-        if (pushedSec - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushedSec - proc.analysis().read().timeSeconds <= 1.0; }, 5000));
+        if (pushedSec - proc.analysis().read().timeSeconds > 2.0
+            && ! telescope::test::waitUntil (
+                [&] { return pushedSec - proc.analysis().read().timeSeconds <= 1.0; }, 5000))
+            FAIL ("el hilo de análisis no alcanzó al audio empujado");   // sin REQUIRE en el camino feliz
     }
+    // F2b de la 0.2 · la foto del CLARO no salía igual dos veces (veredicto 99, reparo 1). Este caso esperaba
+    // «el anillo lleno» y no el final: la cola del último hop podía estar
+    // consumida o no al sacar la foto, según la carga. El oscuro lo tapaba porque hornea la atmósfera del
+    // sello (~4 veces más lento) y el motor terminaba antes; el claro no la hornea. Ahora: muestras EXACTAS
+    // en hops enteros y waitDigested (TestHelpers.h), la misma regla que la F2 le puso a los otros casos.
+    telescope::test::waitDigested (proc, total, 48000.0);
 
     REQUIRE (telescope::test::waitUntil ([&] { return proc.spectrogram().count() >= proc.spectrogram().capacity(); },
                                          6000));
@@ -550,24 +555,18 @@ TEST_CASE ("telescope: snapshot del editor con la lente BAND CORRELATION en S/M/
     REQUIRE ((proc.enabledModules() & telescope::kStereoBands) != 0u);
 
     telescope::test::MonoLowPhaseHigh sig { 48000.0 };
-    juce::AudioBuffer<float> buf (2, 512);
-    juce::MidiBuffer midi;
-    long long n = 0;
-    for (int blk = 0; blk < (int) (6.0 * 48000.0 / 512.0); ++blk)
+    const auto pushed = telescope::test::pushExact (proc, 6 * 48000, 48000.0,
+                                                    [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < 512; ++i, ++n)
+        for (int i = 0; i < k; ++i)
         {
             const auto v = sig.next();
             buf.setSample (0, i, v.first);
             buf.setSample (1, i, v.second);
         }
-        proc.processBlock (buf, midi);
-        const double pushed = (double) n / 48000.0;
-        if (pushed - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 5000));
-    }
-    REQUIRE (telescope::test::waitUntil ([&] { return proc.analysis().read().bandsWindowSec > 0.9f; }, 6000));
+    });
+    telescope::test::waitDigested (proc, pushed, 48000.0);
+    REQUIRE (proc.analysis().read().bandsWindowSec > 0.9f);
 
     // Que la foto tenga el CORTE adentro, no sólo el tamaño correcto.
     {
@@ -634,9 +633,10 @@ TEST_CASE ("telescope: snapshot del editor con la lente STEREO SPECTROGRAM en S/
     juce::MidiBuffer midi;
     const auto drain = [&] (double pushedSec)
     {
-        if (pushedSec - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushedSec - proc.analysis().read().timeSeconds <= 1.0; }, 5000));
+        if (pushedSec - proc.analysis().read().timeSeconds > 2.0
+            && ! telescope::test::waitUntil (
+                [&] { return pushedSec - proc.analysis().read().timeSeconds <= 1.0; }, 5000))
+            FAIL ("el hilo de análisis no alcanzó al audio empujado");   // sin REQUIRE en el camino feliz
     };
 
     // (a) 8 s de la señal mixta (con los 4 del barrido son 12 s: la historia de 10 s entra llena).
@@ -673,6 +673,12 @@ TEST_CASE ("telescope: snapshot del editor con la lente STEREO SPECTROGRAM en S/
         proc.processBlock (buf, midi);
         drain ((double) n / 48000.0);
     }
+    // F2b de la 0.2 · la foto del CLARO no salía igual dos veces (veredicto 99, reparo 1). Este caso esperaba
+    // «el anillo lleno» y no el final: la cola del último hop podía estar
+    // consumida o no al sacar la foto, según la carga. El oscuro lo tapaba porque hornea la atmósfera del
+    // sello (~4 veces más lento) y el motor terminaba antes; el claro no la hornea. Ahora: muestras EXACTAS
+    // en hops enteros y waitDigested (TestHelpers.h), la misma regla que la F2 le puso a los otros casos.
+    telescope::test::waitDigested (proc, n, 48000.0);   // 8 s + 4 s = 120 hops
 
     REQUIRE (telescope::test::waitUntil (
         [&] { return proc.stereoSpectrogram().count() >= proc.stereoSpectrogram().capacity(); }, 8000));
@@ -929,28 +935,30 @@ TEST_CASE ("telescope: snapshot de POLAR LEVEL con mono, ruido independiente y u
         REQUIRE (tel != nullptr);
         juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
 
+        // F2b de la 0.2 · la foto del CLARO no salía igual dos veces (veredicto 99, reparo 1). Este caso empujaba
+        // un número NO entero de hops y esperaba un umbral anterior al final: la cola del último hop podía estar
+        // consumida o no al sacar la foto, según la carga. El oscuro lo tapaba porque hornea la atmósfera del
+        // sello (~4 veces más lento) y el motor terminaba antes; el claro no la hornea. Ahora: muestras EXACTAS
+        // en hops enteros y waitDigested (TestHelpers.h), la misma regla que la F2 le puso a los otros casos.
         if (s.kind == 2)
         {
-            pushMix (proc, 3.0);
+            pushMix (proc, 3.0);   // 144000 muestras exactas
         }
         else
         {
             const float peak = std::pow (10.0f, -20.0f / 20.0f);
             telescope::test::Pink a { telescope::test::kPinkSeedA }, b { telescope::test::kPinkSeedB };
-            juce::AudioBuffer<float> buf (2, 512);
-            juce::MidiBuffer midi;
-            for (int blk = 0; blk < (int) (3.0 * 48000.0 / 512.0); ++blk)
+            telescope::test::pushExact (proc, 3 * 48000, 48000.0, [&] (juce::AudioBuffer<float>& buf, int k)
             {
-                for (int i = 0; i < 512; ++i)
+                for (int i = 0; i < k; ++i)
                 {
                     const auto x = peak * a.next();
                     buf.setSample (0, i, x);
                     buf.setSample (1, i, s.kind == 0 ? x : peak * b.next());
                 }
-                proc.processBlock (buf, midi);
-            }
+            });
         }
-        REQUIRE (telescope::test::waitUntil ([&] { return proc.analysis().read().timeSeconds >= 2.85; }, 4000));
+        telescope::test::waitDigested (proc, 3 * 48000, 48000.0);
 
         // ---- lo que la foto TIENE que estar mostrando ----
         const auto sc = proc.scope().read();
@@ -1066,8 +1074,9 @@ juce::File beforeDir()
     return {};
 }
 
-void writeSheet (const juce::Image& img, const juce::String& path)
+void writeSheet (const juce::Image& img, const juce::String& pathIn)
 {
+    const auto path = telescope::test::uisnapPath (pathIn);
     juce::File f (path);
     f.deleteFile();
     juce::FileOutputStream os (f);
@@ -1095,7 +1104,7 @@ public:
         juce::Array<juce::Image> shots;
         for (const auto& s : kSheet)
         {
-            const juce::File f ("/tmp/" + juce::String (s.file));
+            const juce::File f (telescope::test::uisnapPath ("/tmp/" + juce::String (s.file)));
             // Sólo cuenta si la escribió ESTA corrida.
             if (! f.existsAsFile() || f.getLastModificationTime() < started)
                 return;
@@ -1318,9 +1327,10 @@ TEST_CASE ("telescope: hoja de paletas para elegir la rampa", "[telescope][uisna
             }
             proc.processBlock (buf, midi);
             const double pushed = (double) n / 48000.0;
-            if (pushed - proc.analysis().read().timeSeconds > 2.0)
-                REQUIRE (telescope::test::waitUntil (
-                    [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 20000));
+            if (pushed - proc.analysis().read().timeSeconds > 2.0
+                && ! telescope::test::waitUntil (
+                    [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 20000))
+                FAIL ("el hilo de análisis no alcanzó al audio empujado");
         }
     }
     REQUIRE (telescope::test::waitUntil ([&] { return proc.spectrogram().count() > 300; }, 20000));

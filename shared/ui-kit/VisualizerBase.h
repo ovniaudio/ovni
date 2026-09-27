@@ -30,6 +30,16 @@ public:
     // antes del PNG — el timer no corre cuando el componente no está showing. No afecta el runtime.
     void pumpFrames (int n) noexcept { for (int i = 0; i < n; ++i) advanceFrame(); }
 
+    // Test-only: UN tick del timer tal cual lo corre la ventana abierta (reduced-motion, pausa en reposo),
+    // sin exigir isShowing(). Devuelve true si ese tick pidió repaint. Con esto se cuentan los repaints en
+    // reposo headless ([telescope][editorbudget]): pumpFrames avanza la animación pero no dice si la base
+    // habría repintado.
+    bool tickForTest() { return animationTick(); }
+    // Test-only: los ticks quietos que la base sigue repintando antes de pausar (ver setSettleHold).
+    int  settleHoldFrames() const noexcept { return settleHold; }
+    // Test-only: a cuántos cuadros por segundo corre el timer (cada tick de tickForTest vale 1/fps s).
+    int  framesPerSecond() const noexcept { return timerFps; }
+
 protected:
     //== A IMPLEMENTAR POR LA SUBCLASE ==========================================
     // Dibuja la capa ESTÁTICA en coords LÓGICAS (la base ya aplicó el escalado físico al Graphics).
@@ -55,11 +65,13 @@ protected:
 
 private:
     void timerCallback() override;
+    bool animationTick();             // un tick: avanza y decide si hay que repintar (true = repaint)
     void ensureStaticLayer (juce::Graphics& g);
 
     juce::Image staticLayer;          // capa estática (resolución FÍSICA)
     float       staticScale  = 0.0f;  // escala con la que se horneó staticLayer
     bool        staticDirty  = true;  // pedir rehornear en el próximo paint
+    int         timerFps     = 30;    // los fps del timer (ver framesPerSecond)
     int         settleHold   = 48;    // frames idle antes de pausar el repaint
     int         settleFrames = 0;
     bool        reducedMotion = false; // estado de "menos animación" (accesibilidad) → congela el motion

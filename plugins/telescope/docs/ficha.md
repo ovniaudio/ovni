@@ -18,14 +18,14 @@ bundles construidos y contra este archivo.*
 | | |
 |---|---|
 | Nombre | **TELESCOPE** |
-| Versión | **0.1.0** |
+| Versión | **0.2.0** |
 | Tipo | Analizador de audio (no procesa) |
 | Fabricante | OVNI Audio |
 | Códigos AU | `aufx` · plugin `Tlsc` · fabricante `Ovni` |
 | Categoría VST3 | `Fx｜Analyzer` |
 | Formatos macOS | **VST3 + AU**, binario universal `arm64 + x86_64`, mínimo **macOS 11.0** |
-| Formato Windows | **VST3 x64** — Windows 10+, ZIP sin firma (`OVNI-TELESCOPE-v0.1.0-Windows.zip` en el release; SmartScreen puede avisar) |
-| Standalone | se construye (`telescope_Standalone`, shell genérico de JUCE) pero **el instalador 0.1.0 no lo distribuye**: instala VST3 + AU. TELESCOPE mide lo que pasa por la cadena del DAW; el standalone sólo escucha la entrada de audio que le elijas |
+| Formato Windows | **VST3 x64** — Windows 10+, ZIP sin firma (`OVNI-TELESCOPE-v0.2.0-Windows.zip` en el release; SmartScreen puede avisar) |
+| Standalone | se construye (`telescope_Standalone`, shell genérico de JUCE) pero **el instalador 0.2.0 no lo distribuye**: instala VST3 + AU. TELESCOPE mide lo que pasa por la cadena del DAW; el standalone sólo escucha la entrada de audio que le elijas |
 | Canales | entrada mono o estéreo → **salida estéreo** (el DAW instancia mono→estéreo) |
 | Licencia | **AGPLv3** · fuente: <https://github.com/ovniaudio/ovni> |
 
@@ -262,14 +262,14 @@ vacía. Los buffers del espectro están dimensionados al peor caso y **no crecen
 | | |
 |---|---|
 | Name | **TELESCOPE** |
-| Version | **0.1.0** |
+| Version | **0.2.0** |
 | Type | Audio analyser (it does not process) |
 | Manufacturer | OVNI Audio |
 | AU codes | `aufx` · plugin `Tlsc` · manufacturer `Ovni` |
 | VST3 category | `Fx｜Analyzer` |
 | macOS formats | **VST3 + AU**, universal binary `arm64 + x86_64`, minimum **macOS 11.0** |
-| Windows format | **VST3 x64** — Windows 10+, unsigned ZIP (`OVNI-TELESCOPE-v0.1.0-Windows.zip` in the release; SmartScreen may warn) |
-| Standalone | it is built (`telescope_Standalone`, the generic JUCE shell) but **the 0.1.0 installer does not ship it**: it installs VST3 + AU. TELESCOPE measures what goes through the DAW's chain; the standalone only listens to whatever audio input you pick |
+| Windows format | **VST3 x64** — Windows 10+, unsigned ZIP (`OVNI-TELESCOPE-v0.2.0-Windows.zip` in the release; SmartScreen may warn) |
+| Standalone | it is built (`telescope_Standalone`, the generic JUCE shell) but **the 0.2.0 installer does not ship it**: it installs VST3 + AU. TELESCOPE measures what goes through the DAW's chain; the standalone only listens to whatever audio input you pick |
 | Channels | mono or stereo in → **stereo out** (the DAW instantiates mono→stereo) |
 | Licence | **AGPLv3** · source: <https://github.com/ovniaudio/ovni> |
 

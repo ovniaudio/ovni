@@ -27,6 +27,53 @@ endif ()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
 message(STATUS "[telescope] versión ${TELESCOPE_VERSION} (plugins/telescope/VERSION)")
 
+# ---------------------------------------------------------------------------------------------
+# ovni_analysis — EL MOTOR DE MEDICIÓN COMO BIBLIOTECA (prompt 101, F3 de TELESCOPE 0.2; contrato D-100).
+#
+# Son los archivos de hoy de `source/analysis/**`, SIN MOVERLOS: la biblioteca se define sobre sus rutas. La
+# usan el plugin, el runner de tests y la herramienta `telescope-measure` (measure/), que es como EYEPIECE lleva
+# el motor: un proceso aparte, nunca linkeado.
+#
+# SÓLO juce_core, juce_audio_formats y juce_dsp (lo medido en EYEPIECE-PLUGINS-PROPIOS §2bis). Si algún día un
+# archivo del motor necesita algo de interfaz, no compila acá: quedó del lado equivocado.
+#
+# Patrón [S3] del sello (como ovni_presets y ovni_uikit): compila NUESTRAS fuentes con los include dirs y las
+# definiciones de esos tres módulos, y deja a JUCE como dependencia INTERFACE. El target final (el plugin, el
+# runner o la herramienta) compila la unity de JUCE una sola vez; linkear los módulos PUBLIC metería JUCE
+# entero adentro del .a.
+#
+# LAS BANDERAS DE LA ARITMÉTICA son las del plugin: -O3 de Release (juce_recommended_config_flags),
+# -fno-fast-math (L-2) y /utf-8 en MSVC (Verdict.cpp tiene literales UTF-8 crudos). Que el número no cambie AL
+# BIT al pasar de compilarse en el plugin a compilarse acá lo sostiene [golden] (tests/GoldenAnalysisTest.cpp).
+# ---------------------------------------------------------------------------------------------
+file(GLOB_RECURSE OVNI_ANALYSIS_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/analysis/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/source/analysis/*.h")
+
+add_library(ovni_analysis STATIC ${OVNI_ANALYSIS_SOURCES})
+target_compile_features(ovni_analysis PUBLIC cxx_std_20)
+
+# `#include "analysis/…"` y `#include "data/…"` (Verdict.cpp lee las tablas de source/data/, que son headers).
+target_include_directories(ovni_analysis PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/source)
+
+foreach (_jmod juce_core juce_audio_formats juce_dsp)
+    target_include_directories(ovni_analysis PRIVATE
+        $<TARGET_PROPERTY:juce::${_jmod},INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(ovni_analysis PRIVATE
+        $<TARGET_PROPERTY:juce::${_jmod},INTERFACE_COMPILE_DEFINITIONS>)
+endforeach ()
+
+target_compile_definitions(ovni_analysis PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(ovni_analysis
+    PRIVATE   juce::juce_recommended_config_flags
+    INTERFACE juce::juce_core juce::juce_audio_formats juce::juce_dsp)
+
+if (MSVC)
+    target_compile_options(ovni_analysis PRIVATE /utf-8)
+else ()
+    target_compile_options(ovni_analysis PRIVATE -fno-fast-math)
+endif ()
+
 juce_add_plugin(telescope
     VERSION                  ${TELESCOPE_VERSION}     # propia, NO la del project() raíz (D-51)
     COMPANY_NAME             "OVNI"
@@ -46,6 +93,8 @@ juce_add_plugin(telescope
 file(GLOB_RECURSE PLUGIN_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/source/*.h")
+# El motor lo trae ovni_analysis (arriba): compilarlo acá también lo duplicaría.
+list(FILTER PLUGIN_SOURCES EXCLUDE REGEX "/source/analysis/")
 
 target_sources(telescope PRIVATE
     ${PLUGIN_SOURCES}
@@ -66,6 +115,7 @@ target_compile_definitions(telescope PRIVATE
 # Libs del sello. ovni_movement queda FUERA a propósito: TELESCOPE no mueve nada (no usa el MovementEngine),
 # sólo mide. ovni_dsp entra por el de-zipper/limiter que el chasis referencia.
 target_link_libraries(telescope PRIVATE
+    ovni_analysis
     ovni_dsp
     ovni_uikit
     ovni_presets
@@ -74,6 +124,13 @@ target_link_libraries(telescope PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+# F4 de la 0.2 (T8): la tarjeta que presenta a EYEPIECE busca la app por bundle id con LaunchServices
+# (LSCopyApplicationURLsForBundleIdentifier, ui/EyepieceDetect.cpp). Es sólo de la Mac: EYEPIECE 0.1 sale sólo
+# para Mac (D-113) y en Windows la tarjeta no se compila.
+if (APPLE)
+    target_link_libraries(telescope PRIVATE "-framework CoreServices")
+endif()
 
 # ---------------------------------------------------------------------------------------------
 # -fno-fast-math EXPLÍCITO (hallazgo L-2 del revisor del 48).
@@ -106,6 +163,9 @@ endif ()
 # de recorrer plugins/ (§3, l.89-98 vs §5b, l.155) -> Catch2::Catch2 existe acá: add_subdirectory directo.
 # tests/CMakeLists.txt del raíz NO se toca (es de los otros plugins).
 # ---------------------------------------------------------------------------------------------
+# La herramienta de consola que EYEPIECE lleva adentro (D-100). Antes que los tests: el runner prueba su núcleo.
+add_subdirectory(measure)
+
 if (OVNI_BUILD_TESTS)
     add_subdirectory(tests)
 endif ()

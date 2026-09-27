@@ -1,7 +1,9 @@
 #pragma once
 #include <memory>
+#include "analysis/FileAnalyzer.h"
 #include "analysis/ReferenceFrame.h"
 #include "lenses/Lens.h"
+#include "lenses/ReferenceWaveform.h"
 
 namespace telescope
 {
@@ -38,6 +40,13 @@ class TelescopeProcessor;
 // contada a igual volumen, que es como se compara una mezcla contra una referencia.
 //
 // REDUCED MOTION: las curvas y las barras llegan al valor en un frame, sin suavizado.
+//
+// F4 de la 0.2 (T6) · LA TIRA DE LA REFERENCIA. Con una referencia cargada, abajo de la cabecera aparece su
+// forma de onda. Arrastrando se elige un tramo [desde, hasta) y la curva de la referencia pasa a ser la de
+// ese tramo; con doble clic vuelve al archivo entero. Un rótulo dice qué se está comparando («ref · 0:32–1:04»).
+// La medición es del processor (RangeAnalyzer::measure en el analizador de archivo, ver PluginProcessor.h) y
+// el tramo persiste en su estado; la lente sólo dibuja y pide. La forma de onda es un dato: en claro conserva
+// su pantalla oscura (D-109).
 // ========================================================================================================
 class TonalBalanceLens : public Lens,
                          public juce::FileDragAndDropTarget
@@ -54,6 +63,9 @@ public:
 
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
 
@@ -69,6 +81,20 @@ public:
 
     // El texto de estado, como DATO (la lente lo dibuja; el test lo lee).
     juce::String stateText() const;
+
+    // ---- F4 (T6): la tira. Públicos para que el test la maneje sin fabricar eventos de mouse: el mouse
+    //      llama a estos mismos tres (arrastrar = begin + drag + end; doble clic = stripDoubleClick). ----
+    juce::Rectangle<int> stripArea() const noexcept { return zones.strip; }
+    bool         stripVisible() const noexcept     { return ! zones.strip.isEmpty(); }
+    void         stripBegin (int x);
+    void         stripDrag (int x);
+    void         stripEnd (int x);
+    void         stripDoubleClick();
+    // El rótulo de la tira como DATO («ref · 0:32–1:04»), y la ayuda (vacía si no entra en la tira).
+    juce::String stripLabel() const;
+    juce::String stripHint() const;
+    // Para las fotos y los tests: ¿ya está la forma de onda de la referencia cargada?
+    bool         waveformReady() const;
 
     // La lectura bajo el cursor. Pública para que el test la pida sin fabricar eventos de mouse.
     struct Readout
@@ -113,10 +139,19 @@ private:
 
     struct Zones
     {
-        juce::Rectangle<int> head, curves, delta, scaleCurves, scaleDelta, freqAxis, footer;
+        juce::Rectangle<int> head, strip, curves, delta, scaleCurves, scaleDelta, freqAxis, footer;
         juce::Rectangle<int> button[kNumControls];
     };
     Zones zonesFor (int w, int h) const;
+    // F4 (T6): la tira existe si el estado pide una referencia que está en el disco.
+    bool  wantsStrip() const;
+
+    // ---- F4 (T6) ----
+    double secondsAtX (int x) const;
+    int    xAtSeconds (double s) const;
+    double stripSeconds() const;
+    void   paintStripWave (juce::Graphics&) const;    // capa estática: la pantalla y la onda
+    void   paintStripLive (juce::Graphics&) const;    // capa viva: el tramo, sus bordes y el rótulo
 
     float  xForFreq (double hz) const;
     double freqAtX (int x) const;
@@ -143,9 +178,23 @@ private:
     bool  liveHas  [ReferenceFrame::kNumBands] {};   // DIBUJABLE: medible y dentro del plot (57c)
     bool  refHas   [ReferenceFrame::kNumBands] {};
     bool  comparable[ReferenceFrame::kNumBands] {}; // bandValid del motor ∧ los dos lados dibujables
+    // Lo que se mostró la última vez que advanceFrame dijo "cambió" (ver ahí). 0.02 dB ≈ 0.2 px en L.
+    static constexpr float kShownEpsDb = 0.02f;
+    float shownLive [ReferenceFrame::kNumBands] {}, shownRef [ReferenceFrame::kNumBands] {},
+          shownDelta [ReferenceFrame::kNumBands] {};
+    bool  shownLiveHas [ReferenceFrame::kNumBands] {}, shownRefHas [ReferenceFrame::kNumBands] {},
+          shownComparable [ReferenceFrame::kNumBands] {};
     bool  primed = false;   // el primer frame entra de una: un medidor no trepa desde el piso al arrancar
 
     std::unique_ptr<juce::FileChooser> chooser;
+
+    // ---- F4 (T6) ----
+    ReferenceWaveform waveform;
+    juce::uint32      shownWaveRev = 0xffffffffu;
+    bool              shownStrip = false;
+    FileAnalyzer::Span shownSpan {};
+    bool              dragging = false;
+    double            dragFromS = 0.0, dragToS = 0.0;
 
     Zones zones {};
     int   hovered = -1;

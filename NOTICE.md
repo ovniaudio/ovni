@@ -175,13 +175,21 @@ viaja adentro de TELESCOPE.
   VST3/AU/Standalone que se publican.
 - **Fuentes embebidas del sello** (`shared/ui-kit/assets/fonts/`, vía `ovni_uikit_assets`;
   presentes en el binario de TELESCOPE — 12 símbolos `OvniUikitData`):
-  - **Clash Grotesk Semibold** y **General Sans** (Regular + Medium) — *Copyright 2017-2021
-    Indian Type Foundry. All rights reserved.* Términos: <https://fontshare.com/terms>. La
-    licencia pide identificar las fuentes por su nombre y acreditar la titularidad de ITF sobre
-    sus marcas y derechos — que es lo que hace este párrafo.
-  - **JetBrains Mono Regular** — *Copyright 2020 The JetBrains Mono Project Authors*
-    (<https://github.com/JetBrains/JetBrainsMono>), **SIL Open Font License 1.1**
+  - **Clash Grotesk Semibold** y **General Sans** (Regular + Medium) — `ClashGrotesk-Semibold.ttf`,
+    `GeneralSans-Regular.ttf`, `GeneralSans-Medium.ttf` — *Copyright 2017-2021 Indian Type Foundry.
+    All rights reserved.* **ITF Free Font License (FFL) 2.0**, términos: <https://fontshare.com/terms>.
+    La licencia pide identificar las fuentes por su nombre y acreditar la titularidad de ITF sobre
+    sus marcas y derechos — que es lo que hace este párrafo. La FFL (§02) prohíbe modificarlas:
+    viajan las originales, sin recortar ni convertir (`packaging/check-fonts.sh` lo verifica por
+    sha256, y sobre el binario que se distribuye).
+  - **JetBrains Mono Regular** — `JetBrainsMono-Regular.ttf` — *Copyright 2020 The JetBrains Mono
+    Project Authors* (<https://github.com/JetBrains/JetBrainsMono>), **SIL Open Font License 1.1**
     (<https://openfontlicense.org>).
+
+  Los textos completos de las dos licencias están en `packaging/licenses/`
+  (`ITF-Free-Font-License.txt`, `ITF-Fontshare-fonts.txt`, `JetBrainsMono-OFL.txt`) y, desde
+  TELESCOPE 0.2.0, **viajan con el plugin**: el `.pkg` los instala en
+  `/Library/Audio/Plug-Ins/OVNI Audio/licenses/` y el ZIP de Windows los trae en `licenses/`.
 
   Estas fuentes las embebe el UI-kit compartido, así que viajan en **todo** el catálogo, no sólo
   en TELESCOPE; se listan acá porque acá es donde se verificó que están en el binario.

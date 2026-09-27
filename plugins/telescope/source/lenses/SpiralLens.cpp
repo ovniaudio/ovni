@@ -11,7 +11,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 constexpr double kTwoPi = 6.283185307179586476925286766559;
 
 // Do0 = MIDI 12. Todo el mapeo cuelga de esta constante: `turns` se cuenta desde acá, así la parte entera
@@ -118,16 +118,29 @@ float SpiralLens::levelAt (int bin) const
 //======================================================================================== animación
 bool SpiralLens::advanceFrame()
 {
-    const int wantedRange = processor.spectrumSettings().rangeDb();
-    if (wantedRange != lastRangeDb) { lastRangeDb = wantedRange; invalidateStatic(); }
+    const int  wantedRange  = processor.spectrumSettings().rangeDb();
+    const bool rangeChanged = wantedRange != lastRangeDb;
+    if (rangeChanged) { lastRangeDb = wantedRange; invalidateStatic(); }
 
     const auto& f = processor.cqt().read();
     const bool fresh = f.frameIndex != lastFrameIndex || f.numBins != binsSeen;
 
+    // ¿El cuadro nuevo cambia algo que se dibuja tal cual? La tonalidad y la latencia (lo suavizado lo
+    // cubre `moved`, abajo).
+    bool frameChanged = false;
     if (fresh)
     {
+        // La tonalidad se escribe con la confianza a dos decimales y el tiempo en % entero: cuenta el TEXTO.
+        // En silencio las dos estadísticas siguen moviéndose en el tercer decimal (medido) sin que cambie
+        // una letra.
+        frameChanged = juce::String (latencySeen, 2) != juce::String (f.lowestBinLatencySec, 2)
+                    || keyTonic != f.keyTonic || keyMode != f.keyMode
+                    || juce::String (keyConfidence, 2) != juce::String (f.keyConfidence, 2)
+                    || juce::roundToInt (100.0f * keyTimeFraction) != juce::roundToInt (100.0f * f.keyTimeFraction);
+
         if (f.numBins != binsSeen || f.binsPerOctave != bpoSeen)
         {
+            frameChanged = true;
             binsSeen = f.numBins;
             bpoSeen  = juce::jmax (1, f.binsPerOctave);
             fMinSeen = f.fMin > 0.0f ? f.fMin : (float) Cqt::kFMinHz;
@@ -153,7 +166,8 @@ bool SpiralLens::advanceFrame()
     {
         const float target = targetDb[k], before = dispDb[k];
         dispDb[k] = (reduced || target > before) ? target : before + (target - before) * kRelease;
-        moved = moved || std::abs (dispDb[k] - before) > 0.01f;
+        // El piso de silencio: por debajo del rango del plot (menos 20 dB de margen) la barra no se ve.
+        moved = moved || (std::abs (dispDb[k] - before) > 0.01f && juce::jmax (dispDb[k], before) > -(float) lastRangeDb - 20.0f);
     }
     for (int c = 0; c < CqtFrame::kNumClasses; ++c)
     {
@@ -161,7 +175,9 @@ bool SpiralLens::advanceFrame()
         dispChroma[c] = (reduced || target > before) ? target : before + (target - before) * kRelease;
         moved = moved || std::abs (dispChroma[c] - before) > 0.002f;
     }
-    return fresh || moved;
+    // Antes era `fresh || moved`: en silencio el motor sigue publicando cuadros idénticos y la lente no
+    // paraba nunca (prompt 96). Cuenta lo que se ve.
+    return moved || frameChanged || rangeChanged;
 }
 
 //======================================================================================== capa estática
@@ -172,7 +188,7 @@ void SpiralLens::renderStatic (juce::Graphics& g, int width, int height)
     lastRangeDb = processor.spectrumSettings().rangeDb();
 
     // ---- los doce rayos de clase de nota, con su etiqueta afuera ----
-    g.setFont (ovni::ui::fonts::label (10.0f));
+    g.setFont (look::label (10.0f));
     for (int c = 0; c < CqtFrame::kNumClasses; ++c)
     {
         const float frac = (float) c / (float) CqtFrame::kNumClasses;
@@ -185,9 +201,9 @@ void SpiralLens::renderStatic (juce::Graphics& g, int width, int height)
 
         const float rl = rOuter + 12.0f;
         const auto lp = juce::Point<float> (centre.x + rl * std::sin (a), centre.y - rl * std::cos (a));
-        g.setColour (c == 0 ? th::txt : th::fnt);
+        g.setColour (c == 0 ? th::txt : look::txtTertiary);
         g.drawText (classNameFor (c, strings::languageOf (stateTree())), juce::Rectangle<float> (lp.x - 18.0f, lp.y - 7.0f, 36.0f, 14.0f),
-                    juce::Justification::centred, false);
+                    juce::Justification::centred, true);
     }
 
     // ---- una circunferencia por octava, como REGLA DE RADIO ----
@@ -213,7 +229,7 @@ void SpiralLens::renderStatic (juce::Graphics& g, int width, int height)
         const float r = radiusForTurns ((double) oct);
         g.setColour (th::lineSoft);
         g.drawEllipse (centre.x - r, centre.y - r, 2.0f * r, 2.0f * r, 0.6f);
-        g.setColour (th::fnt);
+        g.setColour (look::tick);
         const juce::String tag = "C" + juce::String (oct);
         const int tw = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), tag)) + 12;
         look::drawReadoutBox (g, { (int) (centre.x - 6.0f) - tw, (int) (centre.y - r - 6.0f), tw, 13 },
@@ -319,14 +335,14 @@ void SpiralLens::paintLive (juce::Graphics& g)
     const auto libre = zones.footer.withLeft (zones.button[kNumControls - 1].getRight() + 12);
     if (libre.getWidth() > 120)
     {
-        g.setColour (th::fnt);
-        g.setFont (ovni::ui::fonts::label (9.0f));
-        g.drawText (tr (strings::Key::bassLatency), libre.withTrimmedRight (72), juce::Justification::centredRight, false);
+        g.setColour (look::txtTertiary);
+        g.setFont (look::label (9.0f));
+        g.drawText (tr (strings::Key::bassLatency), libre.withTrimmedRight (72), juce::Justification::centredRight, true);
         g.setColour (th::mut);
-        g.setFont (ovni::ui::fonts::mono (10.0f));
+        g.setFont (look::mono (10.0f));
         g.drawText ("A0 " + juce::String::fromUTF8 ("\xc2\xb7") + " "
                         + juce::String (latencySeen > 0.0f ? latencySeen : 1.241f, 2) + " s",
-                    libre, juce::Justification::centredRight, false);
+                    libre, juce::Justification::centredRight, true);
     }
 
     // La tonalidad completa, con sus DOS números, debajo del dibujo.
@@ -340,8 +356,8 @@ void SpiralLens::paintLive (juce::Graphics& g)
         text = tr (strings::Key::noKeyEstimated);
 
     g.setColour (keyTonic >= 0 ? th::txt : th::mut);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (text, zones.keyText, juce::Justification::centred, false);
+    g.setFont (look::mono (11.0f));
+    g.drawText (text, zones.keyText, juce::Justification::centred, true);
 }
 
 // LA RUEDA DE CROMA cierra el círculo, literalmente: cada sector está en el MISMO ángulo que las púas de
@@ -375,17 +391,17 @@ void SpiralLens::paintWheel (juce::Graphics& g) const
     g.setColour (keyTonic >= 0 ? th::txt : th::mut);
     // 56: LA TONALIDAD es la conclusión de esta lente — va en la display del sello y grande, no en una
     // mono del tamaño de una etiqueta de eje.
-    g.setFont (ovni::ui::fonts::display (juce::jlimit (14.0f, 30.0f, rIn * 0.62f)));
+    g.setFont (look::display (juce::jlimit (14.0f, 30.0f, rIn * 0.62f)));
     g.drawText (keyTonic >= 0 ? keyLabel (keyTonic, keyMode, strings::languageOf (stateTree()))
                           : juce::String::fromUTF8 ("\xe2\x80\x94"),
-                middle.withTrimmedBottom (middle.getHeight() * 0.45f), juce::Justification::centredBottom, false);
+                middle.withTrimmedBottom (middle.getHeight() * 0.45f), juce::Justification::centredBottom, true);
 
     if (keyTonic >= 0)
     {
         g.setColour (th::mut);
         g.setFont (look::tabularFont (juce::jlimit (9.0f, 13.0f, rIn * 0.30f)));
         g.drawText (juce::String (keyConfidence, 2),
-                    middle.withTrimmedTop (middle.getHeight() * 0.52f), juce::Justification::centredTop, false);
+                    middle.withTrimmedTop (middle.getHeight() * 0.52f), juce::Justification::centredTop, true);
     }
 }
 
@@ -438,7 +454,7 @@ void SpiralLens::paintReadout (juce::Graphics& g) const
                             + juce::String (r.freqHz, r.freqHz < 100.0 ? 2 : 1) + " Hz"
                             + juce::String::fromUTF8 ("  \xc2\xb7  ") + juce::String (r.db, 1) + " dB";
 
-    g.setFont (ovni::ui::fonts::mono (11.0f));
+    g.setFont (look::mono (11.0f));
     const int tw = juce::jmax (150, (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text)) + 16);
     const auto box = readoutBoxFor (zones.plot, cursor.x, tw);
 
@@ -447,7 +463,7 @@ void SpiralLens::paintReadout (juce::Graphics& g) const
     g.setColour (th::green.withAlpha (0.4f));
     g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 3.0f, 1.0f);
     g.setColour (th::txt);
-    g.drawText (text, box, juce::Justification::centred, false);
+    g.drawText (text, box, juce::Justification::centred, true);
 }
 
 void SpiralLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& label,
@@ -467,12 +483,8 @@ void SpiralLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, cons
     }
 
     auto inner = area.reduced (8, 0);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.0f));
-    g.drawText (label, inner.removeFromLeft (inner.getWidth() / 2), juce::Justification::centredLeft, false);
-    g.setColour (hue);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (value, inner, juce::Justification::centredRight, false);
+    look::drawLabelValue (g, inner, label, look::label (9.0f), look::txtTertiary,
+                         value, look::mono (11.0f), hue);
 }
 
 //======================================================================================== interacción

@@ -45,7 +45,7 @@
 # Uso:
 #   packaging/make-per-plugin.sh --version 0.1.1 --bundles <dir> --outdir <dir> \
 #       [--winzip OVNI-v0.1.1-Windows.zip] [--license <file>] [--notice <file>] \
-#       [--source-line "<texto>"]... [--no-full]
+#       [--source-line "<texto>"]... [--no-full] [--extra-license <archivo>]...
 #
 #   --bundles:     carpeta plana con <NAME>.vst3 y <NAME>.component (p.ej. extraídos del DMG del
 #                  release, o juntados del build). Se detectan los plugins por los pares presentes.
@@ -58,6 +58,11 @@
 #   --no-full:     NO emitir el instalador "completo" OVNI-v<X>.pkg. Con un solo plugin en
 #                  --bundles ese archivo sale titulado "OVNI Audio — 1 Plugins" y no es el
 #                  catálogo: es el mismo plugin con otro nombre. Se publica sólo el individual.
+#   --extra-license: un texto de licencia más, que se instala en
+#                  /Library/Audio/Plug-Ins/OVNI Audio/licenses/<nombre>. Repetible. Existe desde
+#                  TELESCOPE 0.2.0 para las licencias de las FUENTES que el ui-kit mete adentro del
+#                  binario (ITF Free Font License y SIL OFL: packaging/licenses/, verificadas por
+#                  packaging/check-fonts.sh). Sin la bandera, el paquete de licencia sale como siempre.
 #
 # Firma: igual que make-installer.sh, INSTALLER_SIGN_ID opcional (vacío → sin firmar, camino
 # gratis; NO falla). Exit 0 si emite todo · 1 ante cualquier falta/fallo.
@@ -94,6 +99,7 @@ ART_DIR="${ART_DIR:-$ROOT/packaging/installer-resources}"
 
 VERSION=""; BUNDLES=""; OUTDIR=""; WINZIP=""; NO_FULL=0
 SOURCE_LINES=()
+EXTRA_LICENSES=()
 # COMMIT del árbol que produjo estos bundles. Va al SOURCE.txt para que la oferta de fuente del AGPL §6
 # apunte a algo EXACTO: el tag `v<version>` se mueve/renombra, el hash no. Se DERIVA del repo (nunca a
 # mano); `--commit` existe sólo para el caso de empaquetar bundles de otro árbol.
@@ -111,6 +117,7 @@ while [ "$#" -gt 0 ]; do
     --commit)      COMMIT="${2:-}"; shift 2 ;;
     --source-line) [ -n "${2:-}" ] || fail "--source-line sin texto"; SOURCE_LINES+=("$2"); shift 2 ;;
     --no-full)     NO_FULL=1; shift ;;
+    --extra-license) [ -f "${2:-}" ] || fail "--extra-license: no existe '${2:-}'"; EXTRA_LICENSES+=("$2"); shift 2 ;;
     *) fail "argumento desconocido: $1" ;;
   esac
 done
@@ -172,6 +179,11 @@ LIC_ROOT="$WORK/root-license/Library/Audio/Plug-Ins/OVNI Audio"
 mkdir -p "$LIC_ROOT"
 cp "$LICENSE_FILE" "$LIC_ROOT/LICENSE.txt"
 [ -f "$NOTICE_FILE" ] && cp "$NOTICE_FILE" "$LIC_ROOT/NOTICE.txt"
+if [ "${#EXTRA_LICENSES[@]}" -gt 0 ]; then
+  mkdir -p "$LIC_ROOT/licenses"
+  for _el in "${EXTRA_LICENSES[@]}"; do cp "$_el" "$LIC_ROOT/licenses/$(basename "$_el")" || fail "no pude copiar $_el"; done
+  log "licencias extra: ${#EXTRA_LICENSES[@]} → OVNI Audio/licenses/"
+fi
 # Las líneas extra del bloque de repos (--source-line), con la misma sangría que las fijas. Sin
 # --source-line queda vacío. Byte-idéntico al de siempre CUANDO SUPERNOVA va en el paquete; para los demás
 # paquetes individuales la línea de SUPERNOVA cambia a propósito (ver el fix de abajo).

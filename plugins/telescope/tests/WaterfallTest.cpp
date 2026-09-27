@@ -99,9 +99,10 @@ void pushSweeps (telescope::TelescopeProcessor& proc, int howMany)
         proc.processBlock (buf, midi);
 
         const double pushedSec = (double) (done + k) / 48000.0;
-        if (pushedSec - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushedSec - proc.analysis().read().timeSeconds <= 1.0; }, 8000));
+        if (pushedSec - proc.analysis().read().timeSeconds > 2.0
+            && ! telescope::test::waitUntil (
+                [&] { return pushedSec - proc.analysis().read().timeSeconds <= 1.0; }, 8000))
+            FAIL ("el hilo de análisis no alcanzó al audio empujado");   // sin REQUIRE en el camino feliz
     }
 }
 }
@@ -372,6 +373,11 @@ TEST_CASE ("telescope: snapshot del editor con la lente WATERFALL en S/M/L", "[t
     REQUIRE ((proc.enabledModules() & telescope::kSpectrum) != 0u);
 
     pushSweeps (proc, 3);   // 12 s: la historia de 10 s entra llena, con la cresta viajando al fondo
+    // F2b de la 0.2 · la foto del CLARO no salía igual dos veces (veredicto 99, reparo 1): esperaba «el anillo
+    // lleno» y no el final, y la foto de S salía con el motor todavía comiendo el último segundo. El oscuro lo
+    // tapaba porque hornea la atmósfera del sello y llega más tarde a la foto; el claro no la hornea. Ahora
+    // espera a que el motor haya digerido las 576000 muestras enteras (120 hops, TestHelpers.h).
+    telescope::test::waitDigested (proc, 3LL * 4 * 48000, 48000.0);
     REQUIRE (telescope::test::waitUntil (
         [&] { return proc.spectrogram().count() >= proc.spectrogram().capacity(); }, 10000));
 
@@ -435,9 +441,10 @@ TEST_CASE ("telescope: WATERFALL lee la frecuencia y el nivel de la linea de ade
         }
         proc.processBlock (buf, midi);
         const double pushed = (double) n / 48000.0;
-        if (pushed - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 8000));
+        if (pushed - proc.analysis().read().timeSeconds > 2.0
+            && ! telescope::test::waitUntil (
+                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 8000))
+            FAIL ("el hilo de análisis no alcanzó al audio empujado");
     }
     REQUIRE (telescope::test::waitUntil ([&] { return proc.spectrogram().count() > 150; }, 8000));
 
@@ -524,9 +531,10 @@ TEST_CASE ("telescope: los rotulos de tiempo del waterfall no dejan ver el relle
         }
         proc.processBlock (buf, midi);
         const double pushed = (double) n / 48000.0;
-        if (pushed - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 8000));
+        if (pushed - proc.analysis().read().timeSeconds > 2.0
+            && ! telescope::test::waitUntil (
+                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 8000))
+            FAIL ("el hilo de análisis no alcanzó al audio empujado");
     }
     REQUIRE (telescope::test::waitUntil ([&] { return proc.spectrogram().count() > 400; }, 10000));
 

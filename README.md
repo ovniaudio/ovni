@@ -69,11 +69,11 @@ Full story, rules, and troubleshooting: [`docs/AUDIO-TCC.md`](docs/AUDIO-TCC.md)
 | HORIZON | Audio | macOS + Windows | Released v0.1.1 |
 | AURORA | Audio | macOS + Windows | Released v0.1.1 |
 | **SUPERNOVA** | Audiovisual | macOS | **0.4.0** |
-| **TELESCOPE** | Analyzer | macOS + Windows | **0.1.0** |
+| **TELESCOPE** | Analyzer | macOS + Windows | **0.2.0** |
 
 The 7 audio plugins are cross-platform (Windows VST3 already ships). SUPERNOVA shipped as **v0.2.0** on 2026-08-25 and is macOS-only; **v0.3.0** added the media session, four new worlds and the reworked LFOs, and **v0.3.1** moved the app's system-audio capture to the small "System Audio Recording" permission (no screen prompt) and made it repair itself when the output device changes, **v0.3.2** makes the app say plainly that System Audio needs macOS 13+ on Macs where no capture route exists, instead of offering a permission it cannot get, and **v0.4.0** dissolves between photos instead of cutting, makes the exported MP4 look like the window, and gives the clip 30 seconds of sound with a crossfaded loop. Its source lives on branch `feat/supernova`, tagged per release (`v0.4.0`).
 
-**TELESCOPE** is new in **0.1.0**: an analyser (13 lenses + a deterministic rules engine), macOS universal VST3 + AU, bit-exact audio pass-through. The Windows VST3 (x64, unsigned ZIP) ships in the same release. Its source ships as the tag `telescope-v0.1.0` of this repository.
+**TELESCOPE** arrived in **0.1.0**: an analyser (13 lenses + a deterministic rules engine), macOS universal VST3 + AU, bit-exact audio pass-through, with the Windows VST3 (x64, unsigned ZIP) in the same release. **0.2.0** fixes an open window stalling the DAW, adds a light theme, readable labels, the choice of which part of the reference TONAL BALANCE compares against, and `telescope-measure`, a command-line tool on the same engine — what a file measures is unchanged, to the bit. Each version's source ships as a tag of this repository (`telescope-v0.1.0`, `telescope-v0.2.0`); the details are in [`plugins/telescope/CHANGELOG.md`](plugins/telescope/CHANGELOG.md).
 
 ## TELESCOPE
 

@@ -413,18 +413,58 @@ void TelescopeProcessor::syncReference()
     }
 
     refMissing.clear();
-    fileAnalyzer->start (f);
+    // F4 (T6): el tramo, si el estado pide uno. Sin tramo, la llamada es la de siempre (el archivo entero).
+    double from = 0.0, to = 0.0;
+    if (referenceRange (from, to)) fileAnalyzer->start (f, from, to);
+    else                           fileAnalyzer->start (f);
 }
 
 void TelescopeProcessor::loadReference (const juce::File& f)
 {
     apvts.state.setProperty (kRefPath, f.getFullPathName(), nullptr);
+    apvts.state.removeProperty (kRefFrom, nullptr);   // F4 (T6): el tramo era del archivo anterior
+    apvts.state.removeProperty (kRefTo, nullptr);
     syncReference();
+}
+
+// ===== F4 (T6): el tramo de la referencia (ver el header) =====
+void TelescopeProcessor::setReferenceRange (double fromS, double toS)
+{
+    if (! std::isfinite (fromS) || ! std::isfinite (toS)) return;
+    if (toS < fromS) std::swap (fromS, toS);
+    fromS = juce::jmax (0.0, fromS);
+    if (toS - fromS < kMinReferenceSpanS) return;   // un clic suelto no es un tramo
+    apvts.state.setProperty (kRefFrom, fromS, nullptr);
+    apvts.state.setProperty (kRefTo,   toS,   nullptr);
+    syncReference();
+}
+
+void TelescopeProcessor::clearReferenceRange()
+{
+    if (! apvts.state.hasProperty (kRefFrom) && ! apvts.state.hasProperty (kRefTo)) return;
+    apvts.state.removeProperty (kRefFrom, nullptr);
+    apvts.state.removeProperty (kRefTo, nullptr);
+    syncReference();
+}
+
+bool TelescopeProcessor::referenceRange (double& fromS, double& toS) const
+{
+    if (! apvts.state.hasProperty (kRefFrom) || ! apvts.state.hasProperty (kRefTo)) return false;
+    fromS = (double) apvts.state.getProperty (kRefFrom);
+    toS   = (double) apvts.state.getProperty (kRefTo);
+    return std::isfinite (fromS) && std::isfinite (toS) && toS - fromS >= kMinReferenceSpanS;
+}
+
+FileAnalyzer::Span TelescopeProcessor::referenceSpan() const
+{
+    return fileAnalyzer != nullptr ? fileAnalyzer->resultSpan() : FileAnalyzer::Span{};
 }
 
 void TelescopeProcessor::clearReference()
 {
     apvts.state.setProperty (kRefPath, juce::String(), nullptr);
+    apvts.state.removeProperty (kRefFrom, nullptr);   // F4 (T6)
+    apvts.state.removeProperty (kRefTo, nullptr);
     refMissing.clear();
     if (fileAnalyzer != nullptr) fileAnalyzer->cancel();
     analysisThread.clearReference();

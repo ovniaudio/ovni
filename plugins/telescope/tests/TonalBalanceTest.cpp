@@ -39,18 +39,20 @@ constexpr double kSr = 48000.0;
 // que la lente tiene que saber dibujar, en la misma imagen.
 constexpr double kShelfHz = 6300.0, kShelfDb = 12.0;
 
+// Empuja `seconds` EXACTOS (F2 de la 0.2: antes eran bloques enteros de 512, así que 10 s caían en
+// 480 256 muestras y la cola quedaba fuera de un hop) y ESPERA a que el motor los haya digerido enteros.
+// El freno contra el descarte del bus está en telescope::test::keepUp, con 30 s de tope: el timeout es un
+// TECHO de seguridad, no el tiempo que se espera — con otras sesiones compilando al lado el worker puede
+// tardar de verdad, y subirlo nunca hace el test más frágil, sólo más paciente.
 void pushPink (telescope::TelescopeProcessor& proc, double seconds, float peak,
                HighShelf* shelfL = nullptr, HighShelf* shelfR = nullptr)
 {
-    constexpr int kBlock = 512;
     Pink a { telescope::test::kPinkSeedA }, b { telescope::test::kPinkSeedB };
-    juce::AudioBuffer<float> buf (2, kBlock);
-    juce::MidiBuffer midi;
-    long long n = 0;
+    const auto total = (long long) std::llround (seconds * kSr);
 
-    for (int blk = 0; blk < (int) std::ceil (seconds * kSr / kBlock); ++blk)
+    telescope::test::pushExact (proc, total, kSr, [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < kBlock; ++i, ++n)
+        for (int i = 0; i < k; ++i)
         {
             float l = a.next(), r = b.next();
             if (shelfL != nullptr) l = shelfL->process (l);
@@ -58,16 +60,8 @@ void pushPink (telescope::TelescopeProcessor& proc, double seconds, float peak,
             buf.setSample (0, i, peak * l);
             buf.setSample (1, i, peak * r);
         }
-        proc.processBlock (buf, midi);
-
-        // El freno para que el bus no descarte. 30 s de tope y no 8: el timeout es un TECHO de seguridad,
-        // no el tiempo que se espera (TestHelpers.h) — con tres obreras compilando al lado el worker puede
-        // tardar de verdad, y subirlo nunca hace el test más frágil, sólo más paciente.
-        const double pushed = (double) n / kSr;
-        if (pushed - proc.analysis().read().timeSeconds > 2.0)
-            REQUIRE (telescope::test::waitUntil (
-                [&] { return pushed - proc.analysis().read().timeSeconds <= 1.0; }, 30000));
-    }
+    });
+    telescope::test::waitDigested (proc, total, kSr);
 }
 
 // Escribe (una vez) el WAV de referencia: ruido rosa PLANO, la misma realización que el programa usa
@@ -125,8 +119,18 @@ TEST_CASE ("telescope: snapshot del editor con la lente TONAL BALANCE en S/M/L",
     REQUIRE (wav.existsAsFile());
     proc.loadReference (wav);
     REQUIRE (telescope::test::waitUntil ([&] { return ! proc.referenceBusy(); }, 30000));
+    // F4 de la 0.2 (T6): con referencia aparece la tira, y su forma de onda llega de otro hilo. La foto la
+    // espera entera: si no, saldría con o sin onda según la carga.
+    {
+        auto* tonal = dynamic_cast<TonalBalanceLens*> (tel->activeLens());
+        REQUIRE (tonal != nullptr);
+        REQUIRE (telescope::test::waitUntil ([&] { tel->pumpLensFrames (1); return tonal->waveformReady(); }, 30000));
+    }
 
     proc.resetAnalysis();   // el promedio del programa arranca limpio con el shelf ya puesto
+    // El reset lo aplica el worker en su próxima vuelta y VACÍA el bus: empujar antes de que lo aplique
+    // tiraba un pedazo del audio nuevo, más o menos grande según la carga (F2 de la 0.2).
+    REQUIRE (telescope::test::waitUntil ([&] { return proc.analysis().read().timeSeconds < 0.05; }, 10000));
     HighShelf shelfL { kShelfHz, kShelfDb, kSr }, shelfR { kShelfHz, kShelfDb, kSr };
     pushPink (proc, 10.0, 0.3f, &shelfL, &shelfR);
 

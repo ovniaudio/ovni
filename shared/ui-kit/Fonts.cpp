@@ -36,8 +36,11 @@ namespace
 
     juce::Font make (const juce::Typeface::Ptr& tf, float height, bool boldFallback)
     {
+        // FontOptions (tf) y no FontOptions().withTypeface (tf): el default trae estilo "Regular", y JUCE 8 afirma
+        // (juce_FontOptions.h) que con un typeface el estilo tiene que venir vacío. En Release no se nota; en Debug
+        // era un jassert por fuente creada (hallazgo de OJOS etapa 4, prompt 77 §6).
         if (tf != nullptr)
-            return juce::Font (juce::FontOptions().withTypeface (tf).withHeight (height));
+            return juce::Font (juce::FontOptions (tf).withHeight (height));
         // fallback: system sans (no se debería llegar acá con las fuentes embebidas)
         auto opts = juce::FontOptions().withHeight (height);
         return juce::Font (boldFallback ? opts.withStyle ("Bold") : opts);

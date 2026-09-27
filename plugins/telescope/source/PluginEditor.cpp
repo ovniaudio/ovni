@@ -54,7 +54,9 @@ std::unique_ptr<Lens> TelescopeEditor::makeLens (LensId id)
 TelescopeEditor::TelescopeEditor (TelescopeProcessor& p)
     : ovni::PluginEditorBase (p, juce::String::fromUTF8 ("ANA\xc2\xb7" "01")), proc (p)
 {
-    setFamilyHue (ovni::ui::theme::green);
+    // F2 de la 0.2: el tema es la preferencia del usuario (OVNI.settings), leída al abrir la ventana.
+    look::setTheme (ThemePreference::load());
+    setFamilyHue (look::ink().green);
 
     proc.editorOpened();   // ver editorOpened/editorClosed: la máscara se apaga cuando se cierra la última
 
@@ -85,6 +87,10 @@ TelescopeEditor::TelescopeEditor (TelescopeProcessor& p)
         strings::setLanguage (proc.apvts.state, code);
     };
 
+    strip.onTheme = [this] { toggleTheme(); };
+    themeListener.fn = [this] { applyTheme(); };
+    ThemePreference::changed().addChangeListener (&themeListener);
+
     proc.apvts.addParameterListener ("lens", this);
     proc.apvts.state.addListener (this);
     applyLanguage();
@@ -95,7 +101,17 @@ TelescopeEditor::TelescopeEditor (TelescopeProcessor& p)
     const auto* lensValue = proc.apvts.getRawParameterValue ("lens");
     showLens (lensValue != nullptr ? juce::roundToInt (lensValue->load()) : 0);
 
+   #if TELESCOPE_HAS_EYEPIECE_INTRO
+    // T8 (F4 de la 0.2): la primera vez que se abre el editor con la 0.2, la tarjeta que presenta a EYEPIECE.
+    if (EyepieceIntro::shouldShow())
+    {
+        intro = std::make_unique<EyepieceIntroCard> (strings::languageOf (proc.apvts.state));
+        addToCanvas (*intro);
+    }
+   #endif
+
     setBaseSize (980, 620);
+    applyTheme();
 }
 
 // Al cerrar la ventana, lo que la lente encendió se APAGA: el motor vuelve a los módulos siempre-activos
@@ -104,6 +120,7 @@ TelescopeEditor::TelescopeEditor (TelescopeProcessor& p)
 // lleva el processor: con dos ventanas abiertas, cerrar una no le apaga el módulo a la otra.
 TelescopeEditor::~TelescopeEditor()
 {
+    ThemePreference::changed().removeChangeListener (&themeListener);
     proc.apvts.state.removeListener (this);
     proc.apvts.removeParameterListener ("lens", this);
     proc.editorClosed();
@@ -157,6 +174,9 @@ void TelescopeEditor::applyLanguage()
     applyCount.fetch_add (1);
     strip.setLanguage (strings::languageOf (proc.apvts.state));
     if (lens != nullptr) lens->repaint();
+   #if TELESCOPE_HAS_EYEPIECE_INTRO
+    if (intro != nullptr) { intro->setLanguage (strings::languageOf (proc.apvts.state)); placeIntro(); }
+   #endif
 }
 
 void TelescopeEditor::showLens (int index)
@@ -168,6 +188,7 @@ void TelescopeEditor::showLens (int index)
     lens = makeLens ((LensId) index);
 
     addToCanvas (*lens);
+    lens->setPixelAnchor (this);   // T2: el editor es el que el host pone en un píxel entero (ver Lens.h)
     lens->setBounds (lensArea);
 
     // LENTE A DEMANDA: corren los módulos que la lente visible necesita MÁS los que no se apagan nunca
@@ -175,7 +196,64 @@ void TelescopeEditor::showLens (int index)
     // agujeros porque el usuario se fue a mirar el espectro un rato).
     proc.setEnabledModules (lens->requiredModules() | kAlwaysOnModules);
     strip.setSelected (index);
+   #if TELESCOPE_HAS_EYEPIECE_INTRO
+    if (intro != nullptr) intro->toFront (false);   // T8: la tarjeta queda arriba de la lente nueva
+   #endif
     applyLanguage();
+}
+
+// Reconstruir la lente es lo mismo que elegirla otra vez: sus capas horneadas (la estática, las cachés
+// raster) nacen con la tinta nueva. La historia vive en el processor, así que no se pierde nada.
+void TelescopeEditor::rebuildLens()
+{
+    const int index = currentLens;
+    currentLens = -1;
+    lens.reset();
+    showLens (juce::jmax (0, index));
+}
+
+// El MARCO. En oscuro, FrameInk por defecto: el marco del sello tal cual, bit por bit. En claro: la base
+// lisa (el Panel del sello es una atmósfera oscura y no tiene versión clara), las tintas del papel, sin el
+// glow del nombre (sobre papel se ve como una mancha), y el texto del slot A/B encendido en papel sobre el
+// verde oscuro.
+void TelescopeEditor::applyTheme()
+{
+    const auto& k = look::ink();
+    setFamilyHue (k.green);
+
+    FrameInk f;
+    if (look::theme() == look::Theme::light)
+    {
+        f.base       = k.bg0;
+        f.atmosphere = false;
+        f.sheen      = juce::Colours::white.withAlpha (0.55f);
+        f.topLine    = juce::Colours::white.withAlpha (0.80f);
+        f.lineSoft   = k.lineSoft;
+        f.txt        = k.txt;
+        f.mut        = k.mut;
+        f.fnt        = k.mut;        // la insignia ANA·01: en papel, el secundario (el terciario no llega a 4.5:1)
+        f.onHue      = k.bg1;
+        f.bezel      = k.line;
+        f.brackets   = k.txt.withAlpha (0.28f);
+        f.nameGlow   = false;
+    }
+    setFrameInk (f);
+
+    rebuildLens();
+    strip.repaint();
+   #if TELESCOPE_HAS_EYEPIECE_INTRO
+    if (intro != nullptr) intro->repaint();
+   #endif
+    repaint();
+}
+
+void TelescopeEditor::toggleTheme()
+{
+    const auto next = look::theme() == look::Theme::light ? look::Theme::dark : look::Theme::light;
+    look::setTheme (next);
+    ThemePreference::save (next);
+    // Síncrono: el clic ya está en el message thread, y así la ventana que se clickeó cambia en este cuadro.
+    ThemePreference::changed().sendSynchronousChangeMessage();
 }
 
 void TelescopeEditor::layoutBody (juce::Rectangle<int> body)
@@ -187,7 +265,24 @@ void TelescopeEditor::layoutBody (juce::Rectangle<int> body)
 
     lensArea = body;
     if (lens != nullptr) lens->setBounds (lensArea);
+   #if TELESCOPE_HAS_EYEPIECE_INTRO
+    placeIntro();
+   #endif
 }
+
+#if TELESCOPE_HAS_EYEPIECE_INTRO
+// T8: abajo a la derecha de la lente, con el margen del sello. El ancho es fijo (el texto se lee en un bloque) y
+// el alto sale del texto envuelto en ese idioma.
+void TelescopeEditor::placeIntro()
+{
+    if (intro == nullptr || lensArea.isEmpty()) return;
+    const int pad = ovni::ui::theme::padIn;
+    const int w = juce::jmin (380, lensArea.getWidth() - 2 * pad);
+    const int h = intro->heightForWidth (w);
+    intro->setBounds (lensArea.getRight() - pad - w, lensArea.getBottom() - pad - h, w, h);
+    intro->toFront (false);
+}
+#endif
 
 void TelescopeEditor::pumpLensFrames (int n)
 {

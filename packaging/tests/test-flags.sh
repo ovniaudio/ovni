@@ -159,5 +159,34 @@ else
                                         || bad "--source-line sin texto falla, pero el mensaje no lo nombra"
 fi
 
+# ------------------------- caso 7: --extra-license ×2 → los textos, en OVNI Audio/licenses/ del payload
+# (TELESCOPE 0.2.0: las licencias de las fuentes que el ui-kit mete adentro del binario.)
+licenses_of() { # $1 = .pkg → los nombres de OVNI Audio/licenses/, uno por línea
+  local x="$WORK/l-$RANDOM"
+  pkgutil --expand-full "$1" "$x" >/dev/null 2>&1 || return 1
+  ls "$x"/*/Payload/Library/Audio/Plug-Ins/OVNI\ Audio/licenses/ 2>/dev/null
+  rm -rf "$x"
+}
+printf 'LICENCIA DE PRUEBA A\n' > "$WORK/LIC-A.txt"; printf 'LICENCIA DE PRUEBA B\n' > "$WORK/LIC-B.txt"
+if run_pkg xlic --no-full --extra-license "$WORK/LIC-A.txt" --extra-license "$WORK/LIC-B.txt"; then
+  L="$(licenses_of "$WORK/xlic/OVNI-FLAGTEST-v$VERSION.pkg")"
+  printf '%s\n' "$L" | grep -qx "LIC-A.txt" && printf '%s\n' "$L" | grep -qx "LIC-B.txt" \
+    && ok "--extra-license: los dos textos están en OVNI Audio/licenses/ adentro del .pkg" \
+    || bad "--extra-license: en OVNI Audio/licenses/ hay «$(printf '%s' "$L" | tr '\n' ' ')»"
+  L0="$(licenses_of "$WORK/nofull/OVNI-FLAGTEST-v$VERSION.pkg")"
+  [ -z "$L0" ] && ok "sin --extra-license no hay carpeta licenses/ (el paquete de licencia sale como siempre)" \
+               || bad "sin --extra-license igual apareció licenses/: «${L0}»"
+else
+  bad "--extra-license: el empaquetado falló"; tail -5 "$WORK/xlic.log" | sed 's/^/      /'
+fi
+
+# --------------------------------------------- caso 8: --extra-license de un archivo que no existe → error
+if "$SCRIPT" --version "$VERSION" --bundles "$B" --outdir "$WORK/bad2" --extra-license "$WORK/no-existe.txt" > "$WORK/bad2.log" 2>&1; then
+  bad "--extra-license de un archivo inexistente se aceptó en silencio"
+else
+  grep -q "extra-license" "$WORK/bad2.log" && ok "--extra-license de un archivo inexistente falla y lo dice" \
+                                           || bad "--extra-license inexistente falla, pero el mensaje no lo nombra"
+fi
+
 [ "$fails" -eq 0 ] && { printf '  flags: OK\n'; exit 0; }
 printf '  flags: %d fallo(s)\n' "$fails"; exit 1

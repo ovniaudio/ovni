@@ -73,7 +73,8 @@ struct AnalysisFrame
     bool  psrValid    = false;
     bool  plrValid    = false;
     juce::uint32 clipEvents = 0;      // eventos de clip desde el reset, sobre el umbral vigente
-    juce::uint32 histogram[61] = {};  // short-term por bin de 1 LU; el bin i está centrado en (i-60) LUFS
+    juce::uint32 histogram[61] = {};  // short-term por bin de 1 LU; el bin i está centrado en (i-60) LUFS.
+                                      // F4 (T4): sólo los que pasan la compuerta de −70 LUFS (histogramGated)
 
     // ---- prompt 51 · módulo StereoBands (kStereoBands). Ver analysis/modules/StereoBands.h ----
     // Los mismos cuatro números del estéreo de banda ancha, pero POR BANDA de ⅓ de octava (ISO 266, las

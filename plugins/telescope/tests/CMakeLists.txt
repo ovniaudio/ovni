@@ -9,6 +9,8 @@
 file(GLOB TELESCOPE_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
 file(GLOB_RECURSE TELESCOPE_PLUGIN_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/../source/*.cpp")
+# El motor viene de ovni_analysis, como en el plugin (prompt 101): el runner prueba la MISMA biblioteca.
+list(FILTER TELESCOPE_PLUGIN_SOURCES EXCLUDE REGEX "/source/analysis/")
 
 juce_add_console_app(OvniTelescopeTests PRODUCT_NAME "OvniTelescopeTests")
 
@@ -25,6 +27,19 @@ target_include_directories(OvniTelescopeTests PRIVATE
 
 target_compile_features(OvniTelescopeTests PRIVATE cxx_std_20)
 
+# PILA DE 16 MB EN WINDOWS (el doble de los 8 MB del hilo principal de macOS, donde la suite pasa: MSVC
+# reusa menos que clang los huecos de la pila y los tests copian cuadros grandes por valor). Los tests arman el
+# TelescopeProcessor EN LA PILA (`telescope::TelescopeProcessor proc;`) y el processor es grande; el hilo
+# principal de Windows trae 1 MB y el primer caso de [budget] y de [editorbudget] moría con "SIGSEGV -
+# Stack overflow" en el runner (prompt 96, run 36084052846). En el host no pasa: el processor lo crea el
+# host en el heap. Sólo toca al runner de tests.
+if (MSVC)
+    target_link_options(OvniTelescopeTests PRIVATE "/STACK:16777216")
+    # /utf-8, igual que el plugin (plugins/telescope/CMakeLists.txt, prompt 67): el runner compila las mismas
+    # fuentes, y desde la F2b de la 0.2 las frases de VERDICT (data/Rules.h) llevan tildes, diéresis y ß.
+    target_compile_options(OvniTelescopeTests PRIVATE /utf-8)
+endif()
+
 target_compile_definitions(OvniTelescopeTests PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1
     JUCE_WEB_BROWSER=0
@@ -32,10 +47,24 @@ target_compile_definitions(OvniTelescopeTests PRIVATE
     # Adónde escribe el generador de la matriz de idiomas ([strings-dump]). Se compila la ruta en vez de
     # deducirla del cwd: `ctest` corre el exe desde el build dir y `$EXE "[strings-dump]"` a mano desde
     # cualquier lado, y el documento tiene que caer siempre en el mismo lugar del repo.
-    TELESCOPE_DOCS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../docs")
+    TELESCOPE_DOCS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../docs"
+    # F2 de la 0.2: en el exe de tests el tema NO se lee del OVNI.settings de quien corre los tests (si
+    # Joaquín eligió el claro, la suite entera pintaría en claro). Ver ui/ThemePreference.h.
+    TELESCOPE_TEST_BUILD=1)
+
+# Las rutas que leen las pruebas del motor y de telescope-measure (prompt 101). En su propio bloque, y no
+# agregadas al de arriba, para que la F3 se junte con la F2 sin tocar la misma línea.
+target_compile_definitions(OvniTelescopeTests PRIVATE
+    # Los vuelcos dorados del motor ([golden]). Misma razón que TELESCOPE_DOCS_DIR: el test los lee (y, con
+    # TELESCOPE_GOLDEN_WRITE=1, los escribe) siempre en el mismo lugar del repo, se corra desde donde se corra.
+    TELESCOPE_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/golden"
+    # La especificación de telescope-measure: MEASURE[codigos] exige que sus códigos y los del código coincidan.
+    TELESCOPE_MEASURE_SCHEMA="${CMAKE_CURRENT_SOURCE_DIR}/../measure/SCHEMA.md")
 
 target_link_libraries(OvniTelescopeTests PRIVATE
     Catch2::Catch2
+    ovni_analysis
+    telescope_measure_core
     ovni_dsp
     ovni_uikit
     ovni_presets
@@ -43,6 +72,11 @@ target_link_libraries(OvniTelescopeTests PRIVATE
     juce::juce_gui_basics
     juce::juce_dsp
     juce::juce_recommended_config_flags)
+
+# F4 de la 0.2 (T8): lo mismo que el plugin (ver plugins/telescope/CMakeLists.txt), sólo en la Mac.
+if (APPLE)
+    target_link_libraries(OvniTelescopeTests PRIVATE "-framework CoreServices")
+endif()
 
 # -fno-fast-math EXPLÍCITO (L-2) — el mismo motivo que en el plugin, y acá pesa MÁS: los tests son los
 # que comparan al bit ([null], casa-4, la independencia del bloque de [stereo] y [dyn]). Si el exe de tests
@@ -83,6 +117,15 @@ add_custom_command(TARGET OvniTelescopeTests POST_BUILD
 # Un solo test de ctest para todo el exe: `ctest -R telescope` corre la batería entera.
 add_test(NAME telescope COMMAND OvniTelescopeTests)
 
+# --- telescope-measure desde afuera del proceso (prompt 101): exit, disco y bytes, con sus controles. ---
+# El runner prueba el núcleo en proceso ([measure]); esto prueba el binario que viaja adentro de EYEPIECE.
+# Compilar el runner compila también la herramienta y el generador, así ctest nunca corre un binario viejo.
+add_dependencies(OvniTelescopeTests telescope-measure telescope-measure-fixtures)
+add_test(NAME telescope-measure-cli
+         COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/../measure/check-measure-cli.sh"
+                 "$<TARGET_FILE:telescope-measure>"
+                 "$<TARGET_FILE:telescope-measure-fixtures>")
+
 # --- La versión que declaran los bundles == plugins/telescope/VERSION. ---
 # No es un test de Catch2 porque lo que mira no está adentro del exe: son los Info.plist de los tres
 # bundles que se distribuyen. El script lee el archivo VERSION del disco (no una versión sustituida por
@@ -102,5 +145,5 @@ add_test(NAME telescope-version
          COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/check-bundle-version.sh"
                  "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION"
                  "${CMAKE_CURRENT_BINARY_DIR}/../telescope_artefacts/$<CONFIG>"
-                 "${CMAKE_CURRENT_SOURCE_DIR}/../CHANGELOG.md"   "^## [0-9]"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/../CHANGELOG.md"   "first:^## [0-9]"
                  "${CMAKE_CURRENT_SOURCE_DIR}/../docs/ficha.md"  "^\\| Versi")

@@ -94,6 +94,12 @@ enum class Key
     //     debajo de dos medidores de loudness se leen mid/side, que es otra cosa y está al lado. ---
     momentaryBar, shortTermBar,
 
+    // --- F2 de la 0.2: el tema (la fila de la tira, arriba del idioma) ---
+    theme, themeDark, themeLight,
+
+    // --- F4 de la 0.2 (T6): la tira de la referencia de TONAL BALANCE ---
+    refSpanHint,
+
     count
 };
 
@@ -128,7 +134,9 @@ inline const std::array<const char*, (size_t) kNumKeys>& keyNames()
         "polarLegend","noReferenceDrag","tiltEqualLoudness","refPlusMinus",
         "palette","hemiLegend",
         "refBelowRange","binsAtThisFft",
-        "momentaryBar","shortTermBar"
+        "momentaryBar","shortTermBar",
+        "theme","themeDark","themeLight",
+        "refSpanHint"
     };
     return n;
 }
@@ -196,7 +204,9 @@ inline const Table& tableEn()
         "PALETTE",
         "radius = level relative to the strongest direction",
         "reference below the plot range (−42 LU) in this band"," bins at this FFT",
-        "MOM","SHORT"
+        "MOM","SHORT",
+        "THEME","Dark","Light",
+        "drag to pick a section · double-click: whole file"
     }};
     return t;
 }
@@ -239,7 +249,9 @@ inline const Table& tableEs()
         "PALETA",
         "radio = nivel relativo a la dirección más fuerte",
         "referencia por debajo del rango (−42 LU) en esta banda"," bins a esta FFT",
-        "MOM","CORTO"
+        "MOM","CORTO",
+        "TEMA","Oscuro","Claro",
+        "arrastrá para elegir un tramo · doble clic: el archivo entero"
     }};
     return t;
 }
@@ -284,7 +296,9 @@ inline const Table& tablePt()
         "PALETA",
         "raio = nível relativo à direção mais forte",
         "referência abaixo da faixa (−42 LU) nesta banda"," bins nesta FFT",
-        "MOM","CURTO"
+        "MOM","CURTO",
+        "TEMA","Escuro","Claro",
+        "arraste para escolher um trecho · clique duplo: o arquivo inteiro"
     }};
     return t;
 }
@@ -323,7 +337,9 @@ inline const Table& tableFr()
         "PALETTE",
         "rayon = niveau relatif à la direction la plus forte",
         "référence sous la plage (−42 LU) dans cette bande"," bins à cette FFT",
-        "MOM","COURT"
+        "MOM","COURT",
+        "THÈME","Sombre","Clair",
+        "glissez pour choisir un passage · double-clic : le fichier entier"
     }};
     return t;
 }
@@ -362,7 +378,9 @@ inline const Table& tableDe()
         "PALETTE",
         "Radius = Pegel relativ zur stärksten Richtung",
         "Referenz unter dem Anzeigebereich (−42 LU) in diesem Band"," Bins bei dieser FFT",
-        "MOM","KURZ"
+        "MOM","KURZ",
+        "DESIGN","Dunkel","Hell",
+        "ziehen, um einen Abschnitt zu wählen · Doppelklick: ganze Datei"
     }};
     return t;
 }
@@ -401,7 +419,9 @@ inline const Table& tableIt()
         "TAVOLOZZA",
         "raggio = livello relativo alla direzione più forte",
         "riferimento sotto l'intervallo (−42 LU) in questa banda"," bin a questa FFT",
-        "MOM","BREVE"
+        "MOM","BREVE",
+        "TEMA","Scuro","Chiaro",
+        "trascina per scegliere un tratto · doppio clic: il file intero"
     }};
     return t;
 }

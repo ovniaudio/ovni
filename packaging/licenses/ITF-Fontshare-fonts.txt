@@ -1,0 +1,31 @@
+Clash Grotesk and General Sans — Indian Type Foundry (ITF), distributed through Fontshare
+=========================================================================================
+
+License: ITF Free Font License (FFL), Version 2.0 (17 Aug 2026).
+The full text of the license travels next to this file: ITF-Free-Font-License.txt
+
+TELESCOPE embeds these font files in its plug-in binary (VST3 and AU on macOS, VST3 on Windows) and
+uses them only to draw its own window. They are not installed on your system.
+
+  ClashGrotesk-Semibold.ttf   Clash Grotesk Semibold, Version 1.001, designed by Shiva Nallaperumal
+  GeneralSans-Regular.ttf     General Sans Regular, Version 2.000, designed by Frode Helland
+  GeneralSans-Medium.ttf      General Sans Medium, Version 2.000, designed by Frode Helland
+
+The font files are the Official Version, unmodified: no glyph was changed, and the fonts were not
+subset, converted or renamed (FFL, Section 02). They are not offered as separate files: they may
+not be extracted from the plug-in or used independently of it (FFL, Sections 02 and 03).
+
+What each of these font files states about itself (OpenType "name" table, copied verbatim):
+
+  Copyright:        Copyright 2017-2021 Indian Type Foundry. All rights reserved.
+  Trademarks:       Clash is a trademark of the Indian Type Foundry.
+                    General is a trademark of the Indian Type Foundry.
+  License:          This Font Software is protected under domestic and international trademark and
+                    copyright law. You agree to identify the ITF fonts by name and credit the ITF's
+                    ownership of the trademarks and copyrights in any design or production credits.
+  License terms:    https://fontshare.com/terms
+  Foundry:          Indian Type Foundry — https://indiantypefoundry.com
+
+Credit, as the fonts ask: the TELESCOPE interface uses Clash Grotesk and General Sans by the Indian
+Type Foundry (ITF). Clash and General are trademarks of the Indian Type Foundry; the fonts are
+copyright 2017-2021 Indian Type Foundry.

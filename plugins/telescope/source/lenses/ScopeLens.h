@@ -178,8 +178,11 @@ public:
         // `fresh` = llegó un hop nuevo. Con `hold` en false (reduced-motion) NO hay memoria: ni el pico
         // retiene ni el promedio promedia — las dos capas son exactamente el hop, un cuadro quieto y
         // coherente.
-        void update (const ScopeFrame& f, float decayDbPerSec, int fps, bool hold) noexcept
+        //
+        // Devuelve true si la envolvente dibujada cambió (la lente deja de repintar cuando no cambia).
+        bool update (const ScopeFrame& f, float decayDbPerSec, int fps, bool hold) noexcept
         {
+            bool changed = ! primed;
             if (! primed) { reset(); primed = true; }
 
             const float step  = (hold && fps > 0) ? decayDbPerSec / (float) fps : 0.0f;
@@ -192,6 +195,7 @@ public:
             {
                 const float decayed = hold ? juce::jmax (ScopeFrame::kHemiFloorDb, env[i] - step)
                                            : ScopeFrame::kHemiFloorDb;
+                const float envBefore = env[i], avgBefore = avg[i];
                 env[i] = juce::jmax (decayed, f.envelope[i]);
                 peakDb = juce::jmax (peakDb, env[i]);
 
@@ -205,7 +209,9 @@ public:
                 const float e = toE (avg[i]) + (toE (f.envelope[i]) - toE (avg[i])) * alpha;
                 avg[i] = e > 0.0f ? juce::jmax (ScopeFrame::kHemiFloorDb, 10.0f * std::log10 (e))
                                   : ScopeFrame::kHemiFloorDb;
+                changed = changed || env[i] != envBefore || avg[i] != avgBefore;
             }
+            return changed;
         }
     };
 
@@ -290,6 +296,7 @@ private:
     // caché de `raster::Cache` de vuelta a 1× —el defecto que el 57b vino a cerrar— `VISUAL[hd]` seguía
     // VERDE, porque de las seis lentes que mide, cinco no pasaban por esa clase. Ahora las seis sí: una
     // mutación de lenses/Raster.h las tumba a todas.
+    int lastSettings = -1;         // firma de los ajustes que cambian el dibujo (ver advanceFrame)
     raster::Cache trail;          // capa de fósforo del goniómetro, EN PÍXELES DE DISPOSITIVO: el punto
                                   // de 1 px es la unidad de esta lente y estirarlo ×2 lo convertía en un
                                   // cuadradito de 4 (ver lenses/Raster.h).

@@ -11,7 +11,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 constexpr double kLabelledHz[] = { 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0 };
 constexpr int    kRows = SpectrogramRing::kRows;   // 512
@@ -125,7 +125,7 @@ std::vector<WaterfallLens::TimeLabel> WaterfallLens::timeLabels() const
     if (! (span > 0.05)) return out;
 
     const double stepSec = span <= 12.0 ? 2.0 : (span <= 34.0 ? 5.0 : 10.0);
-    const auto   font = ovni::ui::fonts::mono (9.0f);
+    const auto   font = look::mono (9.0f);
     for (double t = 0.0; t <= span + 1.0e-6; t += stepSec)
     {
         TimeLabel l;
@@ -172,6 +172,10 @@ bool WaterfallLens::readLine (long long src, juce::uint8* dst256) const
 //======================================================================================== 57b · el color
 void WaterfallLens::Shading::buildLuts (juce::uint32* lineLut, juce::uint32* fillLut) const
 {
+    // D-109 — las tablas son de la PANTALLA: la niebla va hacia el pozo oscuro y la línea de adelante se
+    // levanta hacia el texto claro, en los dos temas. Con las del claro, la niebla iba al papel y el piso de
+    // la cascada quedaba como una mancha negra sobre blanco.
+    const look::ScreenInk screen;
     const auto& ramp = look::palette (palette);
     const auto  bg   = th::bg1.withAlpha (1.0f).getARGB();
 
@@ -281,7 +285,7 @@ void WaterfallLens::updateImage()
         // carga patrón del banco no modela lo que hace acá —escribir una pantalla entera por columnas— y
         // un criterio que se cae por el sistema operativo deja de medir el código. A escala 1 no se hace:
         // ahí no sobra nada, y además `[horizonte]` compara byte a byte contra el pintor literal.
-        const int colStep = cache.scale() >= 1.5f ? 2 : 1;
+        const int colStep = look::coarseColumns (cache.scale() >= 1.5f) ? 2 : 1;   // M-3: el runner puede forzar el fino
 
         for (int px = xL; px <= xR; px += colStep)
         {
@@ -382,18 +386,19 @@ void WaterfallLens::renderStatic (juce::Graphics& g, int width, int height)
 {
     zones = zonesFor (width, height);
     proj  = projectionFor (zones);
+    look::drawScreenEdge (g, zones.plot);   // D-109: en claro, la pantalla lleva su filo oscuro
 
     // ---- eje de FRECUENCIA (log), en el plano de adelante ----
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     for (const double hz : kLabelledHz)
     {
         const auto p = proj.project ((float) xForFreq (hz), 0.0f, 0.0f);
         const int x = juce::roundToInt (p.x);
         g.setColour (th::line);
         look::fillSnapped (g, { (float) (x), (float) (zones.freqAxis.getY()), 1.0f, (float) (4) });
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (shortHz (hz), x - 24, zones.freqAxis.getY() + 3, 48, 12,
-                    juce::Justification::centred, false);
+                    juce::Justification::centred, true);
     }
 
     // ---- eje de NIVEL, también en el plano de adelante (el rango del módulo Spectrum) ----
@@ -406,18 +411,18 @@ void WaterfallLens::renderStatic (juce::Graphics& g, int width, int height)
         const int   y   = juce::roundToInt (p.y);
         g.setColour (th::line);
         look::fillSnapped (g, { (float) (zones.levelAxis.getRight() - 5), (float) (y), (float) (5), 1.0f });
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (juce::String (db), zones.levelAxis.getX(), y - 6, kAxisW - 8, 12,
-                    juce::Justification::centredRight, false);
+                    juce::Justification::centredRight, true);
     }
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
+    g.setFont (look::label (10.0f));
     g.drawText ("dB", zones.levelAxis.getX(), zones.plot.getY() + 2, kAxisW - 8, 12,
-                juce::Justification::centredRight, false);
+                juce::Justification::centredRight, true);
     // "Hz" va en el canal de la IZQUIERDA y no al final del eje: ahí pisaba el rótulo de 20 kHz, que
     // además ya llega justo al borde del plot.
     g.drawText ("Hz", zones.levelAxis.getX(), zones.freqAxis.getY() + 3, kAxisW - 8, 12,
-                juce::Justification::centredRight, false);
+                juce::Justification::centredRight, true);
 }
 
 //======================================================================================== capa viva
@@ -430,53 +435,59 @@ void WaterfallLens::paintLive (juce::Graphics& g)
     const float ps = look::physicalScale (g);
     cache.prepare (ps, zones.plot.getWidth(), zones.plot.getHeight());
 
-    updateImage();
-    cache.blit (g, zones.plot.getX(), zones.plot.getY());
-    drawStage (g);   // encima de la imagen: ver el comentario de drawStage
-
-    // ---- el eje de TIEMPO va en la PROFUNDIDAD, sobre el dibujo (el fondo es opaco: debajo no se vería).
-    //
-    // ===== 56b ===== CAJA OPACA, no un velo. Con alpha 0.78 el relleno verde se colaba por atrás y los
-    // rótulos de la esquina de abajo a la izquierda —-2 s, -4 s, -6 s, los que caen sobre la parte más
-    // llena— se leían como agujeros sucios en el dato. Ahora es la misma cajita del resto de las lentes
-    // (look::drawReadoutBox): opaca, con su borde, y el dato no se ve por debajo.
-    for (const auto& l : timeLabels())
+    // D-109 — todo lo que va adentro de la pantalla, con la tinta oscura en los dos temas (Look.h,
+    // ScreenInk): la imagen, el escenario, los rótulos de tiempo, la lectura y el canal. Los ejes de
+    // afuera y los botones van con el tema.
     {
-        const auto mw = look::metricsFor (getWidth());
-        g.setColour (look::gridMajor);
-        look::fillSnapped (g, { (float) (l.box.getX() - 5), (float) (l.box.getY() + 7), (float) (5), 1.0f });
-        // La caja de lectura del sello va al 88 % de opacidad, que alcanza sobre un pozo pero no sobre
-        // el relleno: acá abajo hay DATO, no fondo. Se pone un piso opaco del color del pozo y encima
-        // la caja de siempre, así el rótulo se ve igual que en las otras lentes y no deja pasar nada.
-        // El piso va CUADRADO y no redondeado: con esquinas redondeadas el antialiasing deja pasar el
-        // relleno justo en las cuatro puntas (36 px medidos), y "casi opaco" es la misma clase de
-        // problema que el 0.88 de origen. Las puntas quedan del color del pozo, que contra un tema
-        // oscuro se lee como la sombra de la cajita.
-        g.setColour (look::well);
-        g.fillRect (l.box);
-        look::drawReadoutBox (g, l.box, l.text, mw, look::gridMajor);
-    }
+        const look::ScreenInk screen;
+        updateImage();
+        cache.blit (g, zones.plot.getX(), zones.plot.getY());
+        drawStage (g);   // encima de la imagen: ver el comentario de drawStage
 
-    // ---- lectura bajo el cursor: la línea de ADELANTE ----
-    if (cursor.x >= 0)
-    {
-        const auto r = readoutAt (cursor);
-        if (r.valid)
+        // ---- el eje de TIEMPO va en la PROFUNDIDAD, sobre el dibujo (el fondo es opaco: debajo no se vería).
+        //
+        // ===== 56b ===== CAJA OPACA, no un velo. Con alpha 0.78 el relleno verde se colaba por atrás y los
+        // rótulos de la esquina de abajo a la izquierda —-2 s, -4 s, -6 s, los que caen sobre la parte más
+        // llena— se leían como agujeros sucios en el dato. Ahora es la misma cajita del resto de las lentes
+        // (look::drawReadoutBox): opaca, con su borde, y el dato no se ve por debajo.
+        for (const auto& l : timeLabels())
         {
-            g.setColour (th::txt.withAlpha (0.30f));
-            look::fillSnapped (g, { (float) (cursor.x), (float) (zones.plot.getY()), 1.0f, (float) (zones.plot.getHeight()) });
+            const auto mw = look::metricsFor (getWidth());
+            g.setColour (look::gridMajor);
+            look::fillSnapped (g, { (float) (l.box.getX() - 5), (float) (l.box.getY() + 7), (float) (5), 1.0f });
+            // La caja de lectura del sello va al 88 % de opacidad, que alcanza sobre un pozo pero no sobre
+            // el relleno: acá abajo hay DATO, no fondo. Se pone un piso opaco del color del pozo y encima
+            // la caja de siempre, así el rótulo se ve igual que en las otras lentes y no deja pasar nada.
+            // El piso va CUADRADO y no redondeado: con esquinas redondeadas el antialiasing deja pasar el
+            // relleno justo en las cuatro puntas (36 px medidos), y "casi opaco" es la misma clase de
+            // problema que el 0.88 de origen. Las puntas quedan del color del pozo, que contra un tema
+            // oscuro se lee como la sombra de la cajita.
+            g.setColour (look::well);
+            g.fillRect (l.box);
+            look::drawReadoutBox (g, l.box, l.text, mw, look::gridMajor);
+        }
 
-            const juce::String text = shortHz (r.freqHz) + " Hz  \xc2\xb7  " + juce::String (r.db, 1)
-                                    + " dB  \xc2\xb7  " + trLower (strings::Key::now);
-            g.setFont (ovni::ui::fonts::mono (11.0f));
-            const int tw = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text)) + 16;
-            const auto box = readoutBoxFor (zones.plot, cursor.x, tw);
-            g.setColour (th::bg1.withAlpha (0.9f));
-            g.fillRoundedRectangle (box.toFloat(), 3.0f);
-            g.setColour (th::green.withAlpha (0.4f));
-            g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 3.0f, 1.0f);
-            g.setColour (th::txt);
-            g.drawText (text, box, juce::Justification::centred, false);
+        // ---- lectura bajo el cursor: la línea de ADELANTE ----
+        if (cursor.x >= 0)
+        {
+            const auto r = readoutAt (cursor);
+            if (r.valid)
+            {
+                g.setColour (th::txt.withAlpha (0.30f));
+                look::fillSnapped (g, { (float) (cursor.x), (float) (zones.plot.getY()), 1.0f, (float) (zones.plot.getHeight()) });
+
+                const juce::String text = shortHz (r.freqHz) + " Hz  \xc2\xb7  " + juce::String (r.db, 1)
+                                        + " dB  \xc2\xb7  " + trLower (strings::Key::now);
+                g.setFont (look::mono (11.0f));
+                const int tw = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text)) + 16;
+                const auto box = readoutBoxFor (zones.plot, cursor.x, tw);
+                g.setColour (th::bg1.withAlpha (0.9f));
+                g.fillRoundedRectangle (box.toFloat(), 3.0f);
+                g.setColour (th::green.withAlpha (0.4f));
+                g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 3.0f, 1.0f);
+                g.setColour (th::txt);
+                g.drawText (text, box, juce::Justification::centred, true);
+            }
         }
     }
 
@@ -494,11 +505,12 @@ void WaterfallLens::paintLive (juce::Graphics& g)
 
     // El canal que se está mirando, arriba a la derecha: sin esto, "L+R" y "M" dan dibujos distintos de la
     // misma música y nada en pantalla dice cuál se está viendo.
+    const look::ScreenInk screen;   // va adentro de la pantalla (D-109)
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     g.drawText (tr (strings::Key::channel) + " " + channelLabel (s.channel),
                 zones.plot.getRight() - 90, zones.plot.getY() + 2, 88, 12,
-                juce::Justification::centredRight, false);
+                juce::Justification::centredRight, true);
 }
 
 void WaterfallLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& label,
@@ -518,12 +530,8 @@ void WaterfallLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, c
     }
 
     auto inner = area.reduced (8, 0);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.0f));
-    g.drawText (label, inner.removeFromLeft (inner.getWidth() / 2), juce::Justification::centredLeft, false);
-    g.setColour (hue);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (value, inner, juce::Justification::centredRight, false);
+    look::drawLabelValue (g, inner, label, look::label (9.0f), look::txtTertiary,
+                         value, look::mono (11.0f), hue);
 }
 
 //======================================================================================== animación
@@ -539,7 +547,10 @@ bool WaterfallLens::advanceFrame()
     const auto w = processor.spectrogram().writeIndex();
     if (w == lastWrite) return false;
     lastWrite = w;
-    return true;
+    // En silencio el motor sigue escribiendo columnas —iguales—: cuando la ventana visible entera es la
+    // misma columna repetida, correr el dibujo no cambia un píxel (ver QuietTail.h, prompt 96).
+    const auto& ring = processor.spectrogram();
+    return ! quiet.uniform (ring, (long long) ring.capacity() + 8);
 }
 
 //======================================================================================== lectura

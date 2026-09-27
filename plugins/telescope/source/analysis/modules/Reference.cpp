@@ -1,13 +1,47 @@
 #include "analysis/modules/Reference.h"
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 namespace telescope
 {
 void Reference::resetLive() noexcept
 {
     live.reset();
+    gatedFrames = 0;
     liveIntegrated      = kSilenceDb;
     liveIntegratedValid = false;
+}
+
+// F4 (T4): la loudness del cuadro. Ver el encabezado (spectrumFrameComputed).
+double Reference::frameLoudnessLufs (const Spectrum::FrameInfo& info)
+{
+    if (info.left == nullptr || info.right == nullptr || info.numBins < 2 || ! (info.meanSquareNorm > 0.0))
+        return 0.0;   // sin con qué medir: entra (ver el encabezado)
+
+    if (info.numBins != kWeightBins || info.sr != kWeightSr)
+    {
+        kWeightBins = info.numBins;
+        kWeightSr   = info.sr;
+        kWeight2.assign ((size_t) kWeightBins, 0.0);
+        const auto c = KWeighting::designAt (info.sr);
+        for (int k = 0; k < kWeightBins; ++k)
+            kWeight2[(size_t) k] = std::pow (10.0, KWeighting::magnitudeDb (c, (double) k * info.binHz, info.sr) / 10.0);
+    }
+
+    double zL = 0.0, zR = 0.0;
+    const int last = info.numBins - 1;   // Nyquist
+    for (int k = 0; k <= last; ++k)
+    {
+        const double lr = info.left[2 * k],  li = info.left[2 * k + 1];
+        const double rr = info.right[2 * k], ri = info.right[2 * k + 1];
+        // Parseval de la FFT real: DC y Nyquist una vez, el resto dos (su espejo).
+        const double w = kWeight2[(size_t) k] * ((k == 0 || k == last) ? 1.0 : 2.0);
+        zL += (lr * lr + li * li) * w;
+        zR += (rr * rr + ri * ri) * w;
+    }
+    const double z = (zL + zR) * info.meanSquareNorm;
+    return z > 0.0 ? -0.691 + 10.0 * std::log10 (z) : -std::numeric_limits<double>::infinity();
 }
 
 void Reference::setLiveLoudness (float integratedLufs, bool valid) noexcept

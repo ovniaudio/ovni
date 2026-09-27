@@ -11,7 +11,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 constexpr const char* kAudioFilter = "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3;*.m4a;*.aac;*.caf;*.wma";
 const juce::String kDot = juce::String::fromUTF8 ("  \xc2\xb7  ");
@@ -58,9 +58,14 @@ juce::String VerdictLens::ph (const char* key) const
 
 VerdictLens::VerdictLens (TelescopeProcessor& p) : Lens (12), processor (p)
 {
-    // 12 fps y no 30: acá no se anima nada, se relee un informe que cambia una vez por segundo. El
-    // `settleHold` alto evita que la lente se duerma entre segundo y segundo.
-    setSettleHold (40);
+    // 12 fps y no 30: acá no se anima nada, se relee un informe que cambia una vez por segundo.
+    //
+    // settleHold 2 (antes 40, "para que la lente no se duerma entre segundo y segundo"): dormirse no pierde
+    // nada — el timer sigue llamando a advanceFrame con el repaint en pausa, y el segundo nuevo la
+    // despierta. Con 40 cuadros de cola y un cambio cada 12, la pausa no llegaba nunca: VERDICT repintaba
+    // 12 veces por segundo un informe idéntico, también en silencio (prompt 96). Como no hay animación, el
+    // dibujo es el mismo; sólo deja de repetirse.
+    setSettleHold (2);
 }
 
 VerdictLens::~VerdictLens() = default;
@@ -71,9 +76,19 @@ VerdictLens::Zones VerdictLens::zonesFor (int w, int h) const
     Zones z;
     auto body = juce::Rectangle<int> (0, 0, w, h).reduced (th::padIn);
 
+    const auto m = look::metricsFor (w);
     const int rowH = juce::jlimit (22, 30, h / 22);
     z.footer = body.removeFromBottom (rowH);
-    body.removeFromBottom (th::padIn / 2);
+    // F2b de la 0.2 · EL PIE TIENE SU RENGLÓN. Se dibujaba en una caja de 11 px que arrancaba 12 px arriba de los
+    // botones, y la lista terminaba 8 px arriba de ellos: se pisaban 4 px. Con la letra de 9 px de la 0.1 no se
+    // notaba; con el piso de 11 px de la F2 el pie quedó ENCIMA del último renglón de la lista (el que asoma por
+    // el scroll) y las letras se mezclaban. En la Mac la tinta caía justo afuera de la franja que mira
+    // «VERDICT envuelve el texto de verdad y no se come el margen»; en Windows la fuente cae 1 px más arriba y
+    // 3 píxeles entraban (corridas 36227358851 y 36260410000). Ahora el pie es una zona del layout, con aire
+    // contra la lista, y el test verifica que no se toquen.
+    body.removeFromBottom (2);
+    z.note = body.removeFromBottom ((int) std::ceil (look::legible (m.textMicro + 0.5f)) + 1);
+    body.removeFromBottom (4);
 
     auto foot = z.footer;
     const int gap = 6;
@@ -88,7 +103,6 @@ VerdictLens::Zones VerdictLens::zonesFor (int w, int h) const
     body.removeFromTop (th::padIn / 2);
     // 57d — el TITULAR, fijo entre la cabecera y la lista: no se va con el scroll, porque es la cuenta de
     // todo lo que hay abajo.
-    const auto m = look::metricsFor (w);
     z.headline = body.removeFromTop ((int) std::ceil (m.textBody + 1.0f) + 6);
     body.removeFromTop (4);
     z.list = body;
@@ -195,6 +209,17 @@ juce::TextLayout VerdictLens::layoutFor (const juce::String& text, float fontHei
 void VerdictLens::buildLines()
 {
     lines.clear();
+
+    // F5 (D-122): sin audio sobre la compuerta el motor no evaluó nada, y la lista queda VACÍA: ni los títulos
+    // de sección con su «nada fuera de rango», que también es una afirmación sobre lo medido. La cabecera dice
+    // por qué (esperando audio, o el archivo sin audio).
+    if (! rep.summary.heard)
+    {
+        collapsedWithin = false;
+        contentH = 0;
+        scroll   = 0;
+        return;
+    }
     const auto lang = processor.verdictLanguage();
     const auto m = look::metricsFor (juce::jmax (200, getWidth()));
     const int textW = textWidthFor (juce::jmax (200, zones.list.getWidth()));
@@ -388,11 +413,20 @@ juce::String VerdictLens::stateText() const
         if (processor.verdictFilePath().isEmpty())
             return ph ("ui.drop");
 
-        return juce::String::fromUTF8 (Verdict::translate ("mode.file", lang.toRawUTF8()).c_str())
-             + kDot + processor.verdictFileName();
+        auto t = juce::String::fromUTF8 (Verdict::translate ("mode.file", lang.toRawUTF8()).c_str())
+               + kDot + processor.verdictFileName();
+        // F5 (D-122): el archivo se analizó entero y no tiene audio sobre la compuerta: la lista queda vacía,
+        // y esto dice por qué.
+        if (rep.summary.secondsTotal > 0 && ! rep.summary.heard)
+            t << kDot << ph ("ui.silent");
+        return t;
     }
 
     const auto s = juce::String::fromUTF8 (Verdict::translate ("mode.live", lang.toRawUTF8()).c_str());
+    // F4 (T4) + F5 (D-122): segundos hay, pero ninguno con audio sobre la compuerta: no se está midiendo nada
+    // todavía, y el motor dejó el informe vacío (con `seconds` en 0: el silencio no cuenta como analizado).
+    if (rep.summary.secondsTotal > 0 && ! rep.summary.heard)
+        return s + kDot + ph ("ui.waiting");
     if (rep.summary.seconds <= 0)
         return s + kDot + ph ("ui.nosecs");
     return s + kDot + juce::String (rep.summary.seconds) + " s";
@@ -510,6 +544,15 @@ void VerdictLens::renderStatic (juce::Graphics& g, int width, int height)
                  look::gridMajor, m.gridMajorW);
 }
 
+// F5b (D-126): el botón MODO dice el modo entero. Tomaba la primera palabra de `mode.live` («EN VIVO (desde
+// RESET)» → «EN», que en castellano se lee «inglés»; «AO» en portugués, «DAL» en italiano): cada idioma tiene su
+// rótulo corto, y [modo] verifica que entre en S, M y L a 100, 125 y 150 %.
+juce::String VerdictLens::modeButtonText (int verdictMode, const juce::String& language)
+{
+    const char* key = verdictMode == TelescopeProcessor::verdictFile ? "mode.file.short" : "mode.live.short";
+    return juce::String::fromUTF8 (Verdict::translate (key, language.toRawUTF8()).c_str());
+}
+
 //======================================================================================== capa viva
 // La cadena de TONALIDAD de la cabecera, como función y no como cuatro líneas adentro del pintado: es lo
 // que el test compara contra lo que pone CQT en su pie. Hasta el 56b eran dos códigos distintos —acá un
@@ -539,28 +582,45 @@ void VerdictLens::paintHead (juce::Graphics& g) const
     const auto lang = processor.verdictLanguage();
     const auto key = keyText (s.keyTonic, s.keyMode, lang);
 
-    juce::String top;
-    top << "I " << (s.integrated <= kSilenceDb + 1.0f ? juce::String ("--") : signed1 (s.integrated)) << " LUFS"
-        << kDot << "LRA " << juce::String (s.lra, 1) << " LU"
-        << kDot << "PLR " << juce::String (s.plr, 1) << " dB"
-        << kDot << "corr " << juce::String (s.corr, 2)
-        << kDot << key;
-    g.drawText (top, area.removeFromTop (18), juce::Justification::centredLeft, false);
+    // F5 (D-122): sin audio sobre la compuerta, la cabecera muestra SÓLO el estado. Las dos líneas de números
+    // dejan su lugar vacío (el estado no salta de renglón): con ceros no hay nada que resumir.
+    const auto topRow = area.removeFromTop (18);
+    const auto subRow = area.removeFromTop (14);
+    if (s.heard)
+    {
+        juce::String top;
+        top << "I " << (s.integrated <= kSilenceDb + 1.0f ? juce::String ("--") : signed1 (s.integrated)) << " LUFS"
+            << kDot << "LRA " << juce::String (s.lra, 1) << " LU"
+            << kDot << "PLR " << juce::String (s.plr, 1) << " dB"
+            << kDot << "corr " << juce::String (s.corr, 2)
+            << kDot << key;
+        look::drawTextLine (g, top, topRow, juce::Justification::centredLeft);
 
-    g.setFont (look::tabularFont (m.textSmall));
-    g.setColour (look::txtSecondary);
-    // Cuántos segundos, y CONTRA QUÉ se comparó la sección 1. Lo segundo no es un detalle: es la
-    // diferencia entre "no se parece al resto de tu mezcla" y "no se parece a tu referencia".
+        g.setFont (look::tabularFont (m.textSmall));
+        g.setColour (look::txtSecondary);
+        look::drawTextLine (g, headSubText(), subRow, juce::Justification::centredLeft);
+    }
+
+    g.setFont (look::tabularFont (m.textSmall));   // el estado, en el cuerpo chico haya o no números arriba
+    g.setColour (look::txtTertiary);
+    look::drawTextLine (g, stateText(), area, juce::Justification::centredLeft);
+}
+
+// Cuántos segundos, y CONTRA QUÉ se comparó la sección 1. Lo segundo no es un detalle: es la diferencia entre
+// "no se parece al resto de tu mezcla" y "no se parece a tu referencia".
+juce::String VerdictLens::headSubText() const
+{
+    const auto& s = rep.summary;
+    if (! s.heard) return {};
+
+    const auto lang = processor.verdictLanguage();
     juce::String sub = juce::String::fromUTF8 (s.text.c_str());
     sub << kDot << juce::String::fromUTF8 (Verdict::translate (s.usedReference ? "baseline.reference"
                                                                               : "baseline.trend",
                                                               lang.toRawUTF8()).c_str());
     if (s.truePeakMax > kSilenceDb + 1.0f)
         sub << kDot << "TP " << signed1 (s.truePeakMax) << " dBTP";
-    g.drawText (sub, area.removeFromTop (14), juce::Justification::centredLeft, false);
-
-    g.setColour (look::txtTertiary);
-    g.drawText (stateText(), area, juce::Justification::centredLeft, false);
+    return sub;
 }
 
 // ===== 57d · EL TITULAR =====
@@ -580,13 +640,13 @@ void VerdictLens::paintHeadline (juce::Graphics& g) const
     if (evW < area.getWidth() / 3)
     {
         g.setColour (look::txtTertiary);
-        g.drawText (evidence, area.removeFromRight (evW), juce::Justification::centredRight, false);
+        look::drawTextLine (g, evidence, area.removeFromRight (evW), juce::Justification::centredRight);
         area.removeFromRight (8);
     }
 
     g.setColour (look::txtPrimary);
     g.setFont (look::tabularFont (m.textBody + 1.0f));
-    g.drawText (juce::String::fromUTF8 (rep.summary.headline.c_str()), area, juce::Justification::centredLeft, true);
+    look::drawTextLine (g, juce::String::fromUTF8 (rep.summary.headline.c_str()), area, juce::Justification::centredLeft);
 }
 
 void VerdictLens::paintList (juce::Graphics& g) const
@@ -609,7 +669,8 @@ void VerdictLens::paintList (juce::Graphics& g) const
             {
                 g.setColour (l.colour);
                 g.setFont (look::labelFont (m.textSmall + 1.0f));
-                g.drawText (l.text.toUpperCase(), x, y + 4, w, 14, juce::Justification::topLeft, false);
+                // F5b (D-126): look::upper y no toUpperCase, que depende del locale del host («CóMO SE VA A SENTIR»).
+                look::drawTextLine (g, look::upper (l.text), { x, y + 4, w, 14 }, juce::Justification::topLeft);
                 look::hLine (g, (float) x, (float) (x + w),
                              look::snap1px ((float) (y + 20), look::physicalScale (g)),
                              look::gridMinor, m.gridMinorW);
@@ -624,7 +685,7 @@ void VerdictLens::paintList (juce::Graphics& g) const
                 // 57d — "Dentro de rango": ✓ en gris secundario, cuerpo chico y sin evidencia debajo.
                 g.setColour (l.colour);
                 g.setFont (look::tabularFont (m.textSmall + 0.5f));
-                g.drawText (l.badge, x, y, 18, 14, juce::Justification::topLeft, false);
+                look::drawTextLine (g, l.badge, { x, y, 18, 14 }, juce::Justification::topLeft);
                 l.layout.draw (g, juce::Rectangle<float> ((float) (x + kTextIndent), (float) y,
                                                           (float) textW, (float) l.textHeight));
             }
@@ -632,7 +693,7 @@ void VerdictLens::paintList (juce::Graphics& g) const
             {
                 g.setColour (l.colour);
                 g.setFont (look::tabularFont (m.textBody + 0.5f));
-                g.drawText (l.badge, x, y, 18, 14, juce::Justification::topLeft, false);
+                look::drawTextLine (g, l.badge, { x, y, 18, 14 }, juce::Justification::topLeft);
 
                 const int textH = l.textHeight;
                 l.layout.draw (g, juce::Rectangle<float> ((float) (x + kTextIndent), (float) y,
@@ -642,8 +703,8 @@ void VerdictLens::paintList (juce::Graphics& g) const
                 // una opinión, y con esto es una medición con su procedencia (D-47).
                 g.setColour (look::txtTertiary);
                 g.setFont (look::tabularFont (m.textMicro + 0.5f));
-                g.drawText (l.evidence, x + kTextIndent, y + textH, textW, 12,
-                            juce::Justification::topLeft, false);
+                look::drawTextLine (g, l.evidence, { x + kTextIndent, y + textH, textW, 12 },
+                                    juce::Justification::topLeft);
             }
         }
         y = bottom + kRowGap;
@@ -679,10 +740,10 @@ void VerdictLens::paintButton (juce::Graphics& g, juce::Rectangle<int> area, con
 
     g.setColour (look::txtTertiary);
     g.setFont (look::labelFont (m.textMicro));
-    g.drawText (label, area.reduced (6, 2).removeFromTop (10), juce::Justification::centredLeft, false);
+    look::drawTextLine (g, label, area.reduced (6, 2).removeFromTop (10), juce::Justification::centredLeft);
     g.setColour (look::dataLine);
     g.setFont (look::tabularFont (m.textBody - 0.5f));
-    g.drawText (value, area.reduced (6, 2).withTrimmedTop (9), juce::Justification::centredLeft, false);
+    look::drawTextLine (g, value, area.reduced (6, 2).withTrimmedTop (9), juce::Justification::centredLeft);
 }
 
 void VerdictLens::paintLive (juce::Graphics& g)
@@ -719,23 +780,21 @@ void VerdictLens::paintLive (juce::Graphics& g)
     }
 
     const auto lang = processor.verdictLanguage();
-    const bool file = processor.verdictMode() == TelescopeProcessor::verdictFile;
     // Los rótulos de los botones salen de la MISMA tabla que las frases: un informe en inglés con los
     // botones en castellano sería justo la mitad de lo que D-50 vino a arreglar. (El resto de las lentes
     // pasa a esta tabla en el prompt 56.)
     const auto t = [&] (const char* key) { return juce::String::fromUTF8 (Verdict::translate (key, lang.toRawUTF8()).c_str()); };
 
     paintButton (g, zones.button[ctrlReset], t ("ui.reset"), t ("ui.reset.value"), hovered == ctrlReset);
-    paintButton (g, zones.button[ctrlMode],  t ("ui.mode"),
-                 t (file ? "mode.file" : "mode.live").upToFirstOccurrenceOf (" ", false, false),
+    paintButton (g, zones.button[ctrlMode],  t ("ui.mode"), modeButtonText (processor.verdictMode(), lang),
                  hovered == ctrlMode);
     paintButton (g, zones.button[ctrlLoad],  t ("ui.file"), t ("ui.file.value"), hovered == ctrlLoad);
 
     // EL PIE, siempre. No es decorativo: es la parte del informe que dice qué clase de cosa es el informe.
     g.setColour (look::txtTertiary);
     g.setFont (look::tabularFont (m.textMicro + 0.5f));
-    g.drawText (juce::String::fromUTF8 (rep.footer.c_str()),
-                zones.list.getX(), zones.footer.getY() - 12, zones.list.getWidth(), 11,
-                juce::Justification::topRight, false);
+    look::drawTextLine (g, juce::String::fromUTF8 (rep.footer.c_str()),
+                        zones.note.withX (zones.list.getX()).withWidth (zones.list.getWidth()),
+                        juce::Justification::centredRight);
 }
 }

@@ -7,6 +7,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <cstdio>
 #include <memory>
 #include <vector>
@@ -297,59 +298,77 @@ struct LoadWindow
     }
 };
 
+// ========================================================================================================
+// F4 de la 0.2 (T9, «Del 57»): LO EMPUJADO, EN HOPS ENTEROS Y ANOTADO. El test de reduced-motion esperaba al
+// motor con «250 ms de quietud» (engineIdle): bajo carga el worker se queda sin núcleo un rato, eso se leía
+// como «terminó», y los dos renders comparaban curvas distintas (el intermitente del 57, «1 de 22»). Ahora cada
+// empuje manda un número ENTERO de hops (100 ms) y lo suma al total de ESE processor; engineIdle espera la
+// condición —que el motor marque ese tiempo analizado—, como waitDigested (TestHelpers.h).
+constexpr long long kHopSamples = 4800;   // 100 ms a 48 k
+
+std::map<const telescope::TelescopeProcessor*, long long>& pushedSamples()
+{
+    static std::map<const telescope::TelescopeProcessor*, long long> m;
+    return m;
+}
+
+template <typename Fill>
+void pushHops (telescope::TelescopeProcessor& proc, double seconds, Fill&& fill)
+{
+    constexpr int blockSize = 512;
+    const auto total = ((long long) std::llround (seconds * 48000.0) + kHopSamples - 1) / kHopSamples * kHopSamples;
+    juce::AudioBuffer<float> buf (2, blockSize);
+    juce::MidiBuffer midi;
+    for (long long done = 0; done < total;)
+    {
+        const int k = (int) std::min ((long long) blockSize, total - done);
+        buf.setSize (2, k, false, false, true);
+        fill (buf, k);
+        proc.processBlock (buf, midi);
+        done += k;
+    }
+    pushedSamples()[&proc] += total;
+}
+
 void pushSine (telescope::TelescopeProcessor& proc, double seconds, float peak)
 {
     constexpr double sr = 48000.0;
-    constexpr int    blockSize = 512;
-    juce::AudioBuffer<float> buf (2, blockSize);
-    juce::MidiBuffer midi;
     long long n = 0;
-    for (int b = 0; b < (int) std::ceil (seconds * sr / blockSize); ++b)
+    pushHops (proc, seconds, [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < blockSize; ++i, ++n)
+        for (int i = 0; i < k; ++i, ++n)
             buf.setSample (0, i, peak * (float) std::sin (2.0 * juce::MathConstants<double>::pi * 997.0 * (double) n / sr)),
             buf.setSample (1, i, buf.getSample (0, i));
-        proc.processBlock (buf, midi);
-    }
+    });
 }
 
 // Ruido rosa CORRELACIONADO (L = R, o L = -R con invertR): sirve para mover el correlímetro de +1 a -1.
 void pushPinkStereo (telescope::TelescopeProcessor& proc, double seconds, float peak, bool invertR)
 {
-    constexpr double sr = 48000.0;
-    constexpr int    blockSize = 512;
     telescope::test::Pink p { telescope::test::kPinkSeedA };
-    juce::AudioBuffer<float> buf (2, blockSize);
-    juce::MidiBuffer midi;
-    for (int blk = 0; blk < (int) std::ceil (seconds * sr / blockSize); ++blk)
+    pushHops (proc, seconds, [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < blockSize; ++i)
+        for (int i = 0; i < k; ++i)
         {
             const float x = peak * p.next();
             buf.setSample (0, i, x);
             buf.setSample (1, i, invertR ? -x : x);
         }
-        proc.processBlock (buf, midi);
-    }
+    });
 }
 
 // Ruido rosa ESTÉREO independiente: es lo que llena el goniómetro de puntos (2 048 por hop, el tope).
 void pushPink (telescope::TelescopeProcessor& proc, double seconds, float peak)
 {
-    constexpr double sr = 48000.0;
-    constexpr int    blockSize = 512;
     telescope::test::Pink a { telescope::test::kPinkSeedA }, b { telescope::test::kPinkSeedB };
-    juce::AudioBuffer<float> buf (2, blockSize);
-    juce::MidiBuffer midi;
-    for (int blk = 0; blk < (int) std::ceil (seconds * sr / blockSize); ++blk)
+    pushHops (proc, seconds, [&] (juce::AudioBuffer<float>& buf, int k)
     {
-        for (int i = 0; i < blockSize; ++i)
+        for (int i = 0; i < k; ++i)
         {
             buf.setSample (0, i, peak * a.next());
             buf.setSample (1, i, peak * b.next());
         }
-        proc.processBlock (buf, midi);
-    }
+    });
 }
 
 // Mide el presupuesto de pintado de una lente ya dimensionada y alimentada. `paintEntireComponent` en vez
@@ -464,9 +483,15 @@ juce::uint64 checksum (const juce::Image& img)
 // como "terminó". Los dos renders del test de reduced-motion son procesos distintos, así que si uno se
 // corta antes que el otro comparan dos curvas distintas y el test se pone rojo sin que nada anime.
 // 250 ms de quietud y 20 s de techo: el timeout es un tope de seguridad, no el tiempo que se espera.
+//
+// F4 de la 0.2 (T9): la condición, no la quietud. El motor terminó cuando marca analizado TODO lo que se le empujó
+// a este processor (pushHops lo anota, siempre en hops enteros). 20 s de techo: es un tope, no la espera.
 bool engineIdle (telescope::TelescopeProcessor& proc)
 {
-    return telescope::test::waitStable ([&] { return proc.analysis().read().timeSeconds; }, 250, 20000);
+    const auto pushed = pushedSamples()[&proc];
+    const double target = (double) (pushed / kHopSamples) * 0.1 - 0.05;
+    return pushed > 0
+        && telescope::test::waitUntil ([&] { return proc.analysis().read().timeSeconds >= target; }, 20000);
 }
 
 // ========================================================================================================
@@ -489,6 +514,7 @@ void requireReducedMotionSkipsAnimation (const char* label, Build build, Settle 
     {
         telescope::TelescopeProcessor proc;
         proc.prepareToPlay (48000.0, 512);
+        pushedSamples()[&proc] = 0;   // un processor nuevo (puede caer en la dirección de uno anterior)
 
         telescope::Lens::setReducedMotion (reduced);
         auto lens = build (proc);
@@ -1390,20 +1416,16 @@ TEST_CASE ("telescope: con reduced-motion la lente TONAL BALANCE no anima", "[te
         {
             // El mismo rosa con +12 dB arriba de 6.3 kHz: el promedio infinito se mueve de verdad.
             telescope::test::HighShelf sL { 6300.0, 12.0, 48000.0 }, sR { 6300.0, 12.0, 48000.0 };
-            constexpr int kBlock = 512;
             telescope::test::Pink a { telescope::test::kPinkSeedA };
-            juce::AudioBuffer<float> buf (2, kBlock);
-            juce::MidiBuffer midi;
-            for (int blk = 0; blk < (int) std::ceil (5.0 * 48000.0 / kBlock); ++blk)
+            pushHops (proc, 5.0, [&] (juce::AudioBuffer<float>& buf, int k)
             {
-                for (int i = 0; i < kBlock; ++i)
+                for (int i = 0; i < k; ++i)
                 {
                     const float x = a.next();
                     buf.setSample (0, i, 0.3f * sL.process (x));
                     buf.setSample (1, i, 0.3f * sR.process (x));
                 }
-                proc.processBlock (buf, midi);
-            }
+            });
             REQUIRE (engineIdle (proc));
         });
 }

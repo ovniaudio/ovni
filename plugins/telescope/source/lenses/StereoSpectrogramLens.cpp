@@ -12,7 +12,7 @@ namespace telescope
 {
 namespace
 {
-namespace th = ovni::ui::theme;
+namespace th = telescope::look::tint;   // F2: el tema vigente (Look.h)
 
 constexpr double kLabelledHz[] = { 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0, 20000.0 };
 
@@ -77,6 +77,9 @@ void StereoSpectrogramLens::buildPalette()
         for (auto& v : level) v /= hi;
     }
 
+    // D-109 — la rampa de fase es de la PANTALLA: sale de la tinta oscura en los dos temas. Con la del claro
+    // terminaba en el grafito, y «mono» —casi toda una mezcla— salía negro sobre negro.
+    const look::ScreenInk screen;
     for (int c = 0; c < 256; ++c)
     {
         const float t = (float) c / 255.0f;
@@ -260,28 +263,34 @@ void StereoSpectrogramLens::renderStatic (juce::Graphics& g, int width, int heig
     zones = zonesFor (width, height);
     lastRangeDb = processor.spectrumSettings().rangeDb();
 
-    g.setColour (look::gridMinor);
-    g.drawRect (zones.plot.expanded (1), 1);
+    if (! look::drawScreenEdge (g, zones.plot))   // D-109: en claro, la pantalla lleva su filo oscuro
+    {
+        g.setColour (look::gridMinor);
+        g.drawRect (zones.plot.expanded (1), 1);
+    }
 
     // Eje de frecuencia: marcas al costado, nunca encima del sonograma (taparían datos).
-    g.setFont (ovni::ui::fonts::mono (9.0f));
+    g.setFont (look::mono (9.0f));
     for (const double hz : kLabelledHz)
     {
         const int y = juce::roundToInt (yForFreq (hz));
         g.setColour (look::gridMajor);
         look::fillSnapped (g, { (float) (zones.freqAxis.getRight() - 5), (float) (y), (float) (5), 1.0f });
-        g.setColour (th::fnt);
+        g.setColour (look::txtTertiary);
         g.drawText (shortHz (hz), zones.freqAxis.getX(), y - 6, kAxisW - 8, 12,
-                    juce::Justification::centredRight, false);
+                    juce::Justification::centredRight, true);
     }
     g.setColour (th::mut);
-    g.setFont (ovni::ui::fonts::label (10.0f));
-    g.drawText ("Hz", zones.freqAxis.getX(), zones.plot.getY() + 2, kAxisW - 8, 12,
-                juce::Justification::centredRight, false);
+    g.setFont (look::label (10.0f));
+    g.drawText ("Hz", zones.freqAxis.getX(), zones.plot.getY() + 8, kAxisW - 8, 12,
+                juce::Justification::centredRight, true);
 
     // ---- LA LEYENDA. Sin ella el dibujo es bonito y mudo: el color no se deduce solo. ----
     const int lw = juce::jmax (1, zones.legend.getWidth());
     const int barH = 6;
+    // La barra muestra los colores de la PANTALLA, que en claro van del rojo al casi blanco: sobre el papel,
+    // la punta de «mono» se perdía. Lleva el mismo filo oscuro que la pantalla (D-109).
+    look::drawScreenEdge (g, zones.legend.withHeight (barH));
     for (int x = 0; x < lw; ++x)
     {
         const int c = juce::jlimit (0, 255, (int) std::lround (255.0 * (double) x / (double) (lw - 1)));
@@ -289,16 +298,16 @@ void StereoSpectrogramLens::renderStatic (juce::Graphics& g, int width, int heig
         look::fillSnapped (g, { (float) (zones.legend.getX() + x), (float) (zones.legend.getY()), 1.0f, (float) (barH) });
     }
 
-    g.setFont (ovni::ui::fonts::label (9.0f));
+    g.setFont (look::label (9.0f));
     const auto labels = zones.legend.withTrimmedTop (barH + 1);
     g.setColour (th::red);
     g.drawText (trLower (strings::Key::outOfPhase), labels.withWidth (labels.getWidth() / 3),
-                juce::Justification::centredLeft, false);
+                juce::Justification::centredLeft, true);
     g.setColour (th::green);
-    g.drawText (trLower (strings::Key::width), labels, juce::Justification::centred, false);
+    g.drawText (trLower (strings::Key::width), labels, juce::Justification::centred, true);
     g.setColour (th::txt);
     g.drawText (trLower (strings::Key::mono), labels.withTrimmedLeft (labels.getWidth() * 2 / 3),
-                juce::Justification::centredRight, false);
+                juce::Justification::centredRight, true);
 }
 
 //======================================================================================== capa viva
@@ -311,29 +320,33 @@ void StereoSpectrogramLens::paintLive (juce::Graphics& g)
         scroll.configure (processor.stereoSpectrogram(), cache.deviceW(), cache.deviceH(),
                           StereoSpectrogramRing::kRows);
 
-    updateImage();
-    cache.blit (g, zones.plot.getX(), zones.plot.getY());
+    {
+        const look::ScreenInk screen;   // D-109: el dato (y su pozo de «todavía no llegó nada») es de la pantalla
+        updateImage();
+        cache.blit (g, zones.plot.getX(), zones.plot.getY());
+    }
 
     // ---- eje de tiempo: el tramo REAL que entra en el ancho, no la historia guardada ----
     const double span = visibleSeconds();
     if (span > 0.0)
     {
         const double step = span <= 12.0 ? 2.0 : (span <= 34.0 ? 5.0 : 10.0);
-        g.setFont (ovni::ui::fonts::mono (9.0f));
+        g.setFont (look::mono (9.0f));
         for (double t = 0.0; t <= span + 1.0e-6; t += step)
         {
             const int x = zones.plot.getRight() - juce::roundToInt (t / span * (double) zones.plot.getWidth());
             if (x < zones.plot.getX()) break;
             g.setColour (look::gridMajor);
             look::fillSnapped (g, { (float) (x), (float) (zones.timeAxis.getY()), 1.0f, (float) (4) });
-            g.setColour (th::fnt);
+            g.setColour (look::txtTertiary);
             g.drawText (t <= 0.0 ? tr (strings::Key::now) : ("-" + juce::String ((int) t) + " s"),
-                        x - 24, zones.timeAxis.getY() + 3, 48, 12, juce::Justification::centred, false);
+                        x - 24, zones.timeAxis.getY() + 3, 48, 12, juce::Justification::centred, true);
         }
     }
 
     if (cursor.x >= 0)
     {
+        const look::ScreenInk screen;   // la lectura vive adentro de la pantalla (D-109)
         const auto r = readoutAt (cursor);
         if (r.valid)
         {
@@ -346,7 +359,7 @@ void StereoSpectrogramLens::paintLive (juce::Graphics& g)
                                     + shortHz (r.freqHz) + " Hz" + dot
                                     + "coh " + juce::String (r.coherence, 2) + dot
                                     + juce::String (r.db, 1) + " dB";
-            g.setFont (ovni::ui::fonts::mono (11.0f));
+            g.setFont (look::mono (11.0f));
             const int tw = (int) std::ceil (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text)) + 16;
             const auto box = readoutBoxFor (zones.plot, cursor.x, tw);
             g.setColour (th::bg1.withAlpha (0.9f));
@@ -354,7 +367,7 @@ void StereoSpectrogramLens::paintLive (juce::Graphics& g)
             g.setColour (th::green.withAlpha (0.4f));
             g.drawRoundedRectangle (box.toFloat().reduced (0.5f), 3.0f, 1.0f);
             g.setColour (th::txt);
-            g.drawText (text, box, juce::Justification::centred, false);
+            g.drawText (text, box, juce::Justification::centred, true);
         }
     }
 
@@ -385,12 +398,8 @@ void StereoSpectrogramLens::paintButton (juce::Graphics& g, juce::Rectangle<int>
     }
 
     auto inner = area.reduced (8, 0);
-    g.setColour (th::fnt);
-    g.setFont (ovni::ui::fonts::label (9.0f));
-    g.drawText (label, inner.removeFromLeft (inner.getWidth() / 2), juce::Justification::centredLeft, false);
-    g.setColour (hue);
-    g.setFont (ovni::ui::fonts::mono (11.0f));
-    g.drawText (value, inner, juce::Justification::centredRight, false);
+    look::drawLabelValue (g, inner, label, look::label (9.0f), look::txtTertiary,
+                         value, look::mono (11.0f), hue);
 }
 
 //======================================================================================== animación
@@ -401,7 +410,11 @@ bool StereoSpectrogramLens::advanceFrame()
     // 57b — la rampa puede cambiar desde otra lente o al cargar un estado, y los colores viven adentro de
     // la imagen ya dibujada: hay que rehornear la tabla Y rehacerla entera.
     if (processor.paletteIndex() != paletteSeen) { buildPalette(); rebuildOnNextPaint(); return true; }
-    return scroll.needsRepaint (processor.stereoSpectrogram().writeIndex());
+    if (! scroll.needsRepaint (processor.stereoSpectrogram().writeIndex())) return false;
+    // En silencio el motor sigue escribiendo columnas —iguales—: cuando la ventana visible entera es la
+    // misma columna repetida, correr el dibujo no cambia un píxel (ver QuietTail.h, prompt 96).
+    const auto& ring = processor.stereoSpectrogram();
+    return ! quiet.uniform (ring, (long long) ring.capacity() + 8);
 }
 
 //======================================================================================== lectura

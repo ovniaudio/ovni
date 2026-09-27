@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <vector>
 #include <juce_graphics/juce_graphics.h>
@@ -47,31 +48,168 @@ namespace telescope::look
 {
 namespace th = ovni::ui::theme;
 
+// ==== EL TEMA (F2 de la 0.2) ============================================================================
+// Un usuario pidió una interfaz clara: la oscura le cansa la vista. El OSCURO sigue siendo el default y
+// es, color por color, el del sello (darkInk = ovni::ui::theme, sin tocar un bit). El CLARO es una opción
+// que elige el usuario (ThemePreference.h guarda la elección en OVNI.settings).
+//
+// Cómo llega a las lentes sin tocar su código de dibujo: las lentes dicen `th::green`, `th::txt`… y `th`
+// apunta a `look::tint` (abajo), que tiene los mismos nombres que el tema del sello pero los RESUELVE AL
+// USARLOS con la tinta vigente. Lo que no es color (`th::padIn`, `th::state`) sigue siendo el del sello.
+enum class Theme { dark = 0, light = 1 };
+
+struct Ink
+{
+    juce::Colour bg0, bg1, surf, surf2, line, lineSoft, txt, mut, fnt;
+    juce::Colour green, greenD, cyan, magenta, amber, red;
+};
+
+inline const Ink& darkInk()
+{
+    static const Ink k { th::bg0, th::bg1, th::surf, th::surf2, th::line, th::lineSoft, th::txt, th::mut, th::fnt,
+                         th::green, th::greenD, th::cyan, th::magenta, th::amber, th::red };
+    return k;
+}
+
+// EL CLARO, derivado de los tokens del sello (no hay una paleta clara en la marca v2: se derivó y se dice):
+//   · el papel es el `txt` del sello (#eaf1f8, el blanco azulado de la marca); el pozo, ese mismo papel
+//     llevado a mitad de camino del blanco; las superficies, el papel oscurecido hacia el `mut`;
+//   · el texto primario es el GRAFITO de la marca v2 (#0a0c14, «la marca sobre claro»); el secundario, el
+//     `fnt` del sello llevado un tercio hacia el grafito (#3c4755); el gris de las marcas, el `mut`;
+//   · las líneas, el grafito con el mismo alpha que el sello le da a su hairline;
+//   · los hues de familia, llevados hacia el grafito hasta dar 7:1 sobre `surf2`, la superficie más oscura
+//     del claro (8.2–8.3:1 sobre el papel). 7 y no 4.5: el texto oscuro fino sobre claro pierde contraste
+//     con el suavizado, y con 4.5 nominal los rótulos de S medían 3.5–4.4 (primera pasada de [contraste]).
+//     Son los mismos cinco colores con la luz de un día claro; el `greenD` (el dato atenuado) queda más
+//     claro a propósito.
+inline const Ink& lightInk()
+{
+    static const Ink k = []
+    {
+        const juce::Colour graphite (0xff0a0c14);                     // marca v2: la marca sobre claro
+        const auto paper = th::txt;                                   // #eaf1f8
+        const auto toGraphite = [graphite] (juce::Colour c, float t) { return c.interpolatedWith (graphite, t); };
+        Ink i;
+        i.bg0      = paper;
+        i.bg1      = paper.interpolatedWith (juce::Colours::white, 0.5f);
+        i.surf     = paper.interpolatedWith (th::mut, 0.10f);
+        i.surf2    = paper.interpolatedWith (th::mut, 0.18f);
+        i.line     = graphite.withAlpha (th::line.getFloatAlpha());
+        i.lineSoft = graphite.withAlpha (th::lineSoft.getFloatAlpha());
+        i.txt      = graphite;
+        i.mut      = toGraphite (th::fnt,     0.34f);   // #3c4755
+        i.fnt      = th::mut;
+        i.green    = toGraphite (th::green,   0.71f);   // #224e3f
+        i.greenD   = toGraphite (th::greenD,  0.50f);   // el dato atenuado: más claro a propósito
+        i.cyan     = toGraphite (th::cyan,    0.71f);   // #224c54
+        i.magenta  = toGraphite (th::magenta, 0.62f);   // #533c6d
+        i.amber    = toGraphite (th::amber,   0.68f);   // #584226
+        i.red      = toGraphite (th::red,     0.55f);   // #782e22
+        return i;
+    }();
+    return k;
+}
+
+// La elección es del USUARIO, no de cada instancia (prompt 99): una sola, para todas las ventanas del
+// proceso. Se escribe y se lee en el message thread (el clic en la tira, la apertura del editor).
+inline std::atomic<int>& themeState() noexcept { static std::atomic<int> t { (int) Theme::dark }; return t; }
+inline Theme theme() noexcept             { return (Theme) themeState().load (std::memory_order_relaxed); }
+inline void  setTheme (Theme t) noexcept  { themeState().store ((int) t, std::memory_order_relaxed); }
+
+// ==== LA PANTALLA DE DATOS (D-109, F2b de la 0.2) =======================================================
+// En el tema claro, las cuatro lentes de mapa de calor —SPECTROGRAM, WATERFALL, STEREO SPECTROGRAM y FIELD—
+// conservan su «pantalla» oscura y la paleta del oscuro, como la pantalla de un instrumento en un panel
+// claro: el marco, los rótulos y los controles de alrededor siguen el claro. En la F2 la tinta clara se
+// colaba adentro del dato: la rampa de fase de STEREO SPECTROGRAM terminaba en el grafito («mono», que en
+// una mezcla es casi todo, salía negro sobre negro: luminancia máxima 11 de 255 contra 217 en oscuro), el
+// piso de WATERFALL y el fondo de FIELD salían del papel, y la rejilla de encima del dato, del grafito.
+//
+// Mientras vive un `ScreenInk`, `ink()` devuelve la tinta OSCURA en cualquier tema. Cada lente abre uno
+// alrededor de lo que dibuja ADENTRO de su pantalla (la imagen del dato, la rejilla y los rótulos que van
+// encima, la lectura del cursor) y de las tablas de color que se hornean para ella. Es por hilo y se anida:
+// se pinta en el message thread, y un alcance olvidado abierto en otro hilo no puede teñir éste.
+inline int& screenInkDepth() noexcept { thread_local int depth = 0; return depth; }
+
+struct ScreenInk
+{
+    ScreenInk() noexcept  { ++screenInkDepth(); }
+    ~ScreenInk() noexcept { --screenInkDepth(); }
+    ScreenInk (const ScreenInk&) = delete;
+    ScreenInk& operator= (const ScreenInk&) = delete;
+};
+
+inline const Ink& ink() noexcept
+{
+    return theme() == Theme::light && screenInkDepth() == 0 ? lightInk() : darkInk();
+}
+
+// Un color que se resuelve AL USARSE con la tinta vigente. Tiene los tres métodos que las lentes le piden
+// a un color del tema (medido: withAlpha, withMultipliedAlpha, interpolatedWith) y se convierte solo a
+// juce::Colour en todo lo demás.
+struct Tint
+{
+    juce::Colour (*get)() noexcept;
+    operator juce::Colour() const noexcept                              { return get(); }
+    juce::Colour withAlpha (float a) const noexcept                     { return get().withAlpha (a); }
+    juce::Colour withMultipliedAlpha (float a) const noexcept           { return get().withMultipliedAlpha (a); }
+    juce::Colour interpolatedWith (juce::Colour o, float p) const noexcept { return get().interpolatedWith (o, p); }
+    juce::uint32 getARGB() const noexcept                               { return get().getARGB(); }
+};
+
+// Lo que las lentes llaman `th::`. Mismos nombres que ovni::ui::theme.
+namespace tint
+{
+using ovni::ui::theme::padIn;
+namespace state = ovni::ui::theme::state;
+inline const Tint bg0      { [] () noexcept { return ink().bg0; } };
+inline const Tint bg1      { [] () noexcept { return ink().bg1; } };
+inline const Tint surf     { [] () noexcept { return ink().surf; } };
+inline const Tint surf2    { [] () noexcept { return ink().surf2; } };
+inline const Tint line     { [] () noexcept { return ink().line; } };
+inline const Tint lineSoft { [] () noexcept { return ink().lineSoft; } };
+inline const Tint txt      { [] () noexcept { return ink().txt; } };
+inline const Tint mut      { [] () noexcept { return ink().mut; } };
+inline const Tint fnt      { [] () noexcept { return ink().fnt; } };
+inline const Tint green    { [] () noexcept { return ink().green; } };
+inline const Tint greenD   { [] () noexcept { return ink().greenD; } };
+inline const Tint cyan     { [] () noexcept { return ink().cyan; } };
+inline const Tint magenta  { [] () noexcept { return ink().magenta; } };
+inline const Tint amber    { [] () noexcept { return ink().amber; } };
+inline const Tint red      { [] () noexcept { return ink().red; } };
+}
+
 // ==== TINTAS ============================================================================================
 // Rejilla: dos pesos. El mayor es el que estructura (ejes, décadas, 0 dB); el menor subdivide.
-inline const juce::Colour gridMajor    = th::line.withMultipliedAlpha (1.85f);
-inline const juce::Colour gridMinor    = th::lineSoft;
-inline const juce::Colour gridAxis     = th::line.withMultipliedAlpha (2.60f);   // el eje del cero
+inline const Tint gridMajor    { [] () noexcept { return ink().line.withMultipliedAlpha (1.85f); } };
+inline const Tint gridMinor    { [] () noexcept { return ink().lineSoft; } };
+inline const Tint gridAxis     { [] () noexcept { return ink().line.withMultipliedAlpha (2.60f); } };   // el eje del cero
 
 // Dato: la línea BRILLANTE (el trazo) y el relleno SUAVE (el área bajo el trazo). Que sean dos tokens y
 // no un color con dos alphas al azar es lo que hace que doce lentes rellenen con el mismo peso.
-inline const juce::Colour dataLine     = th::green;
-inline const juce::Colour dataLineDim  = th::greenD;
-inline const juce::Colour dataFill     = th::green.withAlpha (0.16f);
-inline const juce::Colour dataFillSoft = th::green.withAlpha (0.07f);
+inline const Tint dataLine     { [] () noexcept { return ink().green; } };
+inline const Tint dataLineDim  { [] () noexcept { return ink().greenD; } };
+inline const Tint dataFill     { [] () noexcept { return ink().green.withAlpha (0.16f); } };
+inline const Tint dataFillSoft { [] () noexcept { return ink().green.withAlpha (0.07f); } };
 
-inline const juce::Colour accent       = th::cyan;          // selección / lo que el usuario está tocando
-inline const juce::Colour caution      = th::amber;         // zona de cuidado (cerca del techo)
-inline const juce::Colour alert        = th::red;           // fuera de fase, clip, lo que hay que mirar
-inline const juce::Colour reference    = th::magenta;       // la curva de referencia / el objetivo
+inline const Tint accent       { [] () noexcept { return ink().cyan; } };      // selección / lo que se toca
+inline const Tint caution      { [] () noexcept { return ink().amber; } };     // zona de cuidado (cerca del techo)
+inline const Tint alert        { [] () noexcept { return ink().red; } };       // fuera de fase, clip
+inline const Tint reference    { [] () noexcept { return ink().magenta; } };   // la curva de referencia
 
-inline const juce::Colour txtPrimary   = th::txt;
-inline const juce::Colour txtSecondary = th::mut;
-inline const juce::Colour txtTertiary  = th::fnt;
+inline const Tint txtPrimary   { [] () noexcept { return ink().txt; } };
+inline const Tint txtSecondary { [] () noexcept { return ink().mut; } };
+// F2 de la 0.2 · QUE SE PUEDA LEER. El terciario del sello (`fnt`, #566576) daba 2.3–3.4:1 contra los pozos
+// y los rellenos de las lentes (medido en [contraste]: 797 de 1275 rótulos por debajo de 4.5:1, casi todos
+// con este color) — es el gris oscuro que un usuario no llegaba a leer en los ejes. Como TEXTO pasa a ser el
+// secundario del sello (`mut`, 5.2–6.3:1): lo mismo que ya había hecho el sitio (`--faint` = `--muted`). La
+// jerarquía entre rótulos la llevan el tamaño, la caja y la posición, no un gris que no se lee.
+inline const Tint txtTertiary  { [] () noexcept { return ink().mut; } };
+// El gris terciario sigue existiendo para lo que NO es texto: marcas y pastillas de los ejes.
+inline const Tint tick         { [] () noexcept { return ink().fnt; } };
 
-inline const juce::Colour surface      = th::surf;
-inline const juce::Colour surfaceHi    = th::surf2;
-inline const juce::Colour well         = th::bg1;           // el "pozo" donde vive el dato
+inline const Tint surface      { [] () noexcept { return ink().surf; } };
+inline const Tint surfaceHi    { [] () noexcept { return ink().surf2; } };
+inline const Tint well         { [] () noexcept { return ink().bg1; } };      // el "pozo" donde vive el dato
 
 // ==== MÉTRICAS POR TAMAÑO (S / M / L) ===================================================================
 // El sello escala la ventana entera, pero un texto de 10 px escalado a 12.5 no es lo mismo que un texto
@@ -125,12 +263,26 @@ inline Metrics metricsFor (int width) noexcept
 }
 
 // ==== TIPOGRAFÍA ========================================================================================
+// EL PISO (F2 de la 0.2). Ningún texto de las lentes baja de 11 px de diseño. A tamaño M un px de diseño es
+// un punto en la Mac y un DIP en Windows: 11 queda arriba del texto más chico de macOS (10 pt) y a un paso del
+// de Windows 11 (12 px), y en el caso mínimo —un usuario, Windows al 125 % en 1344 × 840— son 13.75 px
+// físicos. Antes los ejes iban a 8.5–9 px (10.6–11.25 físicos ahí): es la «letra chica» que reportaron.
+// Las lentes piden su fuente por acá (`look::mono`, `look::label`…) y no a `ovni::ui::fonts` directo: así el
+// piso vale para todas y [contraste] lo verifica en cada rótulo.
+inline constexpr float kMinTextPx = 11.0f;
+inline float legible (float height) noexcept { return std::max (height, kMinTextPx); }
+
+inline juce::Font mono (float height)    { return ovni::ui::fonts::mono (legible (height)); }
+inline juce::Font label (float height)   { return ovni::ui::fonts::label (legible (height)); }
+inline juce::Font body (float height)    { return ovni::ui::fonts::body (legible (height)); }
+inline juce::Font display (float height) { return ovni::ui::fonts::display (legible (height)); }
+
 // TABULAR = la mono del sello. Todos los dígitos miden lo mismo, así que "-14.6" y "-8.4" ocupan el mismo
 // ancho y el número no baila mientras se mezcla. Se usa para TODO lo que sea una cifra.
-inline juce::Font tabularFont (float height) { return ovni::ui::fonts::mono (height); }
+inline juce::Font tabularFont (float height) { return mono (height); }
 // Rótulo de bloque / de eje. Medium del sello: pesa lo justo para no competir con el número.
-inline juce::Font labelFont (float height)   { return ovni::ui::fonts::label (height); }
-inline juce::Font bodyFont (float height)    { return ovni::ui::fonts::body (height); }
+inline juce::Font labelFont (float height)   { return label (height); }
+inline juce::Font bodyFont (float height)    { return body (height); }
 
 // ==== PIXEL SNAPPING ====================================================================================
 // Alinea un coord LÓGICO a la grilla de píxeles FÍSICOS: con escala 2, a múltiplos de 0.5. Una línea de
@@ -262,9 +414,36 @@ inline void drawWell (juce::Graphics& g, juce::Rectangle<float> r, const Metrics
 {
     g.setColour (well);
     g.fillRoundedRectangle (r, m.radiusLarge);
-    g.setColour (th::lineSoft);
+    g.setColour (ink().lineSoft);
     g.drawRoundedRectangle (r.reduced (0.5f), m.radiusLarge, 1.0f);
 }
+
+// ==== EL FILO DE LA PANTALLA (D-109) ====================================================================
+// En oscuro, la pantalla de datos lleva la hairline de siempre alrededor (o nada, en las lentes que no la
+// tenían): la dibuja cada lente y acá no se toca. En CLARO la pantalla es un rectángulo oscuro sobre el
+// papel, y un filo oscuro de 1 px lógico por fuera la cierra como la pantalla de un instrumento: sin él, la
+// hairline gris del claro quedaba pegada al borde de la imagen y se leía como una caja mal recortada.
+// Devuelve si lo dibujó (en oscuro no hace nada).
+inline bool drawScreenEdge (juce::Graphics& g, juce::Rectangle<int> screen)
+{
+    if (theme() != Theme::light) return false;
+    g.setColour (darkInk().bg0);
+    g.fillRect (screen.expanded (1));
+    return true;
+}
+
+// ==== EL PASO DE COLUMNAS DE FIELD Y WATERFALL (M-3 del revisor del 57c; F4 de la 0.2) ====================
+// A escala física ≥ 1.5 las dos lentes resuelven la oclusión cada DOS columnas (ver FieldLens.cpp y
+// WaterfallLens.cpp). En el runner un test puede forzar el camino fino para compararlo píxel a píxel ([columnas]).
+// El paso sigue siendo 1 o 2 y nada más: la primera versión del gancho dejaba forzar cualquier entero, y con eso
+// el compilador del runner perdía lo que sabía del paso y FIELD@2 pintaba ~0,35 ms más lento (medido contra el
+// binario de antes, tres rondas) — un gancho no puede cambiar lo que mide [budget].
+#if TELESCOPE_TEST_BUILD
+inline bool& fineColumnsForTest() noexcept { static bool on = false; return on; }
+inline bool  coarseColumns (bool atScale) noexcept { return atScale && ! fineColumnsForTest(); }
+#else
+constexpr bool coarseColumns (bool atScale) noexcept { return atScale; }
+#endif
 
 // ==== CROSSHAIR =========================================================================================
 // La cruz que sigue al cursor. Discreta a propósito (el dato manda), pero con un punto en la intersección
@@ -292,13 +471,125 @@ inline void drawReadoutBox (juce::Graphics& g, juce::Rectangle<int> box, const j
                             const Metrics& m, juce::Colour tint = accent)
 {
     const auto r = box.toFloat();
-    g.setColour (th::bg0.withAlpha (0.88f));
+    g.setColour (ink().bg0.withAlpha (0.88f));
     g.fillRoundedRectangle (r, m.radius);
     g.setColour (tint.withAlpha (0.45f));
     g.drawRoundedRectangle (r.reduced (0.5f), m.radius, 1.0f);
     g.setColour (txtPrimary);
     g.setFont (tabularFont (m.textSmall));
-    g.drawText (text, box.reduced (5, 0), juce::Justification::centredLeft, false);
+    g.drawText (text, box.reduced (5, 0), juce::Justification::centredLeft, true);
+}
+
+// ==== RÓTULO SOBRE EL DATO ==============================================================================
+// Un rótulo que vive ADENTRO del gráfico (las octavas de CQT, arriba del plot) tiene detrás lo que dibuje el
+// dato en ese momento: una barra alta lo dejaba en 4.4:1 (medido en [contraste], F2 de la 0.2). Con una
+// pastilla del color del pozo detrás, el contraste es el del pozo, esté donde esté el dato.
+inline void drawTagOverData (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> r,
+                             juce::Justification just, juce::Colour ink)
+{
+    const auto f  = g.getCurrentFont();
+    const int  tw = juce::jmin (r.getWidth(), (int) std::ceil (juce::GlyphArrangement::getStringWidth (f, text)));
+    auto chip = r.withWidth (tw);
+    if (just.testFlags (juce::Justification::right))                 chip = chip.withX (r.getRight() - tw);
+    else if (just.testFlags (juce::Justification::horizontallyCentred)) chip = chip.withX (r.getCentreX() - tw / 2);
+    g.setColour (well.withAlpha (0.82f));
+    g.fillRoundedRectangle (chip.toFloat().expanded (2.0f, 0.0f), 2.0f);
+    g.setColour (ink);
+    g.drawText (text, r, just, true);
+}
+
+// ==== LA CAJA QUE NO DEPENDE DEL LOCALE (F5b de la 0.2, D-126) ============================================
+// `juce::String::toUpperCase` y `toLowerCase` llaman a towupper / towlower, que DEPENDEN DEL LOCALE DEL PROCESO:
+// con el «C», que es el de un programa que no lo cambia, «Cómo se va a sentir» salía «CóMO SE VA A SENTIR»; con
+// es_AR.UTF-8, «CÓMO SE VA A SENTIR». TELESCOPE vive adentro del proceso del DAW y el locale es del host (cambiarlo
+// cambiaría el del host), así que la caja se decide acá, con una tabla fija: sale igual en cualquier host y en
+// cualquier sistema.
+//
+// Cubre las letras de los seis idiomas (en, es, pt, fr, de, it): medidas sobre Rules.h y Strings.h, todas son de
+// Latin-1. ASCII; de U+00E0 a U+00FE ↔ de U+00C0 a U+00DE, a 0x20 (salvo ÷ y ×, que no son letras); ÿ ↔ Ÿ (U+0178);
+// œ ↔ Œ; y ß → «SS» (que al bajar vuelve «ss», como en cualquier otro lado). Todo lo demás queda igual: el japonés
+// no tiene caja. [mayus] lo prueba con el locale «C» puesto a propósito.
+inline juce::juce_wchar upperChar (juce::juce_wchar c) noexcept
+{
+    if (c >= 'a' && c <= 'z')                   return c - 0x20;
+    if (c >= 0xE0 && c <= 0xFE && c != 0xF7)    return c - 0x20;   // à..þ → À..Þ
+    if (c == 0xFF)                              return 0x178;      // ÿ → Ÿ
+    if (c == 0x153)                             return 0x152;      // œ → Œ
+    return c;
+}
+
+inline juce::juce_wchar lowerChar (juce::juce_wchar c) noexcept
+{
+    if (c >= 'A' && c <= 'Z')                   return c + 0x20;
+    if (c >= 0xC0 && c <= 0xDE && c != 0xD7)    return c + 0x20;   // À..Þ → à..þ
+    if (c == 0x178)                             return 0xFF;       // Ÿ → ÿ
+    if (c == 0x152)                             return 0x153;      // Œ → œ
+    return c;
+}
+
+inline juce::String upper (const juce::String& s)
+{
+    juce::String out;
+    out.preallocateBytes (s.getNumBytesAsUTF8() + 8);
+    for (auto p = s.getCharPointer(); ! p.isEmpty();)
+    {
+        const auto c = p.getAndAdvance();
+        if (c == 0xDF) out << "SS";                                 // ß no tiene mayúscula de una letra en uso
+        else           out += upperChar (c);
+    }
+    return out;
+}
+
+inline juce::String lower (const juce::String& s)
+{
+    juce::String out;
+    out.preallocateBytes (s.getNumBytesAsUTF8() + 8);
+    for (auto p = s.getCharPointer(); ! p.isEmpty();)
+        out += lowerChar (p.getAndAdvance());
+    return out;
+}
+
+// ==== UN RENGLÓN QUE SE PUEDE VERIFICAR (F2b de la 0.2) =================================================
+// `g.drawText (…, false)` pierde glifos en silencio (en JUCE 8, palabras enteras: corta como un envoltorio de
+// un solo renglón), y con `true` sale «…». Ninguna de las dos cosas le dice a un test QUÉ texto se pidió ni en
+// qué caja, así que un test que mira sólo lo dibujado ve el «…» pero no el recorte silencioso (veredicto 99,
+// reparo 4: con `false` y un renglón angostado, [reacomoda] seguía verde). VERDICT, la lente de las frases
+// largas, dibuja cada renglón por acá: en el runner de tests el pedido queda anotado —texto, caja y fuente— y
+// [reacomoda] mide con la misma cuenta de JUCE si entraba, se haya pedido elipsis o no. En el plugin es un
+// drawText y nada más.
+#if TELESCOPE_TEST_BUILD
+struct TextRequest { juce::String text; juce::Rectangle<float> box; juce::Font font; };
+inline std::vector<TextRequest>*& textRequestSink() noexcept { static std::vector<TextRequest>* s = nullptr; return s; }
+#endif
+
+inline void drawTextLine (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area,
+                          juce::Justification just, bool useEllipses = true)
+{
+   #if TELESCOPE_TEST_BUILD
+    if (auto* sink = textRequestSink()) sink->push_back ({ text, area.toFloat(), g.getCurrentFont() });
+   #endif
+    g.drawText (text, area, just, useEllipses);
+}
+
+// ==== CELDA RÓTULO + VALOR (los botones de las lentes) ==================================================
+// Ocho lentes partían la celda en proporciones fijas (1/2, 2/5, 3/5 para el rótulo). Con el piso de 11 px
+// (F2 de la 0.2) un rótulo largo ya no entraba en su parte —«SMOOTHING» pedía 60 px y tenía 52— aunque la
+// celda entera tenía lugar de sobra. Ahora el VALOR se queda con lo que mide y el rótulo con el resto; si
+// igual no entran los dos, se corta el rótulo con elipsis, nunca el valor: el valor es lo que se lee.
+inline void drawLabelValue (juce::Graphics& g, juce::Rectangle<int> r,
+                            const juce::String& label, const juce::Font& labelF, juce::Colour labelC,
+                            const juce::String& value, const juce::Font& valueF, juce::Colour valueC)
+{
+    const int vw = juce::jmin (r.getWidth(),
+                               (int) std::ceil (juce::GlyphArrangement::getStringWidth (valueF, value)) + 1);
+    const auto valueBox = r.removeFromRight (vw);
+    r.removeFromRight (6);
+    g.setColour (labelC);
+    g.setFont (labelF);
+    g.drawText (label, r, juce::Justification::centredLeft, true);
+    g.setColour (valueC);
+    g.setFont (valueF);
+    g.drawText (value, valueBox, juce::Justification::centredRight, true);
 }
 
 // ==== PALETAS ===========================================================================================

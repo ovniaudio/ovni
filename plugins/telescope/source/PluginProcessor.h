@@ -243,6 +243,24 @@ public:
     juce::String referenceError() const;
     juce::String referenceWarning() const;
     const FileAnalysis referenceAnalysis() const;
+
+    // ===== F4 de la 0.2 (T6): EL TRAMO DE LA REFERENCIA (pedido de un usuario, como en Mastering The Mix) =====
+    //
+    // [fromS, toS) en segundos DEL ARCHIVO. Persiste en el estado, al lado del path: al reabrir la sesión la
+    // curva vuelve a ser la del mismo tramo. La curva se recalcula con RangeAnalyzer::measure, la función de
+    // la F3 que usa también `telescope-measure` (una función, dos usos: D-100 §3), en el hilo del analizador
+    // de archivo: ni en el de audio ni en el de la interfaz. Sin tramo (las dos propiedades ausentes) se mide
+    // el archivo entero, como siempre. Cargar otra referencia o quitarla borra el tramo: era de ese archivo.
+    static constexpr const char* kRefFrom = "referenceFromS";
+    static constexpr const char* kRefTo   = "referenceToS";
+    // El tramo más corto que se acepta: con menos, el integrado casi no tiene bloques de 400 ms.
+    static constexpr double kMinReferenceSpanS = 1.0;
+
+    void setReferenceRange (double fromS, double toS);
+    void clearReferenceRange();
+    // El tramo PEDIDO, si hay uno (del estado). Lo MEDIDO, recortado al archivo, es referenceSpan().
+    bool referenceRange (double& fromS, double& toS) const;
+    FileAnalyzer::Span referenceSpan() const;
     // ========================================================================================================
     // ===== 55: VERDICT (lente 13) =====
     //
